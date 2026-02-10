@@ -149,6 +149,19 @@ export default function App(){
   const[showPWA,setShowPWA]=useState(false);
   const[deleteConfirm,setDeleteConfirm]=useState(null);
   const[leaveReason,setLeaveReason]=useState("");
+  // Hourly leave
+  const[hourlyMode,setHourlyMode]=useState(false);
+  const[hourlyForm,setHourlyForm]=useState({date:"",startTime:"",endTime:"",reason:""});
+  const[showHourlyDatePicker,setShowHourlyDatePicker]=useState(false);
+  const[showHourlyStartTP,setShowHourlyStartTP]=useState(false);
+  const[showHourlyEndTP,setShowHourlyEndTP]=useState(false);
+  // Leave document photo
+  const leaveDocRef=useRef(null);
+  const[leaveDoc,setLeaveDoc]=useState(null);
+  const[leaveDocFile,setLeaveDocFile]=useState(null);
+  const hourlyLeaveDocRef=useRef(null);
+  const[hourlyLeaveDoc,setHourlyLeaveDoc]=useState(null);
+  const[hourlyLeaveDocFile,setHourlyLeaveDocFile]=useState(null);
   const now=new Date();
   const[calY,setCalY]=useState(now.getFullYear());
   const[calM,setCalM]=useState(now.getMonth());
@@ -255,15 +268,52 @@ export default function App(){
   }
 
   async function submitLeaveReq(){
-    if(calSel.length===0){setToast("Gun seçin");return;}
+    if(calSel.length===0){setToast("⚠ Gün seçin");return;}
     const needH=calSel.length*8,rH=remHours(profile.id),willDebt=rH<needH;
-    if(willDebt&&(!leaveReason||leaveReason.trim().length<10)){setToast("Fazla izin sebebini yazın (min 10 karakter)");return;}
+    if(willDebt&&(!leaveReason||leaveReason.trim().length<10)){setToast("⚠ Borçlanma durumu var - izin sebebini yazın (min 10 karakter)");return;}
+    if(!leaveDoc){setToast("⚠ İzin belgesi fotoğrafı zorunlu");return;}
     setSubmitting(true);
     try{
       const reason=willDebt?`${leaveReason.trim()} (${Math.round((needH-rH)/8*10)/10} gün borçlanma)`:(leaveReason.trim()||"Fazla mesai karşılığı izin");
-      await createLeave({personnel_id:profile.id,dates:calSel.sort(),total_hours:needH,reason,status:"pending_chef"});
-      await fetchLeaves();setCalSel([]);setCalMode("view");setLeaveReason("");
+      let docUrl=null;
+      if(leaveDocFile){const r=await uploadPhoto(leaveDocFile,'leave-doc');docUrl=r?.url||null;}
+      await createLeave({personnel_id:profile.id,dates:calSel.sort(),total_hours:needH,reason,leave_type:"daily",leave_doc_url:docUrl,status:"pending_chef"});
+      await fetchLeaves();setCalSel([]);setCalMode("view");setLeaveReason("");setLeaveDoc(null);setLeaveDocFile(null);
       setToast(willDebt?`${calSel.length} gun izin gönderildi (borclanma dahil)`:`${calSel.length} gunluk izin onaya gönderildi`);
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+
+  function handleLeaveDoc(e,setDoc,setFile){
+    const file=e.target.files?.[0];if(!file)return;
+    try{const reader=new FileReader();reader.onload=(ev)=>{setDoc(ev.target.result);setFile(file);};reader.onerror=()=>{setToast("Fotoğraf okunamadı");};reader.readAsDataURL(file);}catch(e){setToast("Fotoğraf yüklenemedi");}
+    if(e.target)e.target.value="";
+  }
+
+  async function submitHourlyLeave(){
+    const errors=[];
+    if(!hourlyForm.date)errors.push("Tarih seçilmedi");
+    if(!hourlyForm.startTime)errors.push("Çıkış saati seçilmedi");
+    if(!hourlyForm.endTime)errors.push("Dönüş saati seçilmedi");
+    if(!hourlyForm.reason||hourlyForm.reason.trim().length<10)errors.push("Sebep zorunlu (min 10 karakter)");
+    if(!hourlyLeaveDoc)errors.push("İzin belgesi fotoğrafı zorunlu");
+    // Calc hours
+    const[sh,sm]=(hourlyForm.startTime||"0:0").split(":").map(Number);
+    const[eh,em]=(hourlyForm.endTime||"0:0").split(":").map(Number);
+    let totalMin=(eh*60+em)-(sh*60+sm);
+    if(totalMin<=0){errors.push("Bitiş saati başlangıçtan sonra olmalı");}
+    if(errors.length){setToast("⚠ "+errors[0]);return;}
+    const totalH=Math.round(totalMin/60*10)/10;
+    setSubmitting(true);
+    try{
+      let docUrl=null;
+      if(hourlyLeaveDocFile){const r=await uploadPhoto(hourlyLeaveDocFile,'leave-doc');docUrl=r?.url||null;}
+      await createLeave({personnel_id:profile.id,dates:[hourlyForm.date],total_hours:totalH,reason:`[Saatlik İzin] ${hourlyForm.startTime}-${hourlyForm.endTime} (${totalH}s) - ${hourlyForm.reason.trim()}`,leave_type:"hourly",leave_start_time:hourlyForm.startTime,leave_end_time:hourlyForm.endTime,leave_doc_url:docUrl,status:"pending_chef"});
+      await fetchLeaves();
+      setHourlyForm({date:"",startTime:"",endTime:"",reason:""});
+      setHourlyLeaveDoc(null);setHourlyLeaveDocFile(null);
+      setHourlyMode(false);
+      setToast(`✓ ${totalH} saatlik izin talebi onaya gönderildi`);
     }catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
   }
@@ -378,7 +428,7 @@ export default function App(){
       {pOTs.map(o=>(<div key={o.id} style={S.crd} onClick={()=>setSelOT(o)}><div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:13,fontWeight:600}}>{fD(o.work_date)}</div><div style={{fontSize:11,color:C.dim}}>{o.start_time?.slice(0,5)}→{o.end_time?.slice(0,5)}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:800,color:C.accent}}>{o.hours}s<span style={{color:C.purple,fontSize:12}}> →{o.leave_hours}s</span></div><div style={S.tag(sColor(o.status)+"22",sColor(o.status))}>{sIcon(o.status)} {sText(o.status)}</div></div></div>{o.description&&<div style={{fontSize:12,color:C.dim,marginTop:6,borderTop:`1px solid ${C.border}`,paddingTop:6}}>{o.description}</div>}</div>))}
       <div style={{...S.sec,marginTop:16}}><span>🏖</span> Izin ({pLVs.length})</div>
       {pLVs.length===0&&<div style={{...S.emp,padding:20}}>Talep yok</div>}
-      {pLVs.map(l=>(<div key={l.id} style={S.crd}><div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}><div><div style={{display:"flex",flexWrap:"wrap",gap:4}}>{(Array.isArray(l.dates)?l.dates:[]).map(d=><span key={d} style={S.tag(l.status==="approved"?C.greenD:C.orangeD,l.status==="approved"?C.green:C.orange)}>{fDS(d)}</span>)}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:700}}>{(Array.isArray(l.dates)?l.dates.length:0)}g</div><div style={S.tag(sColor(l.status)+"22",sColor(l.status))}>{sIcon(l.status)}</div></div></div>{l.reason&&<div style={{fontSize:11,color:l.reason.includes("borc")?"#ef4444":C.dim,marginTop:4}}>{l.reason}</div>}</div>))}
+      {pLVs.map(l=>{const isHourly=l.leave_type==="hourly";return(<div key={l.id} style={S.crd} onClick={()=>setSelLV(l)}><div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}><div>{isHourly?<div><div style={{...S.tag(C.blueD,C.blue),marginBottom:4}}>🕐 Saatlik</div><div style={{fontSize:12}}>{fDS(l.dates?.[0])} {l.leave_start_time?.slice(0,5)}-{l.leave_end_time?.slice(0,5)}</div></div>:<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{(Array.isArray(l.dates)?l.dates:[]).map(d=><span key={d} style={S.tag(l.status==="approved"?C.greenD:C.orangeD,l.status==="approved"?C.green:C.orange)}>{fDS(d)}</span>)}</div>}</div><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:700}}>{isHourly?l.total_hours+"s":(Array.isArray(l.dates)?l.dates.length:0)+"g"}</div><div style={S.tag(sColor(l.status)+"22",sColor(l.status))}>{sIcon(l.status)}</div>{l.leave_doc_url&&<div style={{fontSize:10,color:C.green,marginTop:2}}>📄</div>}</div></div>{l.reason&&<div style={{fontSize:11,color:l.reason.includes("borc")?"#ef4444":C.dim,marginTop:4}}>{l.reason}</div>}</div>);})}
     </div>);
   };
 
@@ -437,8 +487,10 @@ export default function App(){
       <div style={{...S.sec,marginTop:20}}><span>🏖</span> Izin {vLVs.length>0&&<span style={S.tag(C.blueD,C.blue)}>{vLVs.length}</span>}</div>
       {vLVs.length===0&&<div style={S.emp}>Yok ✓</div>}
       {vLVs.map(l=>{const p=getU(l.personnel_id);const rH=remHours(l.personnel_id);const willDebt=rH<l.total_hours;return(<div key={l.id} style={S.crd}>
-        <div style={S.row}><div style={S.av(C.blueD)}>{ini(p?.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14,fontWeight:600}}>{p?.full_name}</div><div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:4}}>{(Array.isArray(l.dates)?l.dates:[]).map(d=><span key={d} style={S.tag(C.blueD,C.blue)}>{fDS(d)}</span>)}</div></div><div style={{fontSize:18,fontWeight:800}}>{(Array.isArray(l.dates)?l.dates.length:0)}g</div></div>
+        <div style={S.row}><div style={S.av(C.blueD)}>{ini(p?.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14,fontWeight:600}}>{p?.full_name}</div>{l.leave_type==="hourly"?<div style={{fontSize:12,color:C.blue,fontWeight:600,marginTop:2}}>🕐 {l.leave_start_time?.slice(0,5)}-{l.leave_end_time?.slice(0,5)} ({l.total_hours}s)</div>:<div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:4}}>{(Array.isArray(l.dates)?l.dates:[]).map(d=><span key={d} style={S.tag(C.blueD,C.blue)}>{fDS(d)}</span>)}</div>}</div><div style={{fontSize:18,fontWeight:800}}>{l.leave_type==="hourly"?l.total_hours+"s":(Array.isArray(l.dates)?l.dates.length:0)+"g"}</div></div>
+        {l.leave_type==="hourly"&&<div style={{...S.tag(C.blueD,C.blue),marginTop:6}}>🕐 Saatlik İzin - {fD(l.dates?.[0])}</div>}
         {l.reason&&<div style={{fontSize:12,color:C.dim,margin:"8px 0",background:C.bg,borderRadius:8,padding:"8px 10px",border:`1px solid ${C.border}`}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4}}>📝 Sebep:</div>{l.reason}</div>}
+        {l.leave_doc_url&&<div style={{marginBottom:8}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4}}>📄 İzin Belgesi:</div><img src={l.leave_doc_url} alt="" style={{width:"100%",maxHeight:200,objectFit:"cover",borderRadius:8}}/></div>}
         {willDebt&&<div style={{fontSize:11,color:C.red,fontWeight:700,margin:"8px 0",background:C.redD,borderRadius:6,padding:"4px 8px"}}>⚠ Onaylanirsa {Math.round((l.total_hours-rH)/8*10)/10} gün borçlanacak</div>}
         {l.previous_dates&&<div style={{fontSize:11,color:C.orange,margin:"8px 0"}}>🔄 Eski: {(Array.isArray(l.previous_dates)?l.previous_dates:[]).map(d=>fDS(d)).join(", ")}</div>}
         <div style={{fontSize:11,color:C.muted,marginBottom:4}}>{sText(l.status)}</div>
@@ -489,16 +541,47 @@ export default function App(){
         <div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:11,color:C.dim}}>Kullanılacak</div><div style={{fontSize:18,fontWeight:800,color:C.purple}}>{needH}s</div></div><div style={{textAlign:"right"}}><div style={{fontSize:11,color:C.dim}}>Kalan Hak</div><div style={{fontSize:18,fontWeight:800,color:avD>=0?C.green:C.red}}>{avD}g</div></div></div>
         {willDebt&&<><div style={{marginTop:8,background:C.redD,borderRadius:8,padding:"6px 10px",textAlign:"center"}}><span style={{fontSize:12,color:C.red,fontWeight:700}}>⚠ {debtAmt} gün borçlanma olacak</span></div><div style={{marginTop:10}}><div style={{...S.lbl,color:C.red}}>📝 Fazla izin sebebi (zorunlu)</div><textarea style={{...S.ta,borderColor:`${C.red}66`,minHeight:60}} placeholder="Neden fazla izin istiyorsunuz?" value={leaveReason} onChange={e=>setLeaveReason(e.target.value)}/></div></>}
         {!willDebt&&calMode==="select"&&<div style={{marginTop:10}}><div style={S.lbl}>📝 İzin sebebi (isteğe bağlı)</div><textarea style={{...S.ta,minHeight:50}} placeholder="İzin sebebiniz..." value={leaveReason} onChange={e=>setLeaveReason(e.target.value)}/></div>}
+        <div style={{marginTop:10}}><div style={{...S.lbl,color:C.orange}}>📄 İzin Belgesi Fotoğrafı (zorunlu)</div>
+          <div style={{...S.fInp,borderColor:leaveDoc?C.green+"88":C.orange+"88",background:leaveDoc?C.greenD:C.bg}} onClick={()=>leaveDocRef.current?.click()}>
+            <span style={{color:leaveDoc?C.green:C.muted}}>{leaveDoc?"✓ Belge yüklendi":"Fotoğraf çekin veya seçin..."}</span><span style={{fontSize:18}}>📄</span>
+          </div>
+          {leaveDoc&&<img src={leaveDoc} alt="" style={{width:"100%",maxHeight:160,objectFit:"cover",borderRadius:10,marginBottom:8}}/>}
+          <input ref={leaveDocRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>handleLeaveDoc(e,setLeaveDoc,setLeaveDocFile)}/>
+        </div>
       </div>}
       {isSel&&<div>
         {calMode==="select"&&<button style={S.btn(willDebt?C.orange:C.teal)} onClick={submitLeaveReq} disabled={submitting}>{submitting?"Gönderiliyor...":willDebt?`⚠ Borçlanarak İzin Gönder (${calSel.length} gun)`:`📅 Onaya Gönder (${calSel.length} gun)`}</button>}
         {calMode==="modify"&&<button style={S.btn(C.orange)} onClick={modifyLeave} disabled={submitting}>{submitting?"...":"📅 Tarihleri Değiştir"}</button>}
         <button style={S.btn(C.border,C.text)} onClick={()=>{setCalMode("view");setCalSel([]);setCalModId(null);setLeaveReason("");}}>İptal</button>
       </div>}
-      {!isSel&&isPerso&&<button style={S.btn(C.teal)} onClick={()=>{setCalMode("select");setCalSel([]);setLeaveReason("");}}>📅 İzin Günlerini Seç</button>}
+      {!isSel&&isPerso&&!hourlyMode&&<div style={{display:"flex",gap:8}}>
+        <button style={{...S.btn(C.teal),flex:1}} onClick={()=>{setCalMode("select");setCalSel([]);setLeaveReason("");setLeaveDoc(null);setLeaveDocFile(null);}}>📅 Günlük İzin</button>
+        <button style={{...S.btn(C.blueD,C.blue),flex:1}} onClick={()=>{setHourlyMode(true);setHourlyForm({date:todayStr(),startTime:"",endTime:"",reason:""});setHourlyLeaveDoc(null);setHourlyLeaveDocFile(null);}}>🕐 Saatlik İzin</button>
+      </div>}
+      {hourlyMode&&<div style={{...S.lawBox,marginTop:12}}>
+        <div style={{fontSize:15,fontWeight:700,marginBottom:12,display:"flex",alignItems:"center",gap:8}}>🕐 Saatlik İzin Talebi</div>
+        <div style={S.lbl}>Tarih</div>
+        <div style={S.fInp} onClick={()=>setShowHourlyDatePicker(true)}><span style={{color:hourlyForm.date?C.text:C.muted}}>{hourlyForm.date?fD(hourlyForm.date):"Tarih seçin..."}</span><span style={{fontSize:18}}>📅</span></div>
+        <div style={{display:"flex",gap:10}}>
+          <div style={{flex:1}}><div style={S.lbl}>Çıkış Saati</div><div style={S.fInp} onClick={()=>setShowHourlyStartTP(true)}><span style={{color:hourlyForm.startTime?C.text:C.muted}}>{hourlyForm.startTime||"Saat"}</span><span>🕐</span></div></div>
+          <div style={{flex:1}}><div style={S.lbl}>Dönüş Saati</div><div style={S.fInp} onClick={()=>setShowHourlyEndTP(true)}><span style={{color:hourlyForm.endTime?C.text:C.muted}}>{hourlyForm.endTime||"Saat"}</span><span>🕐</span></div></div>
+        </div>
+        {hourlyForm.startTime&&hourlyForm.endTime&&(()=>{const[sh,sm]=hourlyForm.startTime.split(":").map(Number);const[eh,em]=hourlyForm.endTime.split(":").map(Number);const mins=(eh*60+em)-(sh*60+sm);const hrs=mins>0?Math.round(mins/60*10)/10:0;return hrs>0?<div style={{background:C.accentD,borderRadius:8,padding:"8px 12px",marginBottom:10,textAlign:"center"}}><span style={{fontSize:16,fontWeight:800,color:C.accent}}>{hrs} saat</span><span style={{color:C.dim,fontSize:12}}> izin kullanılacak</span></div>:null;})()}
+        <div style={S.lbl}>📝 Sebep (zorunlu, min 10 karakter)</div>
+        <textarea style={S.ta} placeholder="İzin sebebinizi yazın..." value={hourlyForm.reason} onChange={e=>setHourlyForm(p=>({...p,reason:e.target.value}))}/>
+        <div style={{fontSize:11,color:hourlyForm.reason.length>=10?C.green:C.muted,marginTop:-6,marginBottom:10,textAlign:"right"}}>{hourlyForm.reason.length}/10</div>
+        <div style={{...S.lbl,color:C.orange}}>📄 İzin Belgesi Fotoğrafı (zorunlu)</div>
+        <div style={{...S.fInp,borderColor:hourlyLeaveDoc?C.green+"88":C.orange+"88",background:hourlyLeaveDoc?C.greenD:C.bg}} onClick={()=>hourlyLeaveDocRef.current?.click()}>
+          <span style={{color:hourlyLeaveDoc?C.green:C.muted}}>{hourlyLeaveDoc?"✓ Belge yüklendi":"Fotoğraf çekin veya seçin..."}</span><span style={{fontSize:18}}>📄</span>
+        </div>
+        {hourlyLeaveDoc&&<img src={hourlyLeaveDoc} alt="" style={{width:"100%",maxHeight:160,objectFit:"cover",borderRadius:10,marginBottom:8}}/>}
+        <input ref={hourlyLeaveDocRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>handleLeaveDoc(e,setHourlyLeaveDoc,setHourlyLeaveDocFile)}/>
+        <button style={S.btn(C.blue)} onClick={submitHourlyLeave} disabled={submitting}>{submitting?"Gönderiliyor...":"🕐 Saatlik İzin Gönder"}</button>
+        <button style={S.btn(C.border,C.text)} onClick={()=>{setHourlyMode(false);setHourlyLeaveDoc(null);setHourlyLeaveDocFile(null);}}>İptal</button>
+      </div>}
       {!isSel&&<div style={{marginTop:16}}>
         <div style={S.sec}><span>🏖</span> İzin Talepleri</div>
-        {(isPerso?leavesState.filter(l=>l.personnel_id===profile.id):leavesState).filter(l=>l.status!=="rejected").map(l=>{const p=getU(l.personnel_id);const dates=Array.isArray(l.dates)?l.dates:[];return(<div key={l.id} style={S.crd} onClick={()=>setSelLV(l)}><div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}><div>{!isPerso&&<div style={{fontSize:13,fontWeight:600,marginBottom:4}}>{p?.full_name}</div>}<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{dates.map(d=><span key={d} style={S.tag(l.status==="approved"?C.greenD:C.orangeD,l.status==="approved"?C.green:C.orange)}>{fDS(d)}</span>)}</div>{l.reason&&<div style={{fontSize:10,color:l.reason.includes("borc")?C.red:C.dim,marginTop:4}}>{l.reason.length>50?l.reason.slice(0,50)+"...":l.reason}</div>}</div><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:700}}>{dates.length}g</div><div style={S.tag(sColor(l.status)+"22",sColor(l.status))}>{sIcon(l.status)}</div></div></div>{(isPerso||isAdmin)&&l.status!=="approved"&&<button style={{...S.btnS(C.orangeD,C.orange),marginTop:8,fontSize:11}} onClick={e=>{e.stopPropagation();startModLV(l);}}>🔄 Tarihleri Değiştir</button>}</div>);})}
+        {(isPerso?leavesState.filter(l=>l.personnel_id===profile.id):leavesState).filter(l=>l.status!=="rejected").map(l=>{const p=getU(l.personnel_id);const dates=Array.isArray(l.dates)?l.dates:[];const isHourly=l.leave_type==="hourly";return(<div key={l.id} style={S.crd} onClick={()=>setSelLV(l)}><div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}><div>{!isPerso&&<div style={{fontSize:13,fontWeight:600,marginBottom:4}}>{p?.full_name}</div>}{isHourly?<div><div style={{...S.tag(C.blueD,C.blue),marginBottom:4}}>🕐 Saatlik İzin</div><div style={{fontSize:12,color:C.text}}>{fDS(dates[0])} • {l.leave_start_time?.slice(0,5)}-{l.leave_end_time?.slice(0,5)}</div></div>:<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{dates.map(d=><span key={d} style={S.tag(l.status==="approved"?C.greenD:C.orangeD,l.status==="approved"?C.green:C.orange)}>{fDS(d)}</span>)}</div>}{l.reason&&<div style={{fontSize:10,color:l.reason.includes("borc")?C.red:C.dim,marginTop:4}}>{l.reason.length>50?l.reason.slice(0,50)+"...":l.reason}</div>}</div><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:700}}>{isHourly?l.total_hours+"s":dates.length+"g"}</div><div style={S.tag(sColor(l.status)+"22",sColor(l.status))}>{sIcon(l.status)}</div>{l.leave_doc_url&&<div style={{fontSize:10,color:C.green,marginTop:2}}>📄</div>}</div></div>{!isHourly&&(isPerso||isAdmin)&&l.status!=="approved"&&<button style={{...S.btnS(C.orangeD,C.orange),marginTop:8,fontSize:11}} onClick={e=>{e.stopPropagation();startModLV(l);}}>🔄 Tarihleri Değiştir</button>}</div>);})}
       </div>}
     </div>);
   };
@@ -526,10 +609,18 @@ export default function App(){
     return(<div style={S.mod} onClick={()=>setSelLV(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:12}}>Izin Detayı</div>
       {p&&<div style={{fontSize:13,color:C.dim,marginBottom:12}}>{p.full_name}</div>}
-      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>{dates.map(d=><span key={d} style={S.tag(l.status==="approved"?C.greenD:C.orangeD,l.status==="approved"?C.green:C.orange)}>{fD(d)}</span>)}</div>
-      <div style={{fontSize:14,marginBottom:8}}>Toplam: <strong>{dates.length} gun</strong> ({l.total_hours} saat)</div>
+      {l.leave_type==="hourly"?<div style={{marginBottom:12}}>
+        <div style={{...S.tag(C.blueD,C.blue),marginBottom:8}}>🕐 Saatlik İzin</div>
+        <div style={{fontSize:14}}>Tarih: <strong>{fD(l.dates?.[0])}</strong></div>
+        <div style={{fontSize:14,marginTop:4}}>Saat: <strong>{l.leave_start_time?.slice(0,5)} - {l.leave_end_time?.slice(0,5)}</strong></div>
+        <div style={{fontSize:14,marginTop:4}}>Süre: <strong>{l.total_hours} saat</strong></div>
+      </div>:<>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>{dates.map(d=><span key={d} style={S.tag(l.status==="approved"?C.greenD:C.orangeD,l.status==="approved"?C.green:C.orange)}>{fD(d)}</span>)}</div>
+        <div style={{fontSize:14,marginBottom:8}}>Toplam: <strong>{dates.length} gün</strong> ({l.total_hours} saat)</div>
+      </>}
       <div style={S.tag(sColor(l.status)+"22",sColor(l.status))}>{sIcon(l.status)} {sText(l.status)}</div>
       {l.reason&&<div style={{marginTop:12,background:C.bg,borderRadius:8,padding:10,border:`1px solid ${C.border}`}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4}}>📝 Sebep</div><div style={{fontSize:13,color:l.reason.includes("borc")?C.red:C.text}}>{l.reason}</div></div>}
+      {l.leave_doc_url&&<div style={{marginTop:12}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4}}>📄 İzin Belgesi</div><img src={l.leave_doc_url} alt="" style={{width:"100%",maxHeight:300,objectFit:"cover",borderRadius:10}}/></div>}
       {prevDates.length>0&&<div style={{fontSize:12,color:C.orange,marginTop:12}}>🔄 Önceki: {prevDates.map(d=>fD(d)).join(", ")}</div>}
       <button style={S.btn(C.border,C.text)} onClick={()=>setSelLV(null)}>Kapat</button>
     </div></div>);
@@ -593,6 +684,9 @@ export default function App(){
       {showStartTP&&<CustomTimePicker value={otForm.startTime||"17:00"} onChange={v=>setOtForm(p=>({...p,startTime:v}))} onClose={()=>setShowStartTP(false)} label="Başlangıç Saati"/>}
       {showEndTP&&<CustomTimePicker value={otForm.endTime||"18:00"} onChange={v=>setOtForm(p=>({...p,endTime:v}))} onClose={()=>setShowEndTP(false)} label="Bitiş Saati"/>}
       {showPWA&&<PWAInstallGuide onClose={()=>setShowPWA(false)}/>}
+      {showHourlyDatePicker&&<CustomDatePicker value={hourlyForm.date||todayStr()} onChange={v=>setHourlyForm(p=>({...p,date:v}))} onClose={()=>setShowHourlyDatePicker(false)}/>}
+      {showHourlyStartTP&&<CustomTimePicker value={hourlyForm.startTime||"08:00"} onChange={v=>setHourlyForm(p=>({...p,startTime:v}))} onClose={()=>setShowHourlyStartTP(false)} label="Çıkış Saati"/>}
+      {showHourlyEndTP&&<CustomTimePicker value={hourlyForm.endTime||"17:00"} onChange={v=>setHourlyForm(p=>({...p,endTime:v}))} onClose={()=>setShowHourlyEndTP(false)} label="Dönüş Saati"/>}
       {toast&&<div style={S.tst}>{toast}</div>}
     </div>
   );
