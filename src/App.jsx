@@ -71,7 +71,6 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Realtime subscriptions
   useEffect(() => {
     if (!session) return;
     const ch1 = subscribeToChanges('overtimes', () => fetchOvertimes());
@@ -107,6 +106,7 @@ export default function App() {
   function remHours(pid) { return Math.round((totApproved(pid) - totUsedLV(pid)) * 10) / 10; }
   function totOTH(pid) { return overtimes.filter(o => o.personnel_id === pid && o.status === "approved").reduce((s, o) => s + Number(o.hours), 0); }
   function remDays(pid) { return Math.round((remHours(pid) / 8) * 10) / 10; }
+  function pendCount(pid) { return overtimes.filter(o => o.personnel_id === pid && (o.status === "pending_chef" || o.status === "pending_manager")).length + leavesState.filter(l => l.personnel_id === pid && (l.status === "pending_chef" || l.status === "pending_manager")).length; }
 
   // ═══ ACTIONS ═══
   async function doLogin() {
@@ -175,14 +175,8 @@ export default function App() {
     setSubmitting(true);
     try {
       let photoBeforeUrl = null, photoAfterUrl = null;
-      if (otForm.fileB) {
-        const { url } = await uploadPhoto(otForm.fileB, 'before');
-        photoBeforeUrl = url;
-      }
-      if (otForm.fileA) {
-        const { url } = await uploadPhoto(otForm.fileA, 'after');
-        photoAfterUrl = url;
-      }
+      if (otForm.fileB) { const { url } = await uploadPhoto(otForm.fileB, 'before'); photoBeforeUrl = url; }
+      if (otForm.fileA) { const { url } = await uploadPhoto(otForm.fileA, 'after'); photoAfterUrl = url; }
 
       const lH = calcLH(hours);
       await createOvertime({
@@ -202,9 +196,7 @@ export default function App() {
       setOtForm({ date: "", startTime: "17:00", endTime: "", desc: "", photoBefore: null, photoAfter: null, fileB: null, fileA: null });
       setOtErrors([]); setModNewOT(false);
       setToast(`✓ ${hours}s mesai → ${lH}s izin hakkı onaya gönderildi`);
-    } catch (err) {
-      setToast("❌ Hata: " + err.message);
-    }
+    } catch (err) { setToast("❌ Hata: " + err.message); }
     setSubmitting(false);
   }
 
@@ -214,13 +206,7 @@ export default function App() {
     if (remHours(profile.id) < needH) { setToast("⚠ Yeterli hak yok"); return; }
     setSubmitting(true);
     try {
-      await createLeave({
-        personnel_id: profile.id,
-        dates: calSel.sort(),
-        total_hours: needH,
-        reason: "Fazla mesai karşılığı izin",
-        status: "pending_chef"
-      });
+      await createLeave({ personnel_id: profile.id, dates: calSel.sort(), total_hours: needH, reason: "Fazla mesai karşılığı izin", status: "pending_chef" });
       await fetchLeaves();
       setCalSel([]); setCalMode("view");
       setToast(`✓ ${calSel.length} günlük izin onaya gönderildi`);
@@ -234,14 +220,7 @@ export default function App() {
     if (!lv) return;
     setSubmitting(true);
     try {
-      await updateLeave(calModId, {
-        previous_dates: lv.dates,
-        dates: calSel.sort(),
-        total_hours: calSel.length * 8,
-        status: "pending_chef",
-        approved_by_chef: false,
-        approved_by_manager: false
-      });
+      await updateLeave(calModId, { previous_dates: lv.dates, dates: calSel.sort(), total_hours: calSel.length * 8, status: "pending_chef", approved_by_chef: false, approved_by_manager: false });
       await fetchLeaves();
       setCalSel([]); setCalMode("view"); setCalModId(null);
       setToast("✓ Tarihler değiştirildi, onaya gönderildi");
@@ -264,15 +243,7 @@ export default function App() {
       const { data, error } = await supabase.auth.signUp({ email: nUser.email, password: nUser.password });
       if (error) throw error;
       if (data.user) {
-        await supabase.from('profiles').insert({
-          id: data.user.id,
-          username: nUser.email.split('@')[0],
-          full_name: nUser.name,
-          role: nUser.role,
-          user_role: nUser.userRole,
-          night_shift: nUser.night,
-          active: true
-        });
+        await supabase.from('profiles').insert({ id: data.user.id, username: nUser.email.split('@')[0], full_name: nUser.name, role: nUser.role, user_role: nUser.userRole, night_shift: nUser.night, active: true });
       }
       await fetchProfiles();
       setNUser({ name: "", email: "", password: "", role: "", night: false, userRole: "personnel" });
@@ -306,12 +277,12 @@ export default function App() {
     av: (bg, sz) => ({ width: sz || 40, height: sz || 40, borderRadius: 10, background: bg || C.accentD, display: "flex", alignItems: "center", justifyContent: "center", fontSize: sz ? sz * 0.38 : 15, fontWeight: 700, flexShrink: 0 }),
     btn: (bg, clr) => ({ padding: "10px 20px", border: "none", borderRadius: 10, background: bg, color: clr || "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", width: "100%", marginTop: 8, boxSizing: "border-box", opacity: submitting ? 0.6 : 1 }),
     btnS: (bg, clr) => ({ padding: "6px 14px", border: "none", borderRadius: 8, background: bg, color: clr || "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer" }),
-    inp: { width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.bg, color: C.text, fontSize: 14, outline: "none", boxSizing: "border-box", marginBottom: 10 },
+    inp: { width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.bg, color: C.text, fontSize: 16, outline: "none", boxSizing: "border-box", marginBottom: 10 },
     sel: { width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.bg, color: C.text, fontSize: 14, outline: "none", boxSizing: "border-box", marginBottom: 10, appearance: "none" },
-    ta: { width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.bg, color: C.text, fontSize: 14, outline: "none", minHeight: 80, resize: "vertical", boxSizing: "border-box", marginBottom: 10, fontFamily: "inherit" },
+    ta: { width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.bg, color: C.text, fontSize: 16, outline: "none", minHeight: 80, resize: "vertical", boxSizing: "border-box", marginBottom: 10, fontFamily: "inherit" },
     lbl: { fontSize: 12, color: C.dim, marginBottom: 4, display: "block", fontWeight: 600 },
     mod: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" },
-    modC: { background: C.card, borderRadius: "20px 20px 0 0", padding: "20px 16px 32px", width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto" },
+    modC: { background: C.card, borderRadius: "20px 20px 0 0", padding: "20px 16px 32px", width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto", WebkitOverflowScrolling: "touch" },
     modH: { width: 40, height: 4, borderRadius: 2, background: C.border, margin: "0 auto 16px" },
     tag: (bg, clr) => ({ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, padding: "3px 8px", borderRadius: 6, background: bg, color: clr, fontWeight: 600 }),
     dv: { height: 1, background: C.border, margin: "12px 0" },
@@ -326,6 +297,7 @@ export default function App() {
     pBox: (has) => ({ width: "48%", aspectRatio: "1", borderRadius: 12, border: `2px dashed ${has ? C.green : C.border}`, background: has ? "transparent" : C.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", cursor: "pointer", overflow: "hidden", position: "relative" }),
     lawBox: { background: "linear-gradient(135deg, rgba(99,102,241,0.1), rgba(168,85,247,0.1))", border: `1px solid ${C.accent}44`, borderRadius: 12, padding: 14, marginBottom: 12 },
     errBox: { background: C.redD, border: `1px solid ${C.red}44`, borderRadius: 10, padding: 12, marginBottom: 12 },
+    back: { display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: C.accent, background: "none", border: "none", cursor: "pointer", padding: "0 0 12px", fontWeight: 600 },
   };
 
   const pendOTs = overtimes.filter(o => (isChef && o.status === "pending_chef") || (isAdmin && o.status === "pending_manager"));
@@ -439,21 +411,91 @@ export default function App() {
               <div>{!isPerso && <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{p?.full_name}</div>}<div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>{l.dates.map(d => <span key={d} style={S.tag(l.status === "approved" ? C.greenD : C.orangeD, l.status === "approved" ? C.green : C.orange)}>{fDS(d)}</span>)}</div>{l.previous_dates && <div style={{ fontSize: 10, color: C.orange, marginTop: 4 }}>🔄 Değiştirildi</div>}</div>
               <div style={{ textAlign: "right" }}><div style={{ fontSize: 16, fontWeight: 700 }}>{l.dates.length}g</div><div style={S.tag(sColor(l.status) + "22", sColor(l.status))}>{sIcon(l.status)}</div></div>
             </div>
-            {(isPerso || isAdmin) && <button style={{ ...S.btnS(C.orangeD, C.orange), marginTop: 8, fontSize: 11 }} onClick={e => { e.stopPropagation(); startModLV(l); }}>🔄 Tarihleri Değiştir</button>}
+            {(isPerso || isAdmin) && l.status !== "approved" && <button style={{ ...S.btnS(C.orangeD, C.orange), marginTop: 8, fontSize: 11 }} onClick={e => { e.stopPropagation(); startModLV(l); }}>🔄 Tarihleri Değiştir</button>}
           </div>);
         })}
       </div>}
     </div>);
   }
 
-  // ═══ PAGES ═══
-  // Dashboard, PersonDetail, Approvals, Admin pages follow the same structure
-  // as the prototype but use Supabase field names (personnel_id, work_date, etc.)
-  // For brevity, key render sections below:
+  // ═══ PERSON DETAIL (NEW) ═══
+  function PersonDetail() {
+    const p = getU(selPerson);
+    if (!p) return <div style={S.emp}>Personel bulunamadı</div>;
 
+    const pOTs = overtimes.filter(o => o.personnel_id === p.id).sort((a, b) => b.work_date?.localeCompare(a.work_date));
+    const pLVs = leavesState.filter(l => l.personnel_id === p.id && l.status !== "rejected");
+    const tOT = totOTH(p.id), tLH = totApproved(p.id), uH = totUsedLV(p.id), rH = remHours(p.id);
+    const pend = pendCount(p.id);
+
+    return (<div>
+      <button style={S.back} onClick={() => { setSelPerson(null); setPage("dashboard"); }}>← Geri</button>
+
+      {/* Kişi kartı */}
+      <div style={{ ...S.crd, background: "linear-gradient(135deg,#1e1b4b,#312e81)", cursor: "default" }}>
+        <div style={S.row}>
+          <div style={S.av(C.accentD, 50)}>{ini(p.full_name)}</div>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>{p.full_name}</div>
+            <div style={{ fontSize: 12, color: C.dim }}>{p.role}{p.night_shift ? " • 🌙 Gece Nöbeti" : ""}</div>
+          </div>
+        </div>
+        <div style={S.stB}>
+          <div style={S.st(C.accentD)}><div style={{ fontSize: 16, fontWeight: 800, color: C.accent }}>{tOT}s</div><div style={{ fontSize: 9, color: C.dim }}>Çalışılan</div></div>
+          <div style={S.st(C.purpleD)}><div style={{ fontSize: 16, fontWeight: 800, color: C.purple }}>{tLH}s</div><div style={{ fontSize: 9, color: C.dim }}>İzin Hakkı</div></div>
+          <div style={S.st(C.greenD)}><div style={{ fontSize: 16, fontWeight: 800, color: C.green }}>{uH}s</div><div style={{ fontSize: 9, color: C.dim }}>Kullanılan</div></div>
+          <div style={S.st("rgba(255,255,255,0.08)")}><div style={{ fontSize: 16, fontWeight: 800 }}>{rH}s</div><div style={{ fontSize: 9, color: C.dim }}>Kalan</div></div>
+        </div>
+        {pend > 0 && <div style={{ marginTop: 8, textAlign: "center" }}><span style={S.tag(C.orangeD, C.orange)}>⏳ {pend} bekleyen talep</span></div>}
+      </div>
+
+      {/* Fazla mesai geçmişi */}
+      <div style={{ ...S.sec, marginTop: 16 }}><span>⏱</span> Fazla Mesai Kayıtları ({pOTs.length})</div>
+      {pOTs.length === 0 && <div style={{ ...S.emp, padding: "20px" }}>Henüz mesai kaydı yok</div>}
+      {pOTs.map(o => (
+        <div key={o.id} style={S.crd} onClick={() => setSelOT(o)}>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{fD(o.work_date)}</div>
+              <div style={{ fontSize: 11, color: C.dim }}>{o.start_time?.slice(0, 5)}→{o.end_time?.slice(0, 5)}</div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: C.accent }}>{o.hours}s<span style={{ color: C.purple, fontSize: 12 }}> →{o.leave_hours}s</span></div>
+              <div style={S.tag(sColor(o.status) + "22", sColor(o.status))}>{sIcon(o.status)} {sText(o.status)}</div>
+            </div>
+          </div>
+          {o.description && <div style={{ fontSize: 12, color: C.dim, marginTop: 6, borderTop: `1px solid ${C.border}`, paddingTop: 6 }}>{o.description}</div>}
+          {(o.photo_before || o.photo_after) && <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            {o.photo_before && <img src={o.photo_before} style={{ width: 48, height: 48, borderRadius: 8, objectFit: "cover" }} alt="Önce" />}
+            {o.photo_after && <img src={o.photo_after} style={{ width: 48, height: 48, borderRadius: 8, objectFit: "cover" }} alt="Sonra" />}
+          </div>}
+        </div>
+      ))}
+
+      {/* İzin talepleri */}
+      <div style={{ ...S.sec, marginTop: 16 }}><span>🏖</span> İzin Talepleri ({pLVs.length})</div>
+      {pLVs.length === 0 && <div style={{ ...S.emp, padding: "20px" }}>Henüz izin talebi yok</div>}
+      {pLVs.map(l => (
+        <div key={l.id} style={S.crd}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
+            <div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>{l.dates.map(d => <span key={d} style={S.tag(l.status === "approved" ? C.greenD : C.orangeD, l.status === "approved" ? C.green : C.orange)}>{fDS(d)}</span>)}</div>
+              {l.previous_dates && <div style={{ fontSize: 10, color: C.orange, marginTop: 4 }}>🔄 Eski: {l.previous_dates.map(d => fDS(d)).join(", ")}</div>}
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>{l.dates.length}g</div>
+              <div style={S.tag(sColor(l.status) + "22", sColor(l.status))}>{sIcon(l.status)}</div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>);
+  }
+
+  // ═══ DASHBOARD ═══
   function Dashboard() {
     if (isPerso) {
-      const myOTs = overtimes.filter(o => o.personnel_id === profile.id);
+      const myOTs = overtimes.filter(o => o.personnel_id === profile.id).sort((a, b) => b.work_date?.localeCompare(a.work_date));
       const tOT = totOTH(profile.id), tLH = totApproved(profile.id), uH = totUsedLV(profile.id), rH = remHours(profile.id);
       return (<div>
         <div style={{ ...S.crd, background: "linear-gradient(135deg,#1e1b4b,#312e81)", cursor: "default" }}>
@@ -468,22 +510,49 @@ export default function App() {
         <button style={S.btn(C.accent)} onClick={() => { setOtForm({ date: new Date().toISOString().split("T")[0], startTime: "17:00", endTime: "", desc: "", photoBefore: null, photoAfter: null, fileB: null, fileA: null }); setOtErrors([]); setModNewOT(true); }}>+ Fazla Mesai Bildir</button>
         <div style={{ height: 12 }} />
         <div style={S.sec}><span>⏱</span> Son Mesailer</div>
-        {myOTs.slice(0, 5).map(o => (<div key={o.id} style={S.crd} onClick={() => setSelOT(o)}><div style={{ display: "flex", justifyContent: "space-between" }}><div><div style={{ fontSize: 13, fontWeight: 600 }}>{fD(o.work_date)}</div><div style={{ fontSize: 11, color: C.dim }}>{o.start_time?.slice(0, 5)}→{o.end_time?.slice(0, 5)}</div></div><div style={{ textAlign: "right" }}><div style={{ fontSize: 16, fontWeight: 800, color: C.accent }}>{o.hours}s<span style={{ color: C.purple, fontSize: 12 }}> →{o.leave_hours}s</span></div><div style={S.tag(sColor(o.status) + "22", sColor(o.status))}>{sIcon(o.status)}</div></div></div></div>))}
+        {myOTs.length === 0 && <div style={S.emp}>Henüz mesai kaydı yok</div>}
+        {myOTs.slice(0, 10).map(o => (<div key={o.id} style={S.crd} onClick={() => setSelOT(o)}>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <div><div style={{ fontSize: 13, fontWeight: 600 }}>{fD(o.work_date)}</div><div style={{ fontSize: 11, color: C.dim }}>{o.start_time?.slice(0, 5)}→{o.end_time?.slice(0, 5)}</div></div>
+            <div style={{ textAlign: "right" }}><div style={{ fontSize: 16, fontWeight: 800, color: C.accent }}>{o.hours}s<span style={{ color: C.purple, fontSize: 12 }}> →{o.leave_hours}s</span></div><div style={S.tag(sColor(o.status) + "22", sColor(o.status))}>{sIcon(o.status)}</div></div>
+          </div>
+          {o.description && <div style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>{o.description.slice(0, 60)}{o.description.length > 60 ? "..." : ""}</div>}
+        </div>))}
       </div>);
     }
+
+    // Admin/Chef dashboard
     const list = isAdmin ? profiles.filter(u => u.active && u.id !== profile.id) : activePers;
     return (<div>
       <div style={S.sG}>
-        <div style={S.sC(C.accentD)}><div style={{ fontSize: 24, fontWeight: 800, color: C.accent }}>{overtimes.filter(o => o.status === "approved").reduce((s, o) => s + Number(o.hours), 0)}s</div><div style={{ fontSize: 10, color: C.dim, marginTop: 4 }}>Çalışılan</div></div>
-        <div style={S.sC(C.purpleD)}><div style={{ fontSize: 24, fontWeight: 800, color: C.purple }}>{overtimes.filter(o => o.status === "approved").reduce((s, o) => s + Number(o.leave_hours), 0)}s</div><div style={{ fontSize: 10, color: C.dim, marginTop: 4 }}>İzin Hakkı</div></div>
-        <div style={S.sC(C.greenD)}><div style={{ fontSize: 24, fontWeight: 800, color: C.green }}>{leavesState.filter(l => l.status === "approved").reduce((s, l) => s + l.dates.length, 0)}g</div><div style={{ fontSize: 10, color: C.dim, marginTop: 4 }}>Kull. İzin</div></div>
-        <div style={S.sC(C.orangeD)}><div style={{ fontSize: 24, fontWeight: 800, color: C.orange }}>{totPend}</div><div style={{ fontSize: 10, color: C.dim, marginTop: 4 }}>Bekleyen</div></div>
+        <div style={S.sC(C.orangeD)} onClick={() => totPend > 0 && setPage("approvals")}><div style={{ fontSize: 24, fontWeight: 800, color: C.orange }}>{totPend}</div><div style={{ fontSize: 10, color: C.dim, marginTop: 4 }}>Bekleyen</div></div>
+        <div style={S.sC(C.accentD)}><div style={{ fontSize: 24, fontWeight: 800, color: C.accent }}>{list.length}</div><div style={{ fontSize: 10, color: C.dim, marginTop: 4 }}>Personel</div></div>
+        <div style={S.sC(C.greenD)}><div style={{ fontSize: 24, fontWeight: 800, color: C.green }}>{overtimes.filter(o => o.status === "approved").reduce((s, o) => s + Number(o.hours), 0)}s</div><div style={{ fontSize: 10, color: C.dim, marginTop: 4 }}>Toplam Mesai</div></div>
+        <div style={S.sC(C.purpleD)}><div style={{ fontSize: 24, fontWeight: 800, color: C.purple }}>{leavesState.filter(l => l.status === "approved").reduce((s, l) => s + l.dates.length, 0)}g</div><div style={{ fontSize: 10, color: C.dim, marginTop: 4 }}>Kull. İzin</div></div>
       </div>
       <div style={S.sec}><span>👥</span> Personel</div>
-      {list.map((p, i) => { const rD = remDays(p.id); return (<div key={p.id} style={S.crd} onClick={() => { setSelPerson(p.id); setPage("person"); }}><div style={S.row}><div style={S.av(getAv(i))}>{ini(p.full_name)}</div><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600 }}>{p.full_name}</div><div style={{ fontSize: 11, color: C.dim }}>{p.role}</div></div><div style={{ textAlign: "right" }}><div style={{ fontSize: 18, fontWeight: 800, color: rD > 0 ? C.green : C.muted }}>{rD}</div><div style={{ fontSize: 10, color: C.dim }}>gün</div></div></div></div>); })}
+      {list.map((p, i) => {
+        const rD = remDays(p.id);
+        const pend = pendCount(p.id);
+        return (<div key={p.id} style={S.crd} onClick={() => { setSelPerson(p.id); setPage("person"); }}>
+          <div style={S.row}>
+            <div style={S.av(getAv(i))}>{ini(p.full_name)}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>{p.full_name}</div>
+              <div style={{ fontSize: 11, color: C.dim }}>{p.role}{p.night_shift ? " • 🌙" : ""}</div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              {pend > 0 && <div style={{ ...S.tag(C.orangeD, C.orange), marginBottom: 4 }}>⏳ {pend}</div>}
+              <div style={{ fontSize: 18, fontWeight: 800, color: rD > 0 ? C.green : C.muted }}>{rD}</div>
+              <div style={{ fontSize: 10, color: C.dim }}>gün</div>
+            </div>
+          </div>
+        </div>);
+      })}
     </div>);
   }
 
+  // ═══ APPROVALS ═══
   function Approvals() {
     if (isPerso) return <div style={S.emp}>Erişim yok</div>;
     return (<div>
@@ -492,7 +561,7 @@ export default function App() {
       {pendOTs.map(o => { const p = getU(o.personnel_id); return (<div key={o.id} style={S.crd}>
         <div style={S.row}><div style={S.av(C.orangeD)}>{ini(p?.full_name)}</div><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600 }}>{p?.full_name}</div><div style={{ fontSize: 11, color: C.dim }}>{fD(o.work_date)} • {o.start_time?.slice(0, 5)}→{o.end_time?.slice(0, 5)}</div></div><div style={{ textAlign: "right" }}><div style={{ fontSize: 18, fontWeight: 800, color: C.accent }}>{o.hours}s</div><div style={{ fontSize: 11, color: C.purple }}>→{o.leave_hours}s</div></div></div>
         <div style={{ fontSize: 12, color: C.dim, margin: "8px 0" }}>{o.description}</div>
-        {(o.photo_before || o.photo_after) && <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>{o.photo_before && <img src={o.photo_before} style={{ width: 52, height: 52, borderRadius: 8, objectFit: "cover" }} />}{o.photo_after && <img src={o.photo_after} style={{ width: 52, height: 52, borderRadius: 8, objectFit: "cover" }} />}</div>}
+        {(o.photo_before || o.photo_after) && <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>{o.photo_before && <img src={o.photo_before} style={{ width: 60, height: 60, borderRadius: 8, objectFit: "cover" }} alt="Önce" />}{o.photo_after && <img src={o.photo_after} style={{ width: 60, height: 60, borderRadius: 8, objectFit: "cover" }} alt="Sonra" />}</div>}
         <div style={{ display: "flex", gap: 8 }}><button style={S.btnS(C.green)} onClick={() => doApproveOT(o.id, isChef ? "chef" : "manager")}>✓ Onayla</button><button style={S.btnS(C.redD, C.red)} onClick={() => doRejectOT(o.id)}>✗ Reddet</button></div>
       </div>); })}
       <div style={{ ...S.sec, marginTop: 20 }}><span>🏖</span> İzin {pendLVs.length > 0 && <span style={S.tag(C.blueD, C.blue)}>{pendLVs.length}</span>}</div>
@@ -505,6 +574,7 @@ export default function App() {
     </div>);
   }
 
+  // ═══ ADMIN ═══
   function Admin() {
     if (!isAdmin) return <div style={S.emp}>Erişim yok</div>;
     return (<div>
@@ -517,19 +587,112 @@ export default function App() {
   }
 
   // ═══ MODALS ═══
+  // OT Detail Modal
+  function OTDetailMod() {
+    if (!selOT) return null;
+    const o = selOT;
+    const p = getU(o.personnel_id);
+    return (<div style={S.mod} onClick={() => setSelOT(null)}><div style={S.modC} onClick={e => e.stopPropagation()}>
+      <div style={S.modH} />
+      <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>Mesai Detayı</div>
+      {p && <div style={{ fontSize: 13, color: C.dim, marginBottom: 12 }}>{p.full_name}</div>}
+      <div style={{ ...S.lawBox }}>
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <div><div style={{ fontSize: 11, color: C.dim }}>Tarih</div><div style={{ fontSize: 15, fontWeight: 700 }}>{fD(o.work_date)}</div></div>
+          <div style={{ textAlign: "right" }}><div style={{ fontSize: 11, color: C.dim }}>Saat</div><div style={{ fontSize: 15, fontWeight: 700 }}>{o.start_time?.slice(0, 5)} → {o.end_time?.slice(0, 5)}</div></div>
+        </div>
+        <div style={S.dv} />
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <div><div style={{ fontSize: 11, color: C.dim }}>Çalışılan</div><div style={{ fontSize: 22, fontWeight: 800, color: C.accent }}>{o.hours}s</div></div>
+          <div><div style={{ fontSize: 11, color: C.dim }}>→ İzin (×1.5)</div><div style={{ fontSize: 22, fontWeight: 800, color: C.purple }}>{o.leave_hours}s</div></div>
+        </div>
+      </div>
+      <div style={{ marginBottom: 12 }}>
+        <div style={S.lbl}>Durum</div>
+        <div style={S.tag(sColor(o.status) + "22", sColor(o.status))}>{sIcon(o.status)} {sText(o.status)}</div>
+      </div>
+      <div style={{ marginBottom: 12 }}>
+        <div style={S.lbl}>Açıklama</div>
+        <div style={{ fontSize: 13, color: C.text, background: C.bg, borderRadius: 8, padding: 10, border: `1px solid ${C.border}` }}>{o.description || "Açıklama yok"}</div>
+      </div>
+      {(o.photo_before || o.photo_after) && <div>
+        <div style={S.lbl}>Fotoğraflar</div>
+        <div style={{ display: "flex", gap: 10 }}>
+          {o.photo_before && <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 10, color: C.orange, fontWeight: 700, marginBottom: 4 }}>ÖNCE</div>
+            <img src={o.photo_before} style={{ width: "100%", borderRadius: 10, objectFit: "cover" }} alt="Önce" />
+          </div>}
+          {o.photo_after && <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 10, color: C.green, fontWeight: 700, marginBottom: 4 }}>SONRA</div>
+            <img src={o.photo_after} style={{ width: "100%", borderRadius: 10, objectFit: "cover" }} alt="Sonra" />
+          </div>}
+        </div>
+      </div>}
+      <button style={S.btn(C.border, C.text)} onClick={() => setSelOT(null)}>Kapat</button>
+    </div></div>);
+  }
+
+  // Leave Detail Modal
+  function LVDetailMod() {
+    if (!selLV) return null;
+    const l = selLV;
+    const p = getU(l.personnel_id);
+    return (<div style={S.mod} onClick={() => setSelLV(null)}><div style={S.modC} onClick={e => e.stopPropagation()}>
+      <div style={S.modH} />
+      <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 12 }}>İzin Detayı</div>
+      {p && <div style={{ fontSize: 13, color: C.dim, marginBottom: 12 }}>{p.full_name}</div>}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>{l.dates.map(d => <span key={d} style={S.tag(l.status === "approved" ? C.greenD : C.orangeD, l.status === "approved" ? C.green : C.orange)}>{fD(d)}</span>)}</div>
+      <div style={{ fontSize: 14, marginBottom: 8 }}>Toplam: <strong>{l.dates.length} gün</strong> ({l.total_hours} saat)</div>
+      <div style={S.tag(sColor(l.status) + "22", sColor(l.status))}>{sIcon(l.status)} {sText(l.status)}</div>
+      {l.previous_dates && <div style={{ fontSize: 12, color: C.orange, marginTop: 12 }}>🔄 Önceki: {l.previous_dates.map(d => fD(d)).join(", ")}</div>}
+      {(isPerso || isAdmin) && l.status !== "approved" && <button style={{ ...S.btn(C.orangeD, C.orange), marginTop: 12 }} onClick={() => { startModLV(l); setSelLV(null); }}>🔄 Tarihleri Değiştir</button>}
+      <button style={S.btn(C.border, C.text)} onClick={() => setSelLV(null)}>Kapat</button>
+    </div></div>);
+  }
+
+  // New OT Modal - FIXED for mobile
   function NewOTMod() {
     if (!modNewOT) return null;
     return (<div style={S.mod} onClick={() => setModNewOT(false)}><div style={S.modC} onClick={e => e.stopPropagation()}>
       <div style={S.modH} /><div style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>Fazla Mesai Bildir</div><div style={{ fontSize: 12, color: C.dim, marginBottom: 16 }}>Tüm alanlar zorunlu</div>
-      <div style={S.lbl}>Tarih</div><input type="date" style={S.inp} value={otForm.date} onChange={e => setOtForm({ ...otForm, date: e.target.value })} />
-      <div style={{ display: "flex", gap: 10 }}><div style={{ flex: 1 }}><div style={S.lbl}>Başlangıç</div><input type="time" style={S.inp} value={otForm.startTime} onChange={e => setOtForm({ ...otForm, startTime: e.target.value })} /></div><div style={{ flex: 1 }}><div style={S.lbl}>Bitiş</div><input type="time" style={S.inp} value={otForm.endTime} onChange={e => setOtForm({ ...otForm, endTime: e.target.value })} /></div></div>
+
+      <div style={S.lbl}>Tarih</div>
+      <input type="date" style={S.inp} value={otForm.date}
+        onFocus={e => e.target.readOnly = false}
+        onChange={e => setOtForm(prev => ({ ...prev, date: e.target.value }))} />
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ flex: 1 }}>
+          <div style={S.lbl}>Başlangıç</div>
+          <input type="time" style={S.inp} value={otForm.startTime}
+            onFocus={e => e.target.readOnly = false}
+            onChange={e => setOtForm(prev => ({ ...prev, startTime: e.target.value }))} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={S.lbl}>Bitiş</div>
+          <input type="time" style={S.inp} value={otForm.endTime}
+            onFocus={e => e.target.readOnly = false}
+            onChange={e => setOtForm(prev => ({ ...prev, endTime: e.target.value }))} />
+        </div>
+      </div>
+
       {otForm.endTime && <div style={S.lawBox}><div style={{ display: "flex", justifyContent: "space-between" }}><div><div style={{ fontSize: 11, color: C.dim }}>Mesai</div><div style={{ fontSize: 24, fontWeight: 800, color: liveOTH > 0 ? C.accent : C.red }}>{liveOTH}s</div></div><div style={{ fontSize: 20, color: C.dim }}>→</div><div style={{ textAlign: "right" }}><div style={{ fontSize: 11, color: C.dim }}>İzin (×1.5)</div><div style={{ fontSize: 24, fontWeight: 800, color: C.purple }}>{liveLH}s</div></div></div><div style={{ fontSize: 10, color: C.muted, marginTop: 8, borderTop: `1px solid ${C.border}`, paddingTop: 8 }}>📋 İş Kanunu Md.41</div></div>}
+
       <div style={S.lbl}>📷 Fotoğraflar (2 zorunlu)</div>
       <div style={{ display: "flex", gap: 10, marginBottom: 12, justifyContent: "space-between" }}>
         <div style={S.pBox(!!otForm.photoBefore)} onClick={() => beforeRef.current?.click()}>{otForm.photoBefore ? <><img src={otForm.photoBefore} style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 10 }} /><div style={{ position: "absolute", bottom: 6, left: 6, fontSize: 10, background: "rgba(0,0,0,0.7)", padding: "2px 6px", borderRadius: 4, color: C.orange, fontWeight: 700 }}>ÖNCE ✓</div></> : <><div style={{ fontSize: 28 }}>📷</div><div style={{ fontSize: 11, color: C.orange, fontWeight: 600 }}>BAŞLANGIÇ</div></>}<input ref={beforeRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={e => handlePhoto(e, "before")} /></div>
         <div style={S.pBox(!!otForm.photoAfter)} onClick={() => afterRef.current?.click()}>{otForm.photoAfter ? <><img src={otForm.photoAfter} style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 10 }} /><div style={{ position: "absolute", bottom: 6, left: 6, fontSize: 10, background: "rgba(0,0,0,0.7)", padding: "2px 6px", borderRadius: 4, color: C.green, fontWeight: 700 }}>SONRA ✓</div></> : <><div style={{ fontSize: 28 }}>📷</div><div style={{ fontSize: 11, color: C.green, fontWeight: 600 }}>BİTİŞ</div></>}<input ref={afterRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={e => handlePhoto(e, "after")} /></div>
       </div>
-      <div style={S.lbl}>Açıklama (min 10 karakter)</div><textarea style={S.ta} placeholder="Ne yapıldı?" value={otForm.desc} onChange={e => setOtForm({ ...otForm, desc: e.target.value })} />
+
+      <div style={S.lbl}>Açıklama (min 10 karakter)</div>
+      <textarea
+        style={S.ta}
+        placeholder="Ne yapıldı?"
+        value={otForm.desc}
+        onFocus={e => { e.target.style.fontSize = '16px'; }}
+        onChange={e => setOtForm(prev => ({ ...prev, desc: e.target.value }))}
+      />
+
       {otErrors.length > 0 && <div style={S.errBox}>{otErrors.map((e, i) => <div key={i} style={{ fontSize: 12, color: C.red }}>• {e}</div>)}</div>}
       <button style={S.btn(C.accent)} onClick={submitOT} disabled={submitting}>{submitting ? "Gönderiliyor..." : "Onaya Gönder"}</button>
       <button style={S.btn(C.border, C.text)} onClick={() => { setModNewOT(false); setOtErrors([]); }}>İptal</button>
@@ -566,7 +729,7 @@ export default function App() {
   const navItems = isAdmin
     ? [{ k: "dashboard", i: "📊", l: "Özet" }, { k: "calendar", i: "📅", l: "Takvim" }, { k: "approvals", i: "✅", l: "Onaylar" }, { k: "admin", i: "⚙️", l: "Yönetim" }]
     : isChef
-    ? [{ k: "dashboard", i: "📊", l: "Özet" }, { k: "approvals", i: "✅", l: "Onaylar" }]
+    ? [{ k: "dashboard", i: "📊", l: "Özet" }, { k: "calendar", i: "📅", l: "Takvim" }, { k: "approvals", i: "✅", l: "Onaylar" }]
     : [{ k: "dashboard", i: "📊", l: "Özet" }, { k: "calendar", i: "📅", l: "Takvim" }];
 
   return (
@@ -580,12 +743,13 @@ export default function App() {
       </div>
       <div style={S.cnt}>
         {page === "dashboard" && <Dashboard />}
+        {page === "person" && <PersonDetail />}
         {page === "calendar" && <div><div style={S.sec}><span>📅</span> İzin Takvimi</div><Cal /></div>}
         {page === "approvals" && <Approvals />}
         {page === "admin" && <Admin />}
       </div>
-      <div style={S.nav}>{navItems.map(n => (<button key={n.k} style={S.navB(page === n.k)} onClick={() => { setPage(n.k); setSelPerson(null); setCalMode("view"); setCalSel([]); }}><span style={{ fontSize: 18 }}>{n.i}</span>{n.l}{n.k === "approvals" && totPend > 0 && <div style={S.dot} />}</button>))}</div>
-      <NewOTMod /><AddUserMod /><EditUserMod />
+      <div style={S.nav}>{navItems.map(n => (<button key={n.k} style={S.navB(page === n.k || (n.k === "dashboard" && page === "person"))} onClick={() => { setPage(n.k); setSelPerson(null); if (n.k !== "calendar") { setCalMode("view"); setCalSel([]); } }}><span style={{ fontSize: 18 }}>{n.i}</span>{n.l}{n.k === "approvals" && totPend > 0 && <div style={S.dot} />}</button>))}</div>
+      <NewOTMod /><AddUserMod /><EditUserMod /><OTDetailMod /><LVDetailMod />
       {toast && <div style={S.tst}>{toast}</div>}
     </div>
   );
