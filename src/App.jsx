@@ -464,7 +464,20 @@ export default function App(){
     const list=profiles.filter(u=>u.active&&u.id!==profile?.id);
     const debtors=list.filter(u=>debtDays(u.id)>0);
     const vPC=isViewer?allPendCount:totPend;
+    const myOTs=overtimes.filter(o=>o.personnel_id===profile.id).sort((a,b)=>(b.work_date||"").localeCompare(a.work_date||""));
+    const myTOT=totOTH(profile.id),myLH=totLH(profile.id),myUH=totUsedLV(profile.id),myRH=remHours(profile.id),myDebt=debtDays(profile.id);
     return(<div>
+      {/* Kendi özet kartım */}
+      <div style={{...S.crd,background:"linear-gradient(135deg,#1e1b4b,#312e81)",cursor:"default",marginBottom:12}}>
+        <div style={S.row}><div style={S.av(C.accentD,40)}>{ini(profile.full_name)}</div><div><div style={{fontSize:15,fontWeight:700}}>{profile.full_name}</div><div style={{fontSize:11,color:C.dim}}>{profile.role}</div></div></div>
+        <div style={S.stB}>
+          <div style={S.st(C.accentD)}><div style={{fontSize:14,fontWeight:800,color:C.accent}}>{myTOT}s</div><div style={{fontSize:9,color:C.dim}}>Mesai</div></div>
+          <div style={S.st(C.purpleD)}><div style={{fontSize:14,fontWeight:800,color:C.purple}}>{myLH}s</div><div style={{fontSize:9,color:C.dim}}>Hak</div></div>
+          <div style={S.st(C.greenD)}><div style={{fontSize:14,fontWeight:800,color:C.green}}>{myUH}s</div><div style={{fontSize:9,color:C.dim}}>Kullanılan</div></div>
+          <div style={S.st(myRH<0?C.redD:"rgba(255,255,255,0.08)")}><div style={{fontSize:14,fontWeight:800,color:myRH<0?C.red:C.text}}>{myRH}s</div><div style={{fontSize:9,color:C.dim}}>{myRH<0?"BORÇ":"Kalan"}</div></div>
+        </div>
+        <button style={{...S.btn(C.accent),marginTop:8}} onClick={()=>{setOtForm({date:todayStr(),startTime:"17:00",endTime:"",desc:"",photoBefore:null,photoAfter:null,fileB:null,fileA:null});setOtErrors([]);setModNewOT(true);}}>+ Fazla Mesai Bildir</button>
+      </div>
       <div style={{...S.crd,background:vPC>0?C.orangeD:C.card,cursor:vPC>0?"pointer":"default",textAlign:"center"}} onClick={()=>vPC>0&&setPage("approvals")}>
         <div style={{fontSize:28,fontWeight:800,color:vPC>0?C.orange:C.green}}>{vPC>0?vPC:"✓"}</div>
         <div style={{fontSize:12,color:C.dim}}>{vPC>0?"Onay Bekleyen Talep":"Bekleyen talep yok"}</div>
@@ -525,13 +538,13 @@ export default function App(){
     const dim=daysInMonth(calY,calM),fd=firstDay(calY,calM),isSel=calMode!=="view";
     const myLvs=isPerso?leavesState.filter(l=>l.personnel_id===profile.id&&l.status!=="rejected"):leavesState.filter(l=>l.status!=="rejected");
     const lvDates={};myLvs.forEach(l=>(Array.isArray(l.dates)?l.dates:[]).forEach(d=>{lvDates[d]={status:l.status,id:l.id};}));
-    const avD=isPerso?remDays(profile.id):0,today=todayStr();
+    const avD=remDays(profile.id),today=todayStr();
     function tog(d){if(!isSel)return;const ds=dateStr(calY,calM,d);if(ds<today){setToast("Geçmiş tarih seçilemez");return;}if(lvDates[ds]&&(!calModId||lvDates[ds].id!==calModId)){setToast("Bu tarihte izin var");return;}setCalSel(p=>p.includes(ds)?p.filter(x=>x!==ds):[...p,ds].sort());}
     function prev(){calM===0?(setCalY(calY-1),setCalM(11)):setCalM(calM-1);}
     function next(){calM===11?(setCalY(calY+1),setCalM(0)):setCalM(calM+1);}
     const cells=[];for(let i=0;i<fd;i++)cells.push(<div key={`e${i}`}/>);
     for(let d=1;d<=dim;d++){const ds=dateStr(calY,calM,d),isSeld=calSel.includes(ds),lv=lvDates[ds],isToday=ds===today;let bg="transparent",clr=C.text,brd="2px solid transparent";if(isSeld){bg=C.accent;clr="#fff";brd=`2px solid ${C.accentL}`;}else if(lv){bg=lv.status==="approved"?C.greenD:C.orangeD;clr=lv.status==="approved"?C.green:C.orange;}else if(isToday)brd=`2px solid ${C.accent}`;cells.push(<div key={d} onClick={()=>tog(d)} style={{width:"100%",paddingTop:"100%",borderRadius:10,background:bg,border:brd,position:"relative",cursor:isSel?"pointer":"default"}}><div style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}><div style={{fontSize:14,fontWeight:isToday||isSeld?700:500,color:clr}}>{d}</div>{lv&&!isSeld&&<div style={{width:4,height:4,borderRadius:"50%",background:lv.status==="approved"?C.green:C.orange,marginTop:2}}/>}</div></div>);}
-    const needH=calSel.length*8,currentRH=isPerso?remHours(profile.id):0,willDebt=isPerso&&needH>0&&currentRH<needH,debtAmt=willDebt?Math.round((needH-currentRH)/8*10)/10:0;
+    const needH=calSel.length*8,currentRH=remHours(profile.id),willDebt=needH>0&&currentRH<needH,debtAmt=willDebt?Math.round((needH-currentRH)/8*10)/10:0;
     return(<div>
       <div style={S.sec}><span>📅</span> İzin Takvimi</div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
@@ -561,7 +574,7 @@ export default function App(){
         {calMode==="modify"&&<button style={S.btn(C.orange)} onClick={modifyLeave} disabled={submitting}>{submitting?"...":"📅 Tarihleri Değiştir"}</button>}
         <button style={S.btn(C.border,C.text)} onClick={()=>{setCalMode("view");setCalSel([]);setCalModId(null);setLeaveReason("");}}>İptal</button>
       </div>}
-      {!isSel&&isPerso&&!hourlyMode&&<div style={{display:"flex",gap:8}}>
+      {!isSel&&!hourlyMode&&<div style={{display:"flex",gap:8}}>
         <button style={{...S.btn(C.teal),flex:1}} onClick={()=>{setCalMode("select");setCalSel([]);setLeaveReason("");setLeaveDoc(null);setLeaveDocFile(null);}}>📅 Günlük İzin</button>
         <button style={{...S.btn(C.blueD,C.blue),flex:1}} onClick={()=>{setHourlyMode(true);setHourlyForm({date:todayStr(),startTime:"",endTime:"",reason:""});setHourlyLeaveDoc(null);setHourlyLeaveDocFile(null);}}>🕐 Saatlik İzin</button>
       </div>}
@@ -606,6 +619,7 @@ export default function App(){
       <div style={{marginBottom:12}}><div style={S.lbl}>Durum</div><div style={S.tag(sColor(o.status)+"22",sColor(o.status))}>{sIcon(o.status)} {sText(o.status)}</div></div>
       <div style={{marginBottom:12}}><div style={S.lbl}>Açıklama</div><div style={{fontSize:13,color:C.text,background:C.bg,borderRadius:8,padding:10,border:`1px solid ${C.border}`}}>{o.description||"—"}</div></div>
       {(o.photo_before||o.photo_after)&&<div><div style={S.lbl}>Fotoğraflar</div><div style={{display:"flex",gap:10}}>{o.photo_before&&<div style={{flex:1}}><div style={{fontSize:10,color:C.orange,fontWeight:700,marginBottom:4}}>ONCE</div><img src={o.photo_before} alt="" style={{width:"100%",borderRadius:10}}/></div>}{o.photo_after&&<div style={{flex:1}}><div style={{fontSize:10,color:C.green,fontWeight:700,marginBottom:4}}>SONRA</div><img src={o.photo_after} alt="" style={{width:"100%",borderRadius:10}}/></div>}</div></div>}
+      {canApprove&&o.status!=="approved"&&o.status!=="rejected"&&<><div style={S.dv}/><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.green),flex:1}} onClick={()=>{doApproveOT(o.id,isChef?"chef":"manager");setSelOT(null);}}>✓ Onayla</button><button style={{...S.btn(C.redD,C.red),flex:1}} onClick={()=>{doRejectOT(o.id);setSelOT(null);}}>✗ Reddet</button></div></>}
       {isAdmin&&<><div style={S.dv}/>{deleteConfirm===o.id?<div style={{background:C.redD,borderRadius:10,padding:14}}><div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:8,textAlign:"center"}}>⚠ Bu mesaiyi silmek istediğinize emin misiniz?</div><div style={{fontSize:11,color:C.dim,textAlign:"center",marginBottom:12}}>Geri alınamaz. Izin hakki da silinir.</div><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.red),flex:1}} onClick={()=>doDeleteOT(o.id)} disabled={submitting}>{submitting?"Siliniyor...":"🗑 Evet, Sil"}</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setDeleteConfirm(null)}>İptal</button></div></div>:<button style={S.btn(C.redD,C.red)} onClick={()=>setDeleteConfirm(o.id)}>🗑 Bu Mesaiyi Sil</button>}</>}
       <button style={S.btn(C.border,C.text)} onClick={()=>{setSelOT(null);setDeleteConfirm(null);}}>Kapat</button>
     </div></div>);
