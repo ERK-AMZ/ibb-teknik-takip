@@ -148,6 +148,9 @@ export default function App(){
   const[showEndTP,setShowEndTP]=useState(false);
   const[showPWA,setShowPWA]=useState(false);
   const[deleteConfirm,setDeleteConfirm]=useState(null);
+  const[editOT,setEditOT]=useState(null);
+  const[showEditStartTP,setShowEditStartTP]=useState(false);
+  const[showEditEndTP,setShowEditEndTP]=useState(false);
   const[leaveReason,setLeaveReason]=useState("");
   // Hourly leave
   const[hourlyMode,setHourlyMode]=useState(false);
@@ -240,6 +243,21 @@ export default function App(){
     setSubmitting(true);
     try{const{error}=await supabase.from('leaves').delete().eq('id',id);if(error)throw error;await fetchLeaves();setDeleteConfirm(null);setSelLV(null);setToast("🗑 İzin talebi silindi");}
     catch(e){setToast("Silinemedi: "+(e?.message||"Hata"));}
+    setSubmitting(false);
+  }
+
+  async function doEditOT(){
+    if(!editOT)return;
+    const hours=calcOT(editOT.start_time,editOT.end_time);
+    if(hours<=0){setToast("⚠ Geçerli saat girin (17:00 sonrası)");return;}
+    setSubmitting(true);
+    try{
+      await updateOvertime(editOT.id,{start_time:editOT.start_time,end_time:editOT.end_time,hours,leave_hours:calcLH(hours)});
+      await fetchOvertimes();
+      setSelOT({...selOT,start_time:editOT.start_time,end_time:editOT.end_time,hours,leave_hours:calcLH(hours)});
+      setEditOT(null);
+      setToast(`✓ Mesai düzeltildi: ${hours}s → ${calcLH(hours)}s izin`);
+    }catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
   }
 
@@ -608,7 +626,7 @@ export default function App(){
 
   const renderOTDetail=()=>{
     if(!selOT)return null;const o=selOT,p=getU(o.personnel_id);
-    return(<div style={S.mod} onClick={()=>{setSelOT(null);setDeleteConfirm(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+    return(<div style={S.mod} onClick={()=>{setSelOT(null);setDeleteConfirm(null);setEditOT(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:4}}>Mesai Detayı</div>
       {p&&<div style={{fontSize:13,color:C.dim,marginBottom:12}}>{p.full_name}</div>}
       <div style={S.lawBox}>
@@ -619,9 +637,18 @@ export default function App(){
       <div style={{marginBottom:12}}><div style={S.lbl}>Durum</div><div style={S.tag(sColor(o.status)+"22",sColor(o.status))}>{sIcon(o.status)} {sText(o.status)}</div></div>
       <div style={{marginBottom:12}}><div style={S.lbl}>Açıklama</div><div style={{fontSize:13,color:C.text,background:C.bg,borderRadius:8,padding:10,border:`1px solid ${C.border}`}}>{o.description||"—"}</div></div>
       {(o.photo_before||o.photo_after)&&<div><div style={S.lbl}>Fotoğraflar</div><div style={{display:"flex",gap:10}}>{o.photo_before&&<div style={{flex:1}}><div style={{fontSize:10,color:C.orange,fontWeight:700,marginBottom:4}}>ONCE</div><img src={o.photo_before} alt="" style={{width:"100%",borderRadius:10}}/></div>}{o.photo_after&&<div style={{flex:1}}><div style={{fontSize:10,color:C.green,fontWeight:700,marginBottom:4}}>SONRA</div><img src={o.photo_after} alt="" style={{width:"100%",borderRadius:10}}/></div>}</div></div>}
+      {isAdmin&&editOT&&editOT.id===o.id?<div style={{background:C.accentD,borderRadius:12,padding:14,marginTop:12}}>
+        <div style={{fontSize:14,fontWeight:700,marginBottom:10,color:C.accent}}>✏️ Saatleri Düzelt</div>
+        <div style={{display:"flex",gap:10}}>
+          <div style={{flex:1}}><div style={S.lbl}>Başlangıç</div><div style={S.fInp} onClick={()=>setShowEditStartTP(true)}><span>{editOT.start_time||"Saat"}</span><span>🕐</span></div></div>
+          <div style={{flex:1}}><div style={S.lbl}>Bitiş</div><div style={S.fInp} onClick={()=>setShowEditEndTP(true)}><span>{editOT.end_time||"Saat"}</span><span>🕐</span></div></div>
+        </div>
+        {editOT.start_time&&editOT.end_time&&(()=>{const h=calcOT(editOT.start_time,editOT.end_time);return h>0?<div style={{...S.lawBox,marginTop:8,marginBottom:0}}><div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:10,color:C.dim}}>Yeni Mesai</div><div style={{fontSize:20,fontWeight:800,color:C.accent}}>{h}s</div></div><div><div style={{fontSize:10,color:C.dim}}>Yeni İzin</div><div style={{fontSize:20,fontWeight:800,color:C.purple}}>{calcLH(h)}s</div></div></div>{(h!==o.hours)&&<div style={{fontSize:11,color:C.orange,marginTop:6}}>Önceki: {o.hours}s mesai → {o.leave_hours}s izin</div>}</div>:null;})()}
+        <div style={{display:"flex",gap:8,marginTop:10}}><button style={{...S.btn(C.accent),flex:1}} onClick={doEditOT} disabled={submitting}>{submitting?"Kaydediliyor...":"💾 Kaydet"}</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setEditOT(null)}>İptal</button></div>
+      </div>:isAdmin&&<button style={{...S.btn(C.accentD,C.accent),marginTop:8}} onClick={()=>setEditOT({id:o.id,start_time:o.start_time?.slice(0,5)||"17:00",end_time:o.end_time?.slice(0,5)||"18:00"})}>✏️ Saatleri Düzelt</button>}
       {canApprove&&o.status!=="approved"&&o.status!=="rejected"&&<><div style={S.dv}/><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.green),flex:1}} onClick={()=>{doApproveOT(o.id,isChef?"chef":"manager");setSelOT(null);}}>✓ Onayla</button><button style={{...S.btn(C.redD,C.red),flex:1}} onClick={()=>{doRejectOT(o.id);setSelOT(null);}}>✗ Reddet</button></div></>}
       {isAdmin&&<><div style={S.dv}/>{deleteConfirm===o.id?<div style={{background:C.redD,borderRadius:10,padding:14}}><div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:8,textAlign:"center"}}>⚠ Bu mesaiyi silmek istediğinize emin misiniz?</div><div style={{fontSize:11,color:C.dim,textAlign:"center",marginBottom:12}}>Geri alınamaz. Izin hakki da silinir.</div><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.red),flex:1}} onClick={()=>doDeleteOT(o.id)} disabled={submitting}>{submitting?"Siliniyor...":"🗑 Evet, Sil"}</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setDeleteConfirm(null)}>İptal</button></div></div>:<button style={S.btn(C.redD,C.red)} onClick={()=>setDeleteConfirm(o.id)}>🗑 Bu Mesaiyi Sil</button>}</>}
-      <button style={S.btn(C.border,C.text)} onClick={()=>{setSelOT(null);setDeleteConfirm(null);}}>Kapat</button>
+      <button style={S.btn(C.border,C.text)} onClick={()=>{setSelOT(null);setDeleteConfirm(null);setEditOT(null);}}>Kapat</button>
     </div></div>);
   };
 
@@ -710,6 +737,8 @@ export default function App(){
       {showHourlyDatePicker&&<CustomDatePicker value={hourlyForm.date||todayStr()} onChange={v=>setHourlyForm(p=>({...p,date:v}))} onClose={()=>setShowHourlyDatePicker(false)}/>}
       {showHourlyStartTP&&<CustomTimePicker value={hourlyForm.startTime||"08:00"} onChange={v=>setHourlyForm(p=>({...p,startTime:v}))} onClose={()=>setShowHourlyStartTP(false)} label="Çıkış Saati"/>}
       {showHourlyEndTP&&<CustomTimePicker value={hourlyForm.endTime||"17:00"} onChange={v=>setHourlyForm(p=>({...p,endTime:v}))} onClose={()=>setShowHourlyEndTP(false)} label="Dönüş Saati"/>}
+      {showEditStartTP&&editOT&&<CustomTimePicker value={editOT.start_time||"17:00"} onChange={v=>setEditOT(p=>({...p,start_time:v}))} onClose={()=>setShowEditStartTP(false)} label="Başlangıç Düzelt"/>}
+      {showEditEndTP&&editOT&&<CustomTimePicker value={editOT.end_time||"18:00"} onChange={v=>setEditOT(p=>({...p,end_time:v}))} onClose={()=>setShowEditEndTP(false)} label="Bitiş Düzelt"/>}
       {toast&&<div style={S.tst}>{toast}</div>}
     </div>
   );
