@@ -224,14 +224,21 @@ export default function App(){
 
   async function doLogin(){setLoginErr("");try{const{error}=await signIn(login.email,login.password);if(error)setLoginErr("Giriş başarısız: "+error.message);}catch(e){setLoginErr("Bağlantı hatası");}}
   async function doLogout(){try{await signOut();}catch(e){}setProfile(null);setPage("dashboard");setSelPerson(null);}
-  async function doApproveOT(id,lvl){try{const up=lvl==="chef"?{approved_by_chef:true,status:"pending_manager"}:{approved_by_manager:true,status:"approved"};await updateOvertime(id,up);await fetchOvertimes();setToast("Mesai onaylandı");}catch(e){setToast("Hata: "+e?.message);}}
+  async function doApproveOT(id,lvl){try{const up=lvl==="chef"?{approved_by_chef:true,status:"pending_manager"}:{approved_by_chef:true,approved_by_manager:true,status:"approved"};await updateOvertime(id,up);await fetchOvertimes();setToast("✓ Mesai onaylandı");}catch(e){setToast("Hata: "+e?.message);}}
   async function doRejectOT(id){try{await updateOvertime(id,{status:"rejected"});await fetchOvertimes();setToast("Reddedildi");}catch(e){setToast("Hata: "+e?.message);}}
-  async function doApproveLV(id,lvl){try{const up=lvl==="chef"?{approved_by_chef:true,status:"pending_manager"}:{approved_by_manager:true,status:"approved"};await updateLeave(id,up);await fetchLeaves();setToast("İzin onaylandı");}catch(e){setToast("Hata: "+e?.message);}}
+  async function doApproveLV(id,lvl){try{const up=lvl==="chef"?{approved_by_chef:true,status:"pending_manager"}:{approved_by_chef:true,approved_by_manager:true,status:"approved"};await updateLeave(id,up);await fetchLeaves();setToast("✓ İzin onaylandı");}catch(e){setToast("Hata: "+e?.message);}}
   async function doRejectLV(id){try{await updateLeave(id,{status:"rejected"});await fetchLeaves();setToast("Reddedildi");}catch(e){setToast("Hata: "+e?.message);}}
 
   async function doDeleteOT(id){
     setSubmitting(true);
     try{const{error}=await supabase.from('overtimes').delete().eq('id',id);if(error)throw error;await fetchOvertimes();setDeleteConfirm(null);setSelOT(null);setToast("Mesai kaydi silindi");}
+    catch(e){setToast("Silinemedi: "+(e?.message||"Hata"));}
+    setSubmitting(false);
+  }
+
+  async function doDeleteLV(id){
+    setSubmitting(true);
+    try{const{error}=await supabase.from('leaves').delete().eq('id',id);if(error)throw error;await fetchLeaves();setDeleteConfirm(null);setSelLV(null);setToast("🗑 İzin talebi silindi");}
     catch(e){setToast("Silinemedi: "+(e?.message||"Hata"));}
     setSubmitting(false);
   }
@@ -371,8 +378,8 @@ export default function App(){
     fInp:{width:"100%",padding:"12px",borderRadius:10,border:`1px solid ${C.border}`,background:C.bg,color:C.text,fontSize:16,boxSizing:"border-box",marginBottom:10,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"},
   };
 
-  const pendOTs=overtimes.filter(o=>(isChef&&o.status==="pending_chef")||(isAdmin&&o.status==="pending_manager"));
-  const pendLVs=leavesState.filter(l=>(isChef&&l.status==="pending_chef")||(isAdmin&&l.status==="pending_manager"));
+  const pendOTs=overtimes.filter(o=>(isChef&&o.status==="pending_chef")||(isAdmin&&["pending_chef","pending_manager"].includes(o.status)));
+  const pendLVs=leavesState.filter(l=>(isChef&&l.status==="pending_chef")||(isAdmin&&["pending_chef","pending_manager"].includes(l.status)));
   const totPend=pendOTs.length+pendLVs.length;
   const allPendOTs=overtimes.filter(o=>["pending_chef","pending_manager"].includes(o.status));
   const allPendLVs=leavesState.filter(l=>["pending_chef","pending_manager"].includes(l.status));
@@ -476,17 +483,17 @@ export default function App(){
       {isViewer&&<div style={{background:C.blueD,borderRadius:10,padding:"10px 14px",marginBottom:16,textAlign:"center"}}><div style={{fontSize:12,color:C.blue,fontWeight:600}}>👁 Sadece Görüntüleme</div></div>}
       <div style={S.sec}><span>⏱</span> Mesai {vOTs.length>0&&<span style={S.tag(C.orangeD,C.orange)}>{vOTs.length}</span>}</div>
       {vOTs.length===0&&<div style={S.emp}>Yok ✓</div>}
-      {vOTs.map(o=>{const p=getU(o.personnel_id);const debt=debtDays(o.personnel_id);return(<div key={o.id} style={S.crd}>
+      {vOTs.map(o=>{const p=getU(o.personnel_id);const debt=debtDays(o.personnel_id);return(<div key={o.id} style={S.crd} onClick={()=>setSelOT(o)}>
         <div style={S.row}><div style={S.av(C.orangeD)}>{ini(p?.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14,fontWeight:600}}>{p?.full_name}</div><div style={{fontSize:11,color:C.dim}}>{fD(o.work_date)} {o.start_time?.slice(0,5)}→{o.end_time?.slice(0,5)}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:18,fontWeight:800,color:C.accent}}>{o.hours}s</div><div style={{fontSize:11,color:C.purple}}>→{o.leave_hours}s</div></div></div>
         <div style={{fontSize:12,color:C.dim,margin:"8px 0"}}>{o.description}</div>
         {(o.photo_before||o.photo_after)&&<div style={{display:"flex",gap:8,marginBottom:8}}>{o.photo_before&&<img src={o.photo_before} alt="" style={{width:60,height:60,borderRadius:8,objectFit:"cover"}}/>}{o.photo_after&&<img src={o.photo_after} alt="" style={{width:60,height:60,borderRadius:8,objectFit:"cover"}}/>}</div>}
         {debt>0&&<div style={{fontSize:11,color:C.red,fontWeight:600,marginBottom:8}}>⚠ {debt} gun mesai borcu var</div>}
         <div style={{fontSize:11,color:C.muted,marginBottom:4}}>{sText(o.status)}</div>
-        {canApprove&&<div style={{display:"flex",gap:8}}><button style={S.btnS(C.green)} onClick={()=>doApproveOT(o.id,isChef?"chef":"manager")}>✓ Onayla</button><button style={S.btnS(C.redD,C.red)} onClick={()=>doRejectOT(o.id)}>✗ Reddet</button></div>}
+        {canApprove&&<div style={{display:"flex",gap:8}} onClick={e=>e.stopPropagation()}><button style={S.btnS(C.green)} onClick={()=>doApproveOT(o.id,isChef?"chef":"manager")}>✓ Onayla</button><button style={S.btnS(C.redD,C.red)} onClick={()=>doRejectOT(o.id)}>✗ Reddet</button></div>}
       </div>);})}
       <div style={{...S.sec,marginTop:20}}><span>🏖</span> Izin {vLVs.length>0&&<span style={S.tag(C.blueD,C.blue)}>{vLVs.length}</span>}</div>
       {vLVs.length===0&&<div style={S.emp}>Yok ✓</div>}
-      {vLVs.map(l=>{const p=getU(l.personnel_id);const rH=remHours(l.personnel_id);const willDebt=rH<l.total_hours;return(<div key={l.id} style={S.crd}>
+      {vLVs.map(l=>{const p=getU(l.personnel_id);const rH=remHours(l.personnel_id);const willDebt=rH<l.total_hours;return(<div key={l.id} style={S.crd} onClick={()=>setSelLV(l)}>
         <div style={S.row}><div style={S.av(C.blueD)}>{ini(p?.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14,fontWeight:600}}>{p?.full_name}</div>{l.leave_type==="hourly"?<div style={{fontSize:12,color:C.blue,fontWeight:600,marginTop:2}}>🕐 {l.leave_start_time?.slice(0,5)}-{l.leave_end_time?.slice(0,5)} ({l.total_hours}s)</div>:<div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:4}}>{(Array.isArray(l.dates)?l.dates:[]).map(d=><span key={d} style={S.tag(C.blueD,C.blue)}>{fDS(d)}</span>)}</div>}</div><div style={{fontSize:18,fontWeight:800}}>{l.leave_type==="hourly"?l.total_hours+"s":(Array.isArray(l.dates)?l.dates.length:0)+"g"}</div></div>
         {l.leave_type==="hourly"&&<div style={{...S.tag(C.blueD,C.blue),marginTop:6}}>🕐 Saatlik İzin - {fD(l.dates?.[0])}</div>}
         {l.reason&&<div style={{fontSize:12,color:C.dim,margin:"8px 0",background:C.bg,borderRadius:8,padding:"8px 10px",border:`1px solid ${C.border}`}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4}}>📝 Sebep:</div>{l.reason}</div>}
@@ -494,7 +501,7 @@ export default function App(){
         {willDebt&&<div style={{fontSize:11,color:C.red,fontWeight:700,margin:"8px 0",background:C.redD,borderRadius:6,padding:"4px 8px"}}>⚠ Onaylanirsa {Math.round((l.total_hours-rH)/8*10)/10} gün borçlanacak</div>}
         {l.previous_dates&&<div style={{fontSize:11,color:C.orange,margin:"8px 0"}}>🔄 Eski: {(Array.isArray(l.previous_dates)?l.previous_dates:[]).map(d=>fDS(d)).join(", ")}</div>}
         <div style={{fontSize:11,color:C.muted,marginBottom:4}}>{sText(l.status)}</div>
-        {canApprove&&<div style={{display:"flex",gap:8,marginTop:8}}><button style={S.btnS(C.green)} onClick={()=>doApproveLV(l.id,isChef?"chef":"manager")}>✓ Onayla</button><button style={S.btnS(C.redD,C.red)} onClick={()=>doRejectLV(l.id)}>✗ Reddet</button></div>}
+        {canApprove&&<div style={{display:"flex",gap:8,marginTop:8}} onClick={e=>e.stopPropagation()}><button style={S.btnS(C.green)} onClick={()=>doApproveLV(l.id,isChef?"chef":"manager")}>✓ Onayla</button><button style={S.btnS(C.redD,C.red)} onClick={()=>doRejectLV(l.id)}>✗ Reddet</button></div>}
       </div>);})}
     </div>);
   };
@@ -622,7 +629,9 @@ export default function App(){
       {l.reason&&<div style={{marginTop:12,background:C.bg,borderRadius:8,padding:10,border:`1px solid ${C.border}`}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4}}>📝 Sebep</div><div style={{fontSize:13,color:l.reason.includes("borc")?C.red:C.text}}>{l.reason}</div></div>}
       {l.leave_doc_url&&<div style={{marginTop:12}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4}}>📄 İzin Belgesi</div><img src={l.leave_doc_url} alt="" style={{width:"100%",maxHeight:300,objectFit:"cover",borderRadius:10}}/></div>}
       {prevDates.length>0&&<div style={{fontSize:12,color:C.orange,marginTop:12}}>🔄 Önceki: {prevDates.map(d=>fD(d)).join(", ")}</div>}
-      <button style={S.btn(C.border,C.text)} onClick={()=>setSelLV(null)}>Kapat</button>
+      {canApprove&&l.status!=="approved"&&l.status!=="rejected"&&<><div style={S.dv}/><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.green),flex:1}} onClick={()=>{doApproveLV(l.id,isChef?"chef":"manager");setSelLV(null);}}>✓ Onayla</button><button style={{...S.btn(C.redD,C.red),flex:1}} onClick={()=>{doRejectLV(l.id);setSelLV(null);}}>✗ Reddet</button></div></>}
+      {isAdmin&&<><div style={S.dv}/>{deleteConfirm===l.id?<div style={{background:C.redD,borderRadius:10,padding:14}}><div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:8,textAlign:"center"}}>⚠ Bu izin talebini silmek istediğinize emin misiniz?</div><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.red),flex:1}} onClick={()=>doDeleteLV(l.id)} disabled={submitting}>{submitting?"Siliniyor...":"🗑 Evet, Sil"}</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setDeleteConfirm(null)}>İptal</button></div></div>:<button style={S.btn(C.redD,C.red)} onClick={()=>setDeleteConfirm(l.id)}>🗑 Bu İzni Sil</button>}</>}
+      <button style={S.btn(C.border,C.text)} onClick={()=>{setSelLV(null);setDeleteConfirm(null);}}>Kapat</button>
     </div></div>);
   };
 
