@@ -554,10 +554,12 @@ export default function App(){
 
   const renderCalendar=()=>{
     const dim=daysInMonth(calY,calM),fd=firstDay(calY,calM),isSel=calMode!=="view";
-    const myLvs=isPerso?leavesState.filter(l=>l.personnel_id===profile.id&&l.status!=="rejected"):leavesState.filter(l=>l.status!=="rejected");
-    const lvDates={};myLvs.forEach(l=>(Array.isArray(l.dates)?l.dates:[]).forEach(d=>{lvDates[d]={status:l.status,id:l.id};}));
+    const myLvs=leavesState.filter(l=>l.personnel_id===profile.id&&l.status!=="rejected");
+    const allLvs=isPerso?myLvs:leavesState.filter(l=>l.status!=="rejected");
+    const myLvDates={};myLvs.forEach(l=>(Array.isArray(l.dates)?l.dates:[]).forEach(d=>{myLvDates[d]={status:l.status,id:l.id};}));
+    const lvDates={};allLvs.forEach(l=>(Array.isArray(l.dates)?l.dates:[]).forEach(d=>{lvDates[d]={status:l.status,id:l.id};}));
     const avD=remDays(profile.id),today=todayStr();
-    function tog(d){if(!isSel)return;const ds=dateStr(calY,calM,d);if(ds<today){setToast("Geçmiş tarih seçilemez");return;}if(lvDates[ds]&&(!calModId||lvDates[ds].id!==calModId)){setToast("Bu tarihte izin var");return;}setCalSel(p=>p.includes(ds)?p.filter(x=>x!==ds):[...p,ds].sort());}
+    function tog(d){if(!isSel)return;const ds=dateStr(calY,calM,d);if(myLvDates[ds]&&(!calModId||myLvDates[ds].id!==calModId)){setToast("Bu tarihte zaten izniniz var");return;}setCalSel(p=>p.includes(ds)?p.filter(x=>x!==ds):[...p,ds].sort());}
     function prev(){calM===0?(setCalY(calY-1),setCalM(11)):setCalM(calM-1);}
     function next(){calM===11?(setCalY(calY+1),setCalM(0)):setCalM(calM+1);}
     const cells=[];for(let i=0;i<fd;i++)cells.push(<div key={`e${i}`}/>);
