@@ -696,8 +696,11 @@ export default function App(){
 
       <div style={S.lbl}>Arıza Türü</div>
       <div style={{display:"flex",gap:8,marginBottom:12}}>
-        <button style={{flex:1,padding:"12px",borderRadius:10,border:`2px solid ${faultForm.fault_type==="service"?C.blue:C.border}`,background:faultForm.fault_type==="service"?C.blueD:"transparent",color:faultForm.fault_type==="service"?C.blue:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultForm(p=>({...p,fault_type:"service"}))}>🔧 Servis Gerektiren</button>
-        <button style={{flex:1,padding:"12px",borderRadius:10,border:`2px solid ${faultForm.fault_type==="material"?C.orange:C.border}`,background:faultForm.fault_type==="material"?"rgba(245,158,11,0.1)":"transparent",color:faultForm.fault_type==="material"?C.orange:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultForm(p=>({...p,fault_type:"material",services:[]}))}}>📦 Malzeme Eksikliği</button>
+        {["service","material"].map(t=>{
+          const isSvc=t==="service",active=faultForm.fault_type===t;
+          const ac=isSvc?C.blue:C.orange,bg=isSvc?C.blueD:"rgba(245,158,11,0.1)";
+          return(<button key={t} style={{flex:1,padding:"12px",borderRadius:10,border:"2px solid "+(active?ac:C.border),background:active?bg:"transparent",color:active?ac:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultForm(p=>({...p,fault_type:t,...(t==="material"?{services:[]}:{})}))}>{isSvc?"🔧 Servis Gerektiren":"📦 Malzeme Eksikliği"}</button>);
+        })}
       </div>
 
       {faultForm.fault_type==="material"&&<>
