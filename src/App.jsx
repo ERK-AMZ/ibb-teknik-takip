@@ -131,6 +131,9 @@ export default function App(){
   const[loading,setLoading]=useState(true);
   const[loadError,setLoadError]=useState(null);
   const[page,setPage]=useState("dashboard");
+  // Buildings
+  const[buildings,setBuildings]=useState([]);
+  const[selBuilding,setSelBuilding]=useState(null);
   const[login,setLogin]=useState({email:"",password:""});
   const[loginErr,setLoginErr]=useState("");
   const[showPwd,setShowPwd]=useState(false);
@@ -144,7 +147,7 @@ export default function App(){
   const[submitting,setSubmitting]=useState(false);
   const[otForm,setOtForm]=useState({date:"",startTime:"17:00",endTime:"",otType:"evening",desc:"",photoBefore:null,photoAfter:null,fileB:null,fileA:null});
   const[otErrors,setOtErrors]=useState([]);
-  const[nUser,setNUser]=useState({name:"",email:"",password:"",role:"",night:false,userRole:"personnel"});
+  const[nUser,setNUser]=useState({name:"",email:"",password:"",role:"",night:false,userRole:"personnel",buildingId:""});
   const beforeRef=useRef(null),afterRef=useRef(null),descRef=useRef(null);
   const[showDatePicker,setShowDatePicker]=useState(false);
   const[showStartTP,setShowStartTP]=useState(false);
@@ -221,11 +224,12 @@ export default function App(){
   const fetchFaultVotes=useCallback(async()=>{try{const{data}=await supabase.from('fault_votes').select('*');if(data)setFaultVotes(data);}catch(e){console.error(e);}},[]); 
   const fetchMaterials=useCallback(async()=>{try{const{data}=await supabase.from('materials').select('*').order('name');if(data)setMaterials(data);}catch(e){console.error(e);}},[]);
   const fetchStockMovements=useCallback(async()=>{try{const{data}=await supabase.from('stock_movements').select('*').order('movement_date',{ascending:false});if(data)setStockMovements(data);}catch(e){console.error(e);}},[]);
+  const fetchBuildings=useCallback(async()=>{try{const{data}=await supabase.from('buildings').select('*').order('name');if(data)setBuildings(data);}catch(e){console.error(e);}},[]);
 
   const loadData=useCallback(async(uid)=>{
     setLoading(true);setLoadError(null);
     try{
-      const r=await Promise.allSettled([getProfiles(),getOvertimes(),getLeaves(),supabase.from('faults').select('*').order('detected_date',{ascending:false}),supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),supabase.from('fault_votes').select('*'),supabase.from('materials').select('*').order('name'),supabase.from('stock_movements').select('*').order('movement_date',{ascending:false})]);
+      const r=await Promise.allSettled([getProfiles(),getOvertimes(),getLeaves(),supabase.from('faults').select('*').order('detected_date',{ascending:false}),supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),supabase.from('fault_votes').select('*'),supabase.from('materials').select('*').order('name'),supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}),supabase.from('buildings').select('*').order('name')]);
       const profs=r[0].status==="fulfilled"?(r[0].value||[]):[];
       const ots=r[1].status==="fulfilled"?(r[1].value||[]):[];
       const lvs=r[2].status==="fulfilled"?(r[2].value||[]):[];
@@ -234,10 +238,12 @@ export default function App(){
       const fvs=r[5].status==="fulfilled"?(r[5].value?.data||[]):[];
       const mats=r[6].status==="fulfilled"?(r[6].value?.data||[]):[];
       const smvs=r[7].status==="fulfilled"?(r[7].value?.data||[]):[];
+      const blds=r[8].status==="fulfilled"?(r[8].value?.data||[]):[];
       setProfilesState(profs);setOvertimesState(ots);setLeavesState(lvs);
       setFaults(fts);setFaultServices(fss);setFaultVotes(fvs);
-      setMaterials(mats);setStockMovements(smvs);
+      setMaterials(mats);setStockMovements(smvs);setBuildings(blds);
       const fp=profs.find(p=>p.id===uid);setProfile(fp||null);
+      if(fp&&blds.length>0&&!selBuilding){setSelBuilding(fp.building_id||blds[0]?.id||null);}
       if(!fp&&profs.length===0)setLoadError("Veri yüklenemedi.");
     }catch(err){setLoadError("Bağlantı hatası");}finally{setLoading(false);}
   },[]);
@@ -271,6 +277,15 @@ export default function App(){
   const isViewer=profile?.user_role==="viewer";
   const isPerso=profile?.user_role==="personnel";
   const canApprove=isAdmin||isChef;
+  const canSwitchBuilding=isAdmin||isChef;
+  // Building-scoped data
+  const bProfiles=profiles.filter(p=>!selBuilding||p.building_id===selBuilding);
+  const bOvertimes=overtimes.filter(o=>{const p=profiles.find(pp=>pp.id===o.personnel_id);return !selBuilding||p?.building_id===selBuilding;});
+  const bLeaves=leavesState.filter(l=>{const p=profiles.find(pp=>pp.id===l.personnel_id);return !selBuilding||p?.building_id===selBuilding;});
+  const bFaults=faults.filter(f=>!selBuilding||f.building_id===selBuilding);
+  const bMaterials=materials.filter(m=>!selBuilding||m.building_id===selBuilding);
+  const bStockMovements=stockMovements.filter(mv=>{const mat=materials.find(m=>m.id===mv.material_id);return !selBuilding||mat?.building_id===selBuilding;});
+  const curBuildingName=buildings.find(b=>b.id===selBuilding)?.short_name||"";
 
   function getU(id){return profiles.find(u=>u.id===id);}
   function totLH(pid){return overtimes.filter(o=>o.personnel_id===pid&&o.status==="approved").reduce((s,o)=>s+Number(o.leave_hours||0),0);}
@@ -412,7 +427,7 @@ export default function App(){
   async function doAddUser(){
     if(!nUser.name||!nUser.email||!nUser.password||!nUser.role){setToast("Tum alanlari doldurun");return;}
     setSubmitting(true);
-    try{const{data,error}=await supabase.auth.signUp({email:nUser.email,password:nUser.password});if(error)throw error;if(data?.user)await supabase.from('profiles').insert({id:data.user.id,username:nUser.email.split('@')[0],full_name:nUser.name,role:nUser.role,user_role:nUser.userRole,night_shift:nUser.night,active:true});await fetchProfiles();setNUser({name:"",email:"",password:"",role:"",night:false,userRole:"personnel"});setModAddUser(false);setToast("Personel eklendi");}catch(e){setToast("Hata: "+(e?.message||""));}
+    try{const{data,error}=await supabase.auth.signUp({email:nUser.email,password:nUser.password});if(error)throw error;if(data?.user)await supabase.from('profiles').insert({id:data.user.id,username:nUser.email.split('@')[0],full_name:nUser.name,role:nUser.role,user_role:nUser.userRole,night_shift:nUser.night,active:true,building_id:nUser.buildingId||selBuilding});await fetchProfiles();setNUser({name:"",email:"",password:"",role:"",night:false,userRole:"personnel",buildingId:""});setModAddUser(false);setToast("Personel eklendi");}catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
   }
   async function doDeactivateU(uid){try{await supabase.from('profiles').update({active:false}).eq('id',uid);await fetchProfiles();setToast("Pasif");setModEditUser(null);}catch(e){setToast("Hata: "+e?.message);}}
@@ -452,11 +467,11 @@ export default function App(){
     fInp:{width:"100%",padding:"12px",borderRadius:10,border:`1px solid ${C.border}`,background:C.bg,color:C.text,fontSize:16,boxSizing:"border-box",marginBottom:10,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"},
   };
 
-  const pendOTs=overtimes.filter(o=>(isChef&&o.status==="pending_chef")||(isAdmin&&["pending_chef","pending_manager"].includes(o.status)));
-  const pendLVs=leavesState.filter(l=>(isChef&&l.status==="pending_chef")||(isAdmin&&["pending_chef","pending_manager"].includes(l.status)));
+  const pendOTs=bOvertimes.filter(o=>(isChef&&o.status==="pending_chef")||(isAdmin&&["pending_chef","pending_manager"].includes(o.status)));
+  const pendLVs=bLeaves.filter(l=>(isChef&&l.status==="pending_chef")||(isAdmin&&["pending_chef","pending_manager"].includes(l.status)));
   const totPend=pendOTs.length+pendLVs.length;
-  const allPendOTs=overtimes.filter(o=>["pending_chef","pending_manager"].includes(o.status));
-  const allPendLVs=leavesState.filter(l=>["pending_chef","pending_manager"].includes(l.status));
+  const allPendOTs=bOvertimes.filter(o=>["pending_chef","pending_manager"].includes(o.status));
+  const allPendLVs=bLeaves.filter(l=>["pending_chef","pending_manager"].includes(l.status));
   const allPendCount=allPendOTs.length+allPendLVs.length;
   const liveOTH=calcOT(otForm.startTime,otForm.endTime,otForm.otType),liveLH=calcLH(liveOTH);
 
@@ -527,7 +542,7 @@ export default function App(){
         const r=await uploadPhoto(file,'fault-photos');
         if(r?.url)photoUrls.push(r.url);
       }
-      const{data:inserted}=await supabase.from('faults').insert({title:faultForm.title,location:faultForm.location,description:faultForm.description||"",photos:photoUrls,detected_date:faultForm.detected_date,fault_type:faultForm.fault_type,material_needed:faultForm.material_needed||"",created_by:profile.id}).select().single();
+      const{data:inserted}=await supabase.from('faults').insert({title:faultForm.title,location:faultForm.location,description:faultForm.description||"",photos:photoUrls,detected_date:faultForm.detected_date,fault_type:faultForm.fault_type,material_needed:faultForm.material_needed||"",building_id:selBuilding,created_by:profile.id}).select().single();
       if(inserted&&faultForm.services.length>0){
         const svcRows=faultForm.services.map(s=>({fault_id:inserted.id,service_name:s.service_name,visit_date:s.visit_date,notes:s.notes||"",created_by:profile.id}));
         await supabase.from('fault_services').insert(svcRows);
@@ -590,8 +605,8 @@ export default function App(){
   }
 
   const renderFaults=()=>{
-    const activeFaults=faults.filter(f=>f.status==="active");
-    const resolvedFaults=faults.filter(f=>f.status==="resolved");
+    const activeFaults=bFaults.filter(f=>f.status==="active");
+    const resolvedFaults=bFaults.filter(f=>f.status==="resolved");
     const list=isAdmin?(faultTab==="active"?activeFaults:resolvedFaults):activeFaults;
     return(<div>
       <div style={S.sec}><span>🔧</span> Arızalı Envanter</div>
@@ -638,7 +653,7 @@ export default function App(){
     const services=faultServices.filter(s=>s.fault_id===f.id).sort((a,b)=>(b.visit_date||"").localeCompare(a.visit_date||""));
     const weekVotes=faultVotes.filter(v=>v.fault_id===f.id&&v.vote_week===currentWeek);
     const myVote=weekVotes.find(v=>v.personnel_id===profile.id);
-    const allActiveProfiles=profiles.filter(p=>p.active);
+    const allActiveProfiles=bProfiles.filter(p=>p.active);
     const creator=profiles.find(p=>p.id===f.created_by);
 
     return(<div style={S.mod} onClick={()=>{setSelFault(null);setModAddService(false);setModEditFault(null);setDeleteConfirm(null);}}><div style={{...S.modC,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
@@ -772,7 +787,7 @@ export default function App(){
     if(!matForm.name){setToast("⚠ Malzeme adı zorunlu");return;}
     setSubmitting(true);
     try{
-      await supabase.from('materials').insert({name:matForm.name,category:matForm.category,unit:matForm.unit,current_stock:Number(matForm.current_stock)||0,min_stock:Number(matForm.min_stock)||0,notes:matForm.notes||"",created_by:profile.id});
+      await supabase.from('materials').insert({name:matForm.name,category:matForm.category,unit:matForm.unit,current_stock:Number(matForm.current_stock)||0,min_stock:Number(matForm.min_stock)||0,notes:matForm.notes||"",building_id:selBuilding,created_by:profile.id});
       await fetchMaterials();setModNewMat(false);setMatForm({name:"",category:"Genel Sarf",unit:"Adet",current_stock:0,min_stock:0,notes:""});setToast("✓ Malzeme eklendi");
     }catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
@@ -841,7 +856,7 @@ export default function App(){
     if(!bulkData.length)return;
     setSubmitting(true);
     try{
-      const rows=bulkData.map(r=>({...r,created_by:profile.id}));
+      const rows=bulkData.map(r=>({...r,building_id:selBuilding,created_by:profile.id}));
       const batchSize=50;
       for(let i=0;i<rows.length;i+=batchSize){
         await supabase.from('materials').insert(rows.slice(i,i+batchSize));
@@ -852,11 +867,11 @@ export default function App(){
     setSubmitting(false);
   }
 
-  const lowStockMats=materials.filter(m=>m.current_stock<=m.min_stock&&m.min_stock>0);
+  const lowStockMats=bMaterials.filter(m=>m.current_stock<=m.min_stock&&m.min_stock>0);
   const criticalCount=lowStockMats.length;
 
   const renderDepo=()=>{
-    const filtered=materials.filter(m=>{
+    const filtered=bMaterials.filter(m=>{
       if(matCategory!=="all"&&m.category!==matCategory)return false;
       if(matSearch&&!m.name.toLowerCase().includes(matSearch.toLowerCase()))return false;
       return true;
@@ -867,7 +882,7 @@ export default function App(){
       <div style={S.sec}><span>📦</span> Depo & Stok</div>
       {/* Tabs */}
       <div style={{display:"flex",gap:6,marginBottom:12,overflowX:"auto"}}>
-        {[{k:"stock",l:"📦 Stok",c:materials.length},{k:"purchase",l:"🛒 Satın Alma",c:purchaseList.length},{k:"history",l:"📋 Hareketler",c:null}].map(t=>(
+        {[{k:"stock",l:"📦 Stok",c:bMaterials.length},{k:"purchase",l:"🛒 Satın Alma",c:purchaseList.length},{k:"history",l:"📋 Hareketler",c:null}].map(t=>(
           <button key={t.k} style={{padding:"8px 14px",borderRadius:10,border:"2px solid "+(depoTab===t.k?C.accent:C.border),background:depoTab===t.k?C.accentD:"transparent",color:depoTab===t.k?C.accent:C.muted,fontWeight:700,fontSize:12,cursor:"pointer",whiteSpace:"nowrap"}} onClick={()=>setDepoTab(t.k)}>{t.l}{t.c!==null&&t.c>0?" ("+t.c+")":""}</button>
         ))}
       </div>
@@ -918,7 +933,7 @@ export default function App(){
 
       {/* HISTORY TAB */}
       {depoTab==="history"&&<>
-        {stockMovements.slice(0,50).map(mv=>{const mat=materials.find(m=>m.id===mv.material_id);const pers=profiles.find(p=>p.id===mv.personnel_id);const isOut=mv.movement_type==="out";return(
+        {bStockMovements.slice(0,50).map(mv=>{const mat=materials.find(m=>m.id===mv.material_id);const pers=profiles.find(p=>p.id===mv.personnel_id);const isOut=mv.movement_type==="out";return(
           <div key={mv.id} style={{...S.crd,borderLeft:"4px solid "+(isOut?C.orange:C.green)}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}>
               <div><div style={{fontSize:13,fontWeight:700}}>{mat?.name||"?"}</div><div style={{fontSize:11,color:C.dim}}>{pers?.full_name||"?"} • {new Date(mv.movement_date).toLocaleDateString("tr-TR",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</div></div>
@@ -928,7 +943,7 @@ export default function App(){
             {mv.location&&<div style={{fontSize:11,color:C.dim}}>📍 {mv.location}</div>}
           </div>
         );})}
-        {stockMovements.length===0&&<div style={S.emp}>Henüz stok hareketi yok</div>}
+        {bStockMovements.length===0&&<div style={S.emp}>Henüz stok hareketi yok</div>}
       </>}
     </div>);
   };
@@ -1060,7 +1075,7 @@ export default function App(){
         {myOTs.slice(0,10).map(o=>(<div key={o.id} style={S.crd} onClick={()=>setSelOT(o)}><div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:13,fontWeight:600}}>{fD(o.work_date)}</div><div style={{fontSize:11,color:C.dim}}>{o.start_time?.slice(0,5)}→{o.end_time?.slice(0,5)}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:800,color:C.accent}}>{o.hours}s<span style={{color:C.purple,fontSize:12}}> →{o.leave_hours}s</span></div><div style={S.tag(sColor(o.status)+"22",sColor(o.status))}>{sIcon(o.status)}</div></div></div>{o.description&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>{o.description.slice(0,60)}{o.description.length>60?"...":""}</div>}</div>))}
       </div>);
     }
-    const list=profiles.filter(u=>u.active&&u.id!==profile?.id);
+    const list=bProfiles.filter(u=>u.active&&u.id!==profile?.id);
     const debtors=list.filter(u=>debtDays(u.id)>0);
     const vPC=isViewer?allPendCount:totPend;
     const myOTs=overtimes.filter(o=>o.personnel_id===profile.id).sort((a,b)=>(b.work_date||"").localeCompare(a.work_date||""));
@@ -1120,7 +1135,7 @@ export default function App(){
 
   const renderAdmin=()=>{
     if(!isAdmin)return<div style={S.emp}>Erişim yok</div>;
-    const activeAll=profiles.filter(u=>u.active&&u.id!==profile?.id);
+    const activeAll=bProfiles.filter(u=>u.active&&u.id!==profile?.id);
     return(<div>
       <div style={S.sec}><span>⚙️</span> Yonetim</div>
       <button style={S.btn(C.accent)} onClick={()=>setModAddUser(true)}>+ Yeni Personel</button>
@@ -1129,14 +1144,14 @@ export default function App(){
       <div style={{height:16}}/>
       <div style={S.sec}><span>👥</span> Aktif ({activeAll.length})</div>
       {activeAll.map((u,i)=>{const rl=u.user_role==="chef"?"Şef":u.user_role==="viewer"?"İzleyici":u.user_role==="admin"?"Yönetici":"Personel";const rc=u.user_role==="chef"?C.orange:u.user_role==="viewer"?C.blue:u.user_role==="admin"?C.purple:C.green;const rb=u.user_role==="chef"?C.orangeD:u.user_role==="viewer"?C.blueD:u.user_role==="admin"?C.purpleD:C.greenD;return(<div key={u.id} style={S.crd} onClick={()=>setModEditUser(u)}><div style={S.row}><div style={S.av(getAv(i))}>{ini(u.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14,fontWeight:600}}>{u.full_name}</div><div style={{fontSize:11,color:C.dim}}>{u.role}</div></div><div style={S.tag(rb,rc)}>{rl}</div></div></div>);})}
-      {profiles.filter(u=>!u.active).length>0&&<><div style={{...S.sec,marginTop:20}}><span>🚫</span> Pasif</div>{profiles.filter(u=>!u.active).map(u=><div key={u.id} style={{...S.crd,opacity:0.6}}><div style={S.row}><div style={S.av("rgba(255,255,255,0.05)")}>{ini(u.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14}}>{u.full_name}</div></div><button style={S.btnS(C.greenD,C.green)} onClick={e=>{e.stopPropagation();doReactivateU(u.id);}}>Aktif Et</button></div></div>)}</>}
+      {bProfiles.filter(u=>!u.active).length>0&&<><div style={{...S.sec,marginTop:20}}><span>🚫</span> Pasif</div>{bProfiles.filter(u=>!u.active).map(u=><div key={u.id} style={{...S.crd,opacity:0.6}}><div style={S.row}><div style={S.av("rgba(255,255,255,0.05)")}>{ini(u.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14}}>{u.full_name}</div></div><button style={S.btnS(C.greenD,C.green)} onClick={e=>{e.stopPropagation();doReactivateU(u.id);}}>Aktif Et</button></div></div>)}</>}
     </div>);
   };
 
   const renderCalendar=()=>{
     const dim=daysInMonth(calY,calM),fd=firstDay(calY,calM),isSel=calMode!=="view";
     const myLvs=leavesState.filter(l=>l.personnel_id===profile.id&&l.status!=="rejected");
-    const allLvs=isPerso?myLvs:leavesState.filter(l=>l.status!=="rejected");
+    const allLvs=isPerso?myLvs:bLeaves.filter(l=>l.status!=="rejected");
     const myLvDates={};myLvs.forEach(l=>(Array.isArray(l.dates)?l.dates:[]).forEach(d=>{myLvDates[d]={status:l.status,id:l.id};}));
     const lvDates={};allLvs.forEach(l=>(Array.isArray(l.dates)?l.dates:[]).forEach(d=>{lvDates[d]={status:l.status,id:l.id};}));
     const avD=remDays(profile.id),today=todayStr();
@@ -1290,7 +1305,7 @@ export default function App(){
     </div></div>);
   };
 
-  const renderAddUser=()=>{if(!modAddUser)return null;return(<div style={S.mod} onClick={()=>setModAddUser(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>+ Personel</div><div style={S.lbl}>Ad Soyad</div><input style={S.inp} value={nUser.name} onChange={e=>setNUser(p=>({...p,name:e.target.value}))}/><div style={S.lbl}>E-posta</div><input style={S.inp} type="email" inputMode="email" autoCapitalize="none" value={nUser.email} onChange={e=>setNUser(p=>({...p,email:e.target.value}))}/><div style={S.lbl}>Sifre</div><input style={S.inp} type="text" value={nUser.password} onChange={e=>setNUser(p=>({...p,password:e.target.value}))}/><div style={S.lbl}>Görev</div><input style={S.inp} value={nUser.role} onChange={e=>setNUser(p=>({...p,role:e.target.value}))}/><div style={S.lbl}>Yetki</div><select style={S.sel} value={nUser.userRole} onChange={e=>setNUser(p=>({...p,userRole:e.target.value}))}><option value="personnel">Personel</option><option value="chef">Teknik Şef (Onay Yetkili)</option><option value="viewer">İzleyici (Tam Görüntüleme)</option></select><button style={S.btn(C.accent)} onClick={doAddUser} disabled={submitting}>{submitting?"...":"Ekle"}</button><button style={S.btn(C.border,C.text)} onClick={()=>setModAddUser(false)}>İptal</button></div></div>);};
+  const renderAddUser=()=>{if(!modAddUser)return null;return(<div style={S.mod} onClick={()=>setModAddUser(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>+ Personel</div><div style={S.lbl}>Ad Soyad</div><input style={S.inp} value={nUser.name} onChange={e=>setNUser(p=>({...p,name:e.target.value}))}/><div style={S.lbl}>E-posta</div><input style={S.inp} type="email" inputMode="email" autoCapitalize="none" value={nUser.email} onChange={e=>setNUser(p=>({...p,email:e.target.value}))}/><div style={S.lbl}>Sifre</div><input style={S.inp} type="text" value={nUser.password} onChange={e=>setNUser(p=>({...p,password:e.target.value}))}/><div style={S.lbl}>Görev</div><input style={S.inp} value={nUser.role} onChange={e=>setNUser(p=>({...p,role:e.target.value}))}/><div style={S.lbl}>Bina</div><select style={S.sel} value={nUser.buildingId||selBuilding||""} onChange={e=>setNUser(p=>({...p,buildingId:e.target.value}))}>{buildings.map(b=><option key={b.id} value={b.id}>{b.short_name||b.name}</option>)}</select><div style={S.lbl}>Yetki</div><select style={S.sel} value={nUser.userRole} onChange={e=>setNUser(p=>({...p,userRole:e.target.value}))}><option value="personnel">Personel</option><option value="chef">Teknik Şef (Onay Yetkili)</option><option value="viewer">İzleyici (Tam Görüntüleme)</option></select><button style={S.btn(C.accent)} onClick={doAddUser} disabled={submitting}>{submitting?"...":"Ekle"}</button><button style={S.btn(C.border,C.text)} onClick={()=>setModAddUser(false)}>İptal</button></div></div>);};
 
   const renderEditUser=()=>{if(!modEditUser)return null;const u=modEditUser;return(<div style={S.mod} onClick={()=>setModEditUser(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>Düzenle: {u.full_name}</div><div style={S.lbl}>Görev</div><input style={S.inp} value={u.role||""} onChange={e=>setModEditUser({...u,role:e.target.value})}/><div style={S.lbl}>Yetki</div><select style={S.sel} value={u.user_role||"personnel"} onChange={e=>setModEditUser({...u,user_role:e.target.value})}><option value="personnel">Personel</option><option value="chef">Teknik Şef (Onay Yetkili)</option><option value="viewer">İzleyici (Tam Görüntüleme)</option></select><button style={S.btn(C.accent)} onClick={async()=>{try{await supabase.from('profiles').update({role:u.role,user_role:u.user_role}).eq('id',u.id);await fetchProfiles();setModEditUser(null);setToast("Kaydedildi");}catch(e){setToast("Hata: "+e?.message);}}}>Kaydet</button><div style={S.dv}/><button style={S.btn(C.red)} onClick={()=>doDeactivateU(u.id)}>🚫 Pasif Yap</button><button style={S.btn(C.border,C.text)} onClick={()=>setModEditUser(null)}>Kapat</button></div></div>);};
 
@@ -1301,9 +1316,13 @@ export default function App(){
     <div style={S.app}>
       <div style={S.hdr}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,minWidth:36,borderRadius:10,background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🔧</div><div><div style={{fontSize:17,fontWeight:700}}>İBB Teknik Takip</div><div style={{fontSize:11,color:C.dim}}>Fazla Mesai & İzin</div></div></div>
+          <div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,minWidth:36,borderRadius:10,background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🔧</div><div><div style={{fontSize:17,fontWeight:700}}>İBB Teknik Takip</div><div style={{fontSize:11,color:C.dim}}>{curBuildingName||"Fazla Mesai & İzin"}</div></div></div>
           <div style={{display:"flex",gap:6}}><button onClick={()=>setShowPWA(true)} style={{fontSize:14,padding:"6px 8px",borderRadius:20,background:C.accentD,color:C.accent,border:"none",cursor:"pointer"}}>📲</button><button onClick={doLogout} style={{fontSize:11,padding:"6px 12px",borderRadius:20,background:C.redD,color:C.red,border:"none",cursor:"pointer",fontWeight:600}}>Çıkış</button></div>
         </div>
+        {/* Building Selector */}
+        {canSwitchBuilding&&buildings.length>1&&<div style={{display:"flex",gap:6,marginBottom:8,overflowX:"auto",paddingBottom:2}}>
+          {buildings.map(b=><button key={b.id} style={{padding:"6px 14px",borderRadius:20,border:"2px solid "+(selBuilding===b.id?C.accent:C.border),background:selBuilding===b.id?C.accentD:"transparent",color:selBuilding===b.id?C.accent:C.muted,fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}} onClick={()=>setSelBuilding(b.id)}>{b.short_name||b.name}</button>)}
+        </div>}
         <div style={{display:"flex",alignItems:"center",gap:8,background:"rgba(255,255,255,0.05)",borderRadius:8,padding:"8px 12px"}}><div style={S.av(C.accentD,28)}>{ini(profile.full_name)}</div><div><div style={{fontSize:13,fontWeight:600}}>{profile.full_name}</div><div style={{fontSize:10,color:C.dim}}>{roleLabel}</div></div></div>
       </div>
       <div style={S.cnt}>
