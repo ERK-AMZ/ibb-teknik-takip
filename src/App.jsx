@@ -167,6 +167,25 @@ export default function App(){
   const[showInlineSvcDatePicker,setShowInlineSvcDatePicker]=useState(false);
   const[faultTab,setFaultTab]=useState("active");
   const faultPhotoRef=useRef(null);
+  // Stock/Inventory
+  const[materials,setMaterials]=useState([]);
+  const[stockMovements,setStockMovements]=useState([]);
+  const[depoTab,setDepoTab]=useState("stock");
+  const[matSearch,setMatSearch]=useState("");
+  const[matCategory,setMatCategory]=useState("all");
+  const[selMaterial,setSelMaterial]=useState(null);
+  const[modNewMat,setModNewMat]=useState(false);
+  const[matForm,setMatForm]=useState({name:"",category:"Genel Sarf",unit:"Adet",current_stock:0,min_stock:0,notes:""});
+  const[modStockOut,setModStockOut]=useState(null);
+  const[stockOutForm,setStockOutForm]=useState({quantity:"",purpose:"",location:""});
+  const[modStockIn,setModStockIn]=useState(null);
+  const[stockInForm,setStockInForm]=useState({quantity:"",notes:""});
+  const[modBulkUpload,setModBulkUpload]=useState(false);
+  const[bulkData,setBulkData]=useState([]);
+  const[bulkParsed,setBulkParsed]=useState(false);
+  const csvRef=useRef(null);
+  const MAT_CATS=["Tesisat","Elektrik","Klima/Havalandırma","Sıhhi Tesisat","Boya/İnşaat","Genel Sarf","Diğer"];
+  const MAT_UNITS=["Adet","Metre","Kg","Litre","Kutu","Paket","Rulo","Çift","Takım"];
   const[deleteConfirm,setDeleteConfirm]=useState(null);
   const[editOT,setEditOT]=useState(null);
   const[showEditStartTP,setShowEditStartTP]=useState(false);
@@ -199,20 +218,25 @@ export default function App(){
   const fetchLeaves=useCallback(async()=>{try{const d=await getLeaves();if(d)setLeavesState(d);}catch(e){console.error(e);}},[]);
   const fetchFaults=useCallback(async()=>{try{const{data}=await supabase.from('faults').select('*').order('detected_date',{ascending:false});if(data)setFaults(data);}catch(e){console.error(e);}},[]);
   const fetchFaultServices=useCallback(async()=>{try{const{data}=await supabase.from('fault_services').select('*').order('visit_date',{ascending:false});if(data)setFaultServices(data);}catch(e){console.error(e);}},[]);
-  const fetchFaultVotes=useCallback(async()=>{try{const{data}=await supabase.from('fault_votes').select('*');if(data)setFaultVotes(data);}catch(e){console.error(e);}},[]);
+  const fetchFaultVotes=useCallback(async()=>{try{const{data}=await supabase.from('fault_votes').select('*');if(data)setFaultVotes(data);}catch(e){console.error(e);}},[]); 
+  const fetchMaterials=useCallback(async()=>{try{const{data}=await supabase.from('materials').select('*').order('name');if(data)setMaterials(data);}catch(e){console.error(e);}},[]);
+  const fetchStockMovements=useCallback(async()=>{try{const{data}=await supabase.from('stock_movements').select('*').order('movement_date',{ascending:false});if(data)setStockMovements(data);}catch(e){console.error(e);}},[]);
 
   const loadData=useCallback(async(uid)=>{
     setLoading(true);setLoadError(null);
     try{
-      const r=await Promise.allSettled([getProfiles(),getOvertimes(),getLeaves(),supabase.from('faults').select('*').order('detected_date',{ascending:false}),supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),supabase.from('fault_votes').select('*')]);
+      const r=await Promise.allSettled([getProfiles(),getOvertimes(),getLeaves(),supabase.from('faults').select('*').order('detected_date',{ascending:false}),supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),supabase.from('fault_votes').select('*'),supabase.from('materials').select('*').order('name'),supabase.from('stock_movements').select('*').order('movement_date',{ascending:false})]);
       const profs=r[0].status==="fulfilled"?(r[0].value||[]):[];
       const ots=r[1].status==="fulfilled"?(r[1].value||[]):[];
       const lvs=r[2].status==="fulfilled"?(r[2].value||[]):[];
       const fts=r[3].status==="fulfilled"?(r[3].value?.data||[]):[];
       const fss=r[4].status==="fulfilled"?(r[4].value?.data||[]):[];
       const fvs=r[5].status==="fulfilled"?(r[5].value?.data||[]):[];
+      const mats=r[6].status==="fulfilled"?(r[6].value?.data||[]):[];
+      const smvs=r[7].status==="fulfilled"?(r[7].value?.data||[]):[];
       setProfilesState(profs);setOvertimesState(ots);setLeavesState(lvs);
       setFaults(fts);setFaultServices(fss);setFaultVotes(fvs);
+      setMaterials(mats);setStockMovements(smvs);
       const fp=profs.find(p=>p.id===uid);setProfile(fp||null);
       if(!fp&&profs.length===0)setLoadError("Veri yüklenemedi.");
     }catch(err){setLoadError("Bağlantı hatası");}finally{setLoading(false);}
@@ -237,8 +261,10 @@ export default function App(){
       try{const c=await subscribeToChanges('faults',()=>{if(m)fetchFaults();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('fault_services',()=>{if(m)fetchFaultServices();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('fault_votes',()=>{if(m)fetchFaultVotes();});if(c)subs.push(c);}catch(e){}
+      try{const c=await subscribeToChanges('materials',()=>{if(m)fetchMaterials();});if(c)subs.push(c);}catch(e){}
+      try{const c=await subscribeToChanges('stock_movements',()=>{if(m){fetchStockMovements();fetchMaterials();}});if(c)subs.push(c);}catch(e){}
     };s();return()=>{m=false;subs.forEach(s=>{try{s?.unsubscribe();}catch(e){}});};
-  },[session,fetchOvertimes,fetchLeaves,fetchProfiles,fetchFaults,fetchFaultServices,fetchFaultVotes]);
+  },[session,fetchOvertimes,fetchLeaves,fetchProfiles,fetchFaults,fetchFaultServices,fetchFaultVotes,fetchMaterials,fetchStockMovements]);
 
   const isAdmin=profile?.user_role==="admin";
   const isChef=profile?.user_role==="chef";
@@ -741,6 +767,277 @@ export default function App(){
     </div></div>);
   };
 
+  // ===== STOCK MANAGEMENT SYSTEM =====
+  async function addMaterial(){
+    if(!matForm.name){setToast("⚠ Malzeme adı zorunlu");return;}
+    setSubmitting(true);
+    try{
+      await supabase.from('materials').insert({name:matForm.name,category:matForm.category,unit:matForm.unit,current_stock:Number(matForm.current_stock)||0,min_stock:Number(matForm.min_stock)||0,notes:matForm.notes||"",created_by:profile.id});
+      await fetchMaterials();setModNewMat(false);setMatForm({name:"",category:"Genel Sarf",unit:"Adet",current_stock:0,min_stock:0,notes:""});setToast("✓ Malzeme eklendi");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+
+  async function doStockOut(){
+    const qty=Number(stockOutForm.quantity);
+    if(!qty||qty<=0){setToast("⚠ Geçerli miktar girin");return;}
+    if(!stockOutForm.purpose){setToast("⚠ Hangi iş için aldığınızı yazın");return;}
+    setSubmitting(true);
+    try{
+      const mat=modStockOut;
+      await supabase.from('stock_movements').insert({material_id:mat.id,personnel_id:profile.id,quantity:qty,movement_type:'out',purpose:stockOutForm.purpose,location:stockOutForm.location||"",movement_date:new Date().toISOString()});
+      const newStock=Math.max(0,(mat.current_stock||0)-qty);
+      await supabase.from('materials').update({current_stock:newStock}).eq('id',mat.id);
+      await fetchMaterials();await fetchStockMovements();
+      setModStockOut(null);setStockOutForm({quantity:"",purpose:"",location:""});
+      if(newStock<=mat.min_stock)setToast("⚠ "+mat.name+" kritik seviyenin altında! ("+newStock+" "+mat.unit+")");
+      else setToast("✓ "+qty+" "+mat.unit+" "+mat.name+" çıkışı yapıldı");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+
+  async function doStockIn(){
+    const qty=Number(stockInForm.quantity);
+    if(!qty||qty<=0){setToast("⚠ Geçerli miktar girin");return;}
+    setSubmitting(true);
+    try{
+      const mat=modStockIn;
+      await supabase.from('stock_movements').insert({material_id:mat.id,personnel_id:profile.id,quantity:qty,movement_type:'in',notes:stockInForm.notes||"",movement_date:new Date().toISOString()});
+      await supabase.from('materials').update({current_stock:(mat.current_stock||0)+qty}).eq('id',mat.id);
+      await fetchMaterials();await fetchStockMovements();
+      setModStockIn(null);setStockInForm({quantity:"",notes:""});setToast("✓ "+qty+" "+mat.unit+" "+mat.name+" girişi yapıldı");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+
+  function handleCSV(e){
+    const file=e.target.files?.[0];if(!file)return;
+    const reader=new FileReader();
+    reader.onload=(ev)=>{
+      const text=ev.target.result;
+      const lines=text.split('\n').filter(l=>l.trim());
+      if(lines.length<2){setToast("⚠ CSV dosyası boş veya hatalı");return;}
+      const headers=lines[0].split(/[,;\t]/).map(h=>h.trim().toLowerCase().replace(/['"]/g,''));
+      const nameIdx=headers.findIndex(h=>h.includes('malzeme')||h.includes('ad')||h.includes('name')||h.includes('ürün'));
+      const catIdx=headers.findIndex(h=>h.includes('kategori')||h.includes('category'));
+      const unitIdx=headers.findIndex(h=>h.includes('birim')||h.includes('unit'));
+      const stockIdx=headers.findIndex(h=>h.includes('stok')||h.includes('stock')||h.includes('miktar'));
+      const minIdx=headers.findIndex(h=>h.includes('min')||h.includes('minimum'));
+      if(nameIdx===-1){setToast("⚠ 'Malzeme Adı' kolonu bulunamadı");return;}
+      const rows=[];
+      for(let i=1;i<lines.length;i++){
+        const cols=lines[i].split(/[,;\t]/).map(c=>c.trim().replace(/^['"]|['"]$/g,''));
+        const name=cols[nameIdx];if(!name)continue;
+        rows.push({name,category:catIdx>=0?cols[catIdx]||"Genel Sarf":"Genel Sarf",unit:unitIdx>=0?cols[unitIdx]||"Adet":"Adet",current_stock:stockIdx>=0?Number(cols[stockIdx])||0:0,min_stock:minIdx>=0?Number(cols[minIdx])||0:0});
+      }
+      setBulkData(rows);setBulkParsed(true);
+      setToast("✓ "+rows.length+" malzeme okundu — kontrol edip yükleyin");
+    };
+    reader.readAsText(file,'UTF-8');
+    if(e.target)e.target.value="";
+  }
+
+  async function doBulkUpload(){
+    if(!bulkData.length)return;
+    setSubmitting(true);
+    try{
+      const rows=bulkData.map(r=>({...r,created_by:profile.id}));
+      const batchSize=50;
+      for(let i=0;i<rows.length;i+=batchSize){
+        await supabase.from('materials').insert(rows.slice(i,i+batchSize));
+      }
+      await fetchMaterials();setBulkData([]);setBulkParsed(false);setModBulkUpload(false);
+      setToast("✓ "+rows.length+" malzeme yüklendi");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+
+  const lowStockMats=materials.filter(m=>m.current_stock<=m.min_stock&&m.min_stock>0);
+  const criticalCount=lowStockMats.length;
+
+  const renderDepo=()=>{
+    const filtered=materials.filter(m=>{
+      if(matCategory!=="all"&&m.category!==matCategory)return false;
+      if(matSearch&&!m.name.toLowerCase().includes(matSearch.toLowerCase()))return false;
+      return true;
+    });
+    const purchaseList=lowStockMats.sort((a,b)=>(a.current_stock/Math.max(a.min_stock,1))-(b.current_stock/Math.max(b.min_stock,1)));
+
+    return(<div>
+      <div style={S.sec}><span>📦</span> Depo & Stok</div>
+      {/* Tabs */}
+      <div style={{display:"flex",gap:6,marginBottom:12,overflowX:"auto"}}>
+        {[{k:"stock",l:"📦 Stok",c:materials.length},{k:"purchase",l:"🛒 Satın Alma",c:purchaseList.length},{k:"history",l:"📋 Hareketler",c:null}].map(t=>(
+          <button key={t.k} style={{padding:"8px 14px",borderRadius:10,border:"2px solid "+(depoTab===t.k?C.accent:C.border),background:depoTab===t.k?C.accentD:"transparent",color:depoTab===t.k?C.accent:C.muted,fontWeight:700,fontSize:12,cursor:"pointer",whiteSpace:"nowrap"}} onClick={()=>setDepoTab(t.k)}>{t.l}{t.c!==null&&t.c>0?" ("+t.c+")":""}</button>
+        ))}
+      </div>
+
+      {/* Critical alert */}
+      {criticalCount>0&&depoTab==="stock"&&<div style={{background:C.redD,borderRadius:10,padding:12,marginBottom:12,border:"1px solid "+C.red+"44"}}><div style={{fontSize:13,fontWeight:700,color:C.red}}>🔴 {criticalCount} malzeme kritik seviyede!</div><div style={{fontSize:11,color:C.dim,marginTop:4}}>Satın alma listesini kontrol edin</div></div>}
+
+      {/* STOCK TAB */}
+      {depoTab==="stock"&&<>
+        <div style={{display:"flex",gap:8,marginBottom:10}}>
+          <input style={{...S.inp,flex:1,marginBottom:0}} placeholder="🔍 Malzeme ara..." value={matSearch} onChange={e=>setMatSearch(e.target.value)}/>
+        </div>
+        <div style={{display:"flex",gap:6,marginBottom:12,overflowX:"auto",paddingBottom:4}}>
+          <button style={{padding:"6px 12px",borderRadius:8,border:"none",background:matCategory==="all"?C.accent:C.bg,color:matCategory==="all"?"#fff":C.muted,fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}} onClick={()=>setMatCategory("all")}>Tümü</button>
+          {MAT_CATS.map(c=><button key={c} style={{padding:"6px 12px",borderRadius:8,border:"none",background:matCategory===c?C.accent:C.bg,color:matCategory===c?"#fff":C.muted,fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}} onClick={()=>setMatCategory(c)}>{c}</button>)}
+        </div>
+        {canEditFault&&<div style={{display:"flex",gap:8,marginBottom:12}}>
+          <button style={{...S.btn(C.accent),flex:1}} onClick={()=>{setMatForm({name:"",category:"Genel Sarf",unit:"Adet",current_stock:0,min_stock:0,notes:""});setModNewMat(true);}}>+ Malzeme Ekle</button>
+          <button style={{...S.btn(C.accentD,C.accent),flex:1}} onClick={()=>{setBulkData([]);setBulkParsed(false);setModBulkUpload(true);}}>📄 Toplu Yükle</button>
+        </div>}
+        {filtered.length===0&&<div style={S.emp}>Malzeme bulunamadı</div>}
+        {filtered.map(m=>{const isLow=m.current_stock<=m.min_stock&&m.min_stock>0;const pct=m.min_stock>0?Math.min(100,Math.round((m.current_stock/m.min_stock)*100)):100;return(
+          <div key={m.id} style={{...S.crd,borderLeft:"4px solid "+(isLow?C.red:pct<150?C.orange:C.green)}} onClick={()=>setSelMaterial(m)}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{flex:1}}><div style={{fontSize:14,fontWeight:700}}>{m.name}</div><div style={{fontSize:11,color:C.dim}}>{m.category} • {m.unit}</div></div>
+              <div style={{textAlign:"right"}}><div style={{fontSize:20,fontWeight:800,color:isLow?C.red:C.text}}>{m.current_stock}</div><div style={{fontSize:9,color:C.dim}}>{m.unit}</div></div>
+            </div>
+            {m.min_stock>0&&<div style={{marginTop:8}}><div style={{height:6,borderRadius:3,background:C.bg,overflow:"hidden"}}><div style={{height:"100%",borderRadius:3,width:Math.min(100,pct)+"%",background:isLow?C.red:pct<150?C.orange:C.green,transition:"width 0.3s"}}/></div><div style={{display:"flex",justifyContent:"space-between",marginTop:3}}><div style={{fontSize:9,color:C.dim}}>Min: {m.min_stock}</div>{isLow&&<div style={{fontSize:9,color:C.red,fontWeight:700}}>⚠ Kritik</div>}</div></div>}
+            <button style={{marginTop:8,padding:"8px",borderRadius:8,border:"1px solid "+C.accent+"44",background:C.accentD,color:C.accent,fontSize:12,fontWeight:700,cursor:"pointer",width:"100%"}} onClick={e=>{e.stopPropagation();setModStockOut(m);setStockOutForm({quantity:"",purpose:"",location:""});}}>📤 Malzeme Al</button>
+          </div>
+        );})}
+      </>}
+
+      {/* PURCHASE LIST TAB */}
+      {depoTab==="purchase"&&<>
+        <div style={{...S.lawBox,marginBottom:12,borderColor:C.red+"44"}}><div style={{fontSize:14,fontWeight:700,marginBottom:4}}>🛒 Satın Alma Listesi</div><div style={{fontSize:12,color:C.dim}}>Minimum stok seviyesinin altındaki malzemeler</div></div>
+        {purchaseList.length===0?<div style={S.emp}>Tüm malzemeler yeterli seviyede ✓</div>:
+        purchaseList.map(m=>{const need=Math.max(0,m.min_stock*2-m.current_stock);return(
+          <div key={m.id} style={{...S.crd,borderLeft:"4px solid "+C.red}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div><div style={{fontSize:14,fontWeight:700}}>{m.name}</div><div style={{fontSize:11,color:C.dim}}>{m.category}</div></div>
+              <div style={{textAlign:"right"}}><div style={{fontSize:11,color:C.red}}>Mevcut: {m.current_stock} {m.unit}</div><div style={{fontSize:11,color:C.dim}}>Min: {m.min_stock} {m.unit}</div><div style={{fontSize:13,fontWeight:800,color:C.accent}}>Önerilen: {need} {m.unit}</div></div>
+            </div>
+          </div>
+        );})}
+        {purchaseList.length>0&&canEditFault&&<button style={S.btn(C.accent)} onClick={()=>{const txt=purchaseList.map(m=>"• "+m.name+" — "+Math.max(0,m.min_stock*2-m.current_stock)+" "+m.unit+" (Mevcut: "+m.current_stock+")").join("\n");navigator.clipboard?.writeText("SATIN ALMA LİSTESİ\n"+new Date().toLocaleDateString("tr-TR")+"\n\n"+txt).then(()=>setToast("📋 Liste panoya kopyalandı")).catch(()=>setToast("Kopyalanamadı"));}}>📋 Listeyi Kopyala</button>}
+      </>}
+
+      {/* HISTORY TAB */}
+      {depoTab==="history"&&<>
+        {stockMovements.slice(0,50).map(mv=>{const mat=materials.find(m=>m.id===mv.material_id);const pers=profiles.find(p=>p.id===mv.personnel_id);const isOut=mv.movement_type==="out";return(
+          <div key={mv.id} style={{...S.crd,borderLeft:"4px solid "+(isOut?C.orange:C.green)}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}>
+              <div><div style={{fontSize:13,fontWeight:700}}>{mat?.name||"?"}</div><div style={{fontSize:11,color:C.dim}}>{pers?.full_name||"?"} • {new Date(mv.movement_date).toLocaleDateString("tr-TR",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</div></div>
+              <div style={S.tag(isOut?C.orangeD:C.greenD,isOut?C.orange:C.green)}>{isOut?"📤 -":"📥 +"}{mv.quantity} {mat?.unit||""}</div>
+            </div>
+            {mv.purpose&&<div style={{fontSize:11,color:C.text,marginTop:4}}>📋 {mv.purpose}</div>}
+            {mv.location&&<div style={{fontSize:11,color:C.dim}}>📍 {mv.location}</div>}
+          </div>
+        );})}
+        {stockMovements.length===0&&<div style={S.emp}>Henüz stok hareketi yok</div>}
+      </>}
+    </div>);
+  };
+
+  const renderMaterialDetail=()=>{
+    if(!selMaterial)return null;const m=selMaterial;
+    const mvs=stockMovements.filter(mv=>mv.material_id===m.id).slice(0,20);
+    const isLow=m.current_stock<=m.min_stock&&m.min_stock>0;
+    return(<div style={S.mod} onClick={()=>setSelMaterial(null)}><div style={{...S.modC,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+      <div style={S.modH}/>
+      <div style={{fontSize:17,fontWeight:700,marginBottom:4}}>{m.name}</div>
+      <div style={{fontSize:12,color:C.dim,marginBottom:12}}>{m.category} • {m.unit}</div>
+      <div style={{display:"flex",gap:10,marginBottom:12}}>
+        <div style={{flex:1,background:isLow?C.redD:C.greenD,borderRadius:10,padding:12,textAlign:"center"}}><div style={{fontSize:28,fontWeight:800,color:isLow?C.red:C.green}}>{m.current_stock}</div><div style={{fontSize:10,color:C.dim}}>Mevcut Stok</div></div>
+        <div style={{flex:1,background:C.bg,borderRadius:10,padding:12,textAlign:"center",border:"1px solid "+C.border}}><div style={{fontSize:28,fontWeight:800,color:C.text}}>{m.min_stock}</div><div style={{fontSize:10,color:C.dim}}>Minimum</div></div>
+      </div>
+      {isLow&&<div style={{background:C.redD,borderRadius:10,padding:10,marginBottom:12,textAlign:"center"}}><span style={{color:C.red,fontWeight:700,fontSize:13}}>⚠ Kritik — Satın alma gerekli!</span></div>}
+      {m.notes&&<div style={{fontSize:12,color:C.dim,marginBottom:12}}>📝 {m.notes}</div>}
+      <div style={{display:"flex",gap:8,marginBottom:12}}>
+        <button style={{...S.btn(C.accentD,C.accent),flex:1}} onClick={()=>{setSelMaterial(null);setModStockOut(m);setStockOutForm({quantity:"",purpose:"",location:""});}}>📤 Çıkış</button>
+        {canEditFault&&<button style={{...S.btn(C.greenD,C.green),flex:1}} onClick={()=>{setSelMaterial(null);setModStockIn(m);setStockInForm({quantity:"",notes:""});}}>📥 Giriş</button>}
+      </div>
+      {mvs.length>0&&<div><div style={{fontSize:11,color:C.muted,fontWeight:600,marginBottom:6}}>Son Hareketler</div>{mvs.map(mv=>{const pers=profiles.find(p=>p.id===mv.personnel_id);const isOut=mv.movement_type==="out";return(
+        <div key={mv.id} style={{padding:"8px 0",borderBottom:"1px solid "+C.border,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div><div style={{fontSize:12}}>{pers?.full_name||"?"}</div><div style={{fontSize:10,color:C.dim}}>{new Date(mv.movement_date).toLocaleDateString("tr-TR",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</div>{mv.purpose&&<div style={{fontSize:10,color:C.dim}}>📋 {mv.purpose}</div>}</div>
+          <div style={{fontSize:13,fontWeight:700,color:isOut?C.orange:C.green}}>{isOut?"-":"+"}{mv.quantity}</div>
+        </div>
+      );})}</div>}
+      {canEditFault&&<><div style={S.dv}/><button style={S.btn(C.border,C.text)} onClick={()=>{const newMin=prompt("Yeni minimum stok değeri:",m.min_stock);if(newMin!==null){const v=Number(newMin);if(!isNaN(v)){supabase.from('materials').update({min_stock:v}).eq('id',m.id).then(()=>{fetchMaterials();setSelMaterial({...m,min_stock:v});setToast("✓ Min stok güncellendi");});}}}}> Minimum Stok Düzenle</button></>}
+      {isAdmin&&<button style={S.btn(C.redD,C.red)} onClick={async()=>{await supabase.from('materials').delete().eq('id',m.id);await fetchMaterials();setSelMaterial(null);setToast("🗑 Malzeme silindi");}}>🗑 Malzemeyi Sil</button>}
+      <button style={S.btn(C.border,C.text)} onClick={()=>setSelMaterial(null)}>Kapat</button>
+    </div></div>);
+  };
+
+  const renderStockOutModal=()=>{
+    if(!modStockOut)return null;const m=modStockOut;
+    return(<div style={S.mod} onClick={()=>setModStockOut(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+      <div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:4}}>📤 Malzeme Çıkışı</div>
+      <div style={{fontSize:13,color:C.dim,marginBottom:12}}>{m.name} • Mevcut: <b style={{color:C.accent}}>{m.current_stock} {m.unit}</b></div>
+      <div style={S.lbl}>Miktar ({m.unit})</div>
+      <input style={S.inp} type="number" inputMode="decimal" placeholder={"Kaç "+m.unit+"?"} value={stockOutForm.quantity} onChange={e=>setStockOutForm(p=>({...p,quantity:e.target.value}))}/>
+      {stockOutForm.quantity&&Number(stockOutForm.quantity)>m.current_stock&&<div style={{fontSize:12,color:C.red,marginBottom:8}}>⚠ Stokta yeterli yok! ({m.current_stock} {m.unit} mevcut)</div>}
+      <div style={S.lbl}>Hangi iş için? (zorunlu)</div>
+      <input style={S.inp} placeholder="Örn: 5. kat klima bakımı" value={stockOutForm.purpose} onChange={e=>setStockOutForm(p=>({...p,purpose:e.target.value}))}/>
+      <div style={S.lbl}>Lokasyon</div>
+      <input style={S.inp} placeholder="Örn: 7. Kat B Blok" value={stockOutForm.location} onChange={e=>setStockOutForm(p=>({...p,location:e.target.value}))}/>
+      <button style={S.btn(C.accent)} onClick={doStockOut} disabled={submitting}>{submitting?"...":"Çıkış Yap"}</button>
+      <button style={S.btn(C.border,C.text)} onClick={()=>setModStockOut(null)}>İptal</button>
+    </div></div>);
+  };
+
+  const renderStockInModal=()=>{
+    if(!modStockIn)return null;const m=modStockIn;
+    return(<div style={S.mod} onClick={()=>setModStockIn(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+      <div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:4}}>📥 Malzeme Girişi</div>
+      <div style={{fontSize:13,color:C.dim,marginBottom:12}}>{m.name} • Mevcut: <b style={{color:C.accent}}>{m.current_stock} {m.unit}</b></div>
+      <div style={S.lbl}>Miktar ({m.unit})</div>
+      <input style={S.inp} type="number" inputMode="decimal" placeholder={"Kaç "+m.unit+" geldi?"} value={stockInForm.quantity} onChange={e=>setStockInForm(p=>({...p,quantity:e.target.value}))}/>
+      <div style={S.lbl}>Not (opsiyonel)</div>
+      <input style={S.inp} placeholder="Örn: Satın alma ile geldi" value={stockInForm.notes} onChange={e=>setStockInForm(p=>({...p,notes:e.target.value}))}/>
+      <button style={S.btn(C.green)} onClick={doStockIn} disabled={submitting}>{submitting?"...":"Giriş Yap"}</button>
+      <button style={S.btn(C.border,C.text)} onClick={()=>setModStockIn(null)}>İptal</button>
+    </div></div>);
+  };
+
+  const renderNewMatModal=()=>{
+    if(!modNewMat)return null;
+    return(<div style={S.mod} onClick={()=>setModNewMat(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+      <div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>+ Yeni Malzeme</div>
+      <div style={S.lbl}>Malzeme Adı</div>
+      <input style={S.inp} placeholder="Örn: 500 lt Genleşme Tankı" value={matForm.name} onChange={e=>setMatForm(p=>({...p,name:e.target.value}))}/>
+      <div style={{display:"flex",gap:10}}>
+        <div style={{flex:1}}><div style={S.lbl}>Kategori</div><select style={S.sel} value={matForm.category} onChange={e=>setMatForm(p=>({...p,category:e.target.value}))}>{MAT_CATS.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+        <div style={{flex:1}}><div style={S.lbl}>Birim</div><select style={S.sel} value={matForm.unit} onChange={e=>setMatForm(p=>({...p,unit:e.target.value}))}>{MAT_UNITS.map(u=><option key={u} value={u}>{u}</option>)}</select></div>
+      </div>
+      <div style={{display:"flex",gap:10}}>
+        <div style={{flex:1}}><div style={S.lbl}>Mevcut Stok</div><input style={S.inp} type="number" inputMode="decimal" value={matForm.current_stock} onChange={e=>setMatForm(p=>({...p,current_stock:e.target.value}))}/></div>
+        <div style={{flex:1}}><div style={S.lbl}>Minimum Stok</div><input style={S.inp} type="number" inputMode="decimal" value={matForm.min_stock} onChange={e=>setMatForm(p=>({...p,min_stock:e.target.value}))}/></div>
+      </div>
+      <div style={S.lbl}>Not</div>
+      <input style={S.inp} placeholder="Opsiyonel not..." value={matForm.notes} onChange={e=>setMatForm(p=>({...p,notes:e.target.value}))}/>
+      <button style={S.btn(C.accent)} onClick={addMaterial} disabled={submitting}>{submitting?"...":"Kaydet"}</button>
+      <button style={S.btn(C.border,C.text)} onClick={()=>setModNewMat(false)}>İptal</button>
+    </div></div>);
+  };
+
+  const renderBulkUploadModal=()=>{
+    if(!modBulkUpload)return null;
+    return(<div style={S.mod} onClick={()=>setModBulkUpload(false)}><div style={{...S.modC,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+      <div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:4}}>📄 CSV Toplu Yükleme</div>
+      <div style={{fontSize:12,color:C.dim,marginBottom:16}}>Excel dosyanızı CSV olarak kaydedin ve yükleyin</div>
+      <div style={{...S.lawBox,marginBottom:12}}><div style={{fontSize:11,color:C.muted,fontWeight:600,marginBottom:4}}>CSV Format Örneği:</div><div style={{fontSize:11,color:C.text,fontFamily:"monospace",lineHeight:1.6}}>Malzeme Adı,Kategori,Birim,Stok,Minimum<br/>Genleşme Tankı 500lt,Tesisat,Adet,2,3<br/>Bakır Boru 15mm,Tesisat,Metre,50,20<br/>Kompresör Yağı,Klima/Havalandırma,Litre,10,5</div></div>
+      {!bulkParsed?<>
+        <button style={S.btn(C.accent)} onClick={()=>csvRef.current?.click()}>📁 CSV Dosyası Seç</button>
+        <input ref={csvRef} type="file" accept=".csv,.txt,.tsv" style={{display:"none"}} onChange={handleCSV}/>
+      </>:<>
+        <div style={{fontSize:13,fontWeight:700,color:C.green,marginBottom:8}}>✓ {bulkData.length} malzeme okundu</div>
+        <div style={{maxHeight:200,overflowY:"auto",marginBottom:12}}>{bulkData.slice(0,20).map((r,i)=>(
+          <div key={i} style={{fontSize:11,padding:"6px 0",borderBottom:"1px solid "+C.border,display:"flex",justifyContent:"space-between"}}>
+            <span>{r.name}</span><span style={{color:C.dim}}>{r.category} • {r.current_stock} {r.unit}</span>
+          </div>
+        ))}{bulkData.length>20&&<div style={{fontSize:11,color:C.dim,padding:6}}>...ve {bulkData.length-20} malzeme daha</div>}</div>
+        <button style={S.btn(C.accent)} onClick={doBulkUpload} disabled={submitting}>{submitting?"Yükleniyor...":"✓ "+bulkData.length+" Malzeme Yükle"}</button>
+        <button style={S.btn(C.border,C.text)} onClick={()=>{setBulkData([]);setBulkParsed(false);}}>Farklı Dosya Seç</button>
+      </>}
+      <button style={S.btn(C.border,C.text)} onClick={()=>setModBulkUpload(false)}>Kapat</button>
+    </div></div>);
+  };
+
   const renderDashboard=()=>{
     if(isPerso){
       const myOTs=overtimes.filter(o=>o.personnel_id===profile.id).sort((a,b)=>(b.work_date||"").localeCompare(a.work_date||""));
@@ -997,7 +1294,7 @@ export default function App(){
 
   const renderEditUser=()=>{if(!modEditUser)return null;const u=modEditUser;return(<div style={S.mod} onClick={()=>setModEditUser(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>Düzenle: {u.full_name}</div><div style={S.lbl}>Görev</div><input style={S.inp} value={u.role||""} onChange={e=>setModEditUser({...u,role:e.target.value})}/><div style={S.lbl}>Yetki</div><select style={S.sel} value={u.user_role||"personnel"} onChange={e=>setModEditUser({...u,user_role:e.target.value})}><option value="personnel">Personel</option><option value="chef">Teknik Şef (Onay Yetkili)</option><option value="viewer">İzleyici (Tam Görüntüleme)</option></select><button style={S.btn(C.accent)} onClick={async()=>{try{await supabase.from('profiles').update({role:u.role,user_role:u.user_role}).eq('id',u.id);await fetchProfiles();setModEditUser(null);setToast("Kaydedildi");}catch(e){setToast("Hata: "+e?.message);}}}>Kaydet</button><div style={S.dv}/><button style={S.btn(C.red)} onClick={()=>doDeactivateU(u.id)}>🚫 Pasif Yap</button><button style={S.btn(C.border,C.text)} onClick={()=>setModEditUser(null)}>Kapat</button></div></div>);};
 
-  const navItems=isAdmin?[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"calendar",i:"📅",l:"Takvim"},{k:"approvals",i:"✅",l:"Onaylar"},{k:"admin",i:"⚙️",l:"Yönetim"}]:(isChef||isViewer)?[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"calendar",i:"📅",l:"Takvim"},{k:"approvals",i:isViewer?"👁":"✅",l:isViewer?"Takip":"Onaylar"}]:[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"calendar",i:"📅",l:"Takvim"}];
+  const navItems=isAdmin?[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"depo",i:"📦",l:"Depo"},{k:"calendar",i:"📅",l:"Takvim"},{k:"approvals",i:"✅",l:"Onaylar"},{k:"admin",i:"⚙️",l:"Yönetim"}]:(isChef||isViewer)?[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"depo",i:"📦",l:"Depo"},{k:"calendar",i:"📅",l:"Takvim"},{k:"approvals",i:isViewer?"👁":"✅",l:isViewer?"Takip":"Onaylar"}]:[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"depo",i:"📦",l:"Depo"},{k:"calendar",i:"📅",l:"Takvim"}];
   const roleLabel=isAdmin?"👑 Yonetici":isChef?"🔧 Sef":isViewer?"👁 Izleyici":"👷 Personel";
 
   return(
@@ -1013,14 +1310,20 @@ export default function App(){
         {page==="dashboard"&&renderDashboard()}
         {page==="person"&&renderPersonDetail()}
         {page==="faults"&&renderFaults()}
+        {page==="depo"&&renderDepo()}
         {page==="calendar"&&renderCalendar()}
         {page==="approvals"&&renderApprovals()}
         {page==="admin"&&renderAdmin()}
       </div>
-      <div style={S.nav}>{navItems.map(n=>(<button key={n.k} style={S.navB(page===n.k||(n.k==="dashboard"&&page==="person"))} onClick={()=>{setPage(n.k);setSelPerson(null);if(n.k!=="calendar"){setCalMode("view");setCalSel([]);}}}><span style={{fontSize:18}}>{n.i}</span>{n.l}{n.k==="approvals"&&((canApprove&&totPend>0)||(isViewer&&allPendCount>0))&&<div style={S.dot}/>}</button>))}</div>
+      <div style={S.nav}>{navItems.map(n=>(<button key={n.k} style={S.navB(page===n.k||(n.k==="dashboard"&&page==="person"))} onClick={()=>{setPage(n.k);setSelPerson(null);if(n.k!=="calendar"){setCalMode("view");setCalSel([]);}}}><span style={{fontSize:18}}>{n.i}</span>{n.l}{n.k==="approvals"&&((canApprove&&totPend>0)||(isViewer&&allPendCount>0))&&<div style={S.dot}/>}{n.k==="depo"&&criticalCount>0&&<div style={S.dot}/>}</button>))}</div>
       {renderNewOT()}
       {renderNewFault()}
       {renderFaultDetail()}
+      {renderMaterialDetail()}
+      {renderStockOutModal()}
+      {renderStockInModal()}
+      {renderNewMatModal()}
+      {renderBulkUploadModal()}
       {renderAddUser()}
       {renderEditUser()}
       {renderOTDetail()}
