@@ -156,7 +156,7 @@ export default function App(){
   const[faultVotes,setFaultVotes]=useState([]);
   const[selFault,setSelFault]=useState(null);
   const[modNewFault,setModNewFault]=useState(false);
-  const[faultForm,setFaultForm]=useState({title:"",location:"",description:"",detected_date:"",photos:[],services:[]});
+  const[faultForm,setFaultForm]=useState({title:"",location:"",description:"",detected_date:"",photos:[],services:[],fault_type:"service",material_needed:""});
   const[faultPhotoFiles,setFaultPhotoFiles]=useState([]);
   const[modAddService,setModAddService]=useState(false);
   const[serviceForm,setServiceForm]=useState({service_name:"",visit_date:"",notes:""});
@@ -501,14 +501,14 @@ export default function App(){
         const r=await uploadPhoto(file,'fault-photos');
         if(r?.url)photoUrls.push(r.url);
       }
-      const{data:inserted}=await supabase.from('faults').insert({title:faultForm.title,location:faultForm.location,description:faultForm.description||"",photos:photoUrls,detected_date:faultForm.detected_date,created_by:profile.id}).select().single();
+      const{data:inserted}=await supabase.from('faults').insert({title:faultForm.title,location:faultForm.location,description:faultForm.description||"",photos:photoUrls,detected_date:faultForm.detected_date,fault_type:faultForm.fault_type,material_needed:faultForm.material_needed||"",created_by:profile.id}).select().single();
       if(inserted&&faultForm.services.length>0){
         const svcRows=faultForm.services.map(s=>({fault_id:inserted.id,service_name:s.service_name,visit_date:s.visit_date,notes:s.notes||"",created_by:profile.id}));
         await supabase.from('fault_services').insert(svcRows);
         await fetchFaultServices();
       }
       await fetchFaults();
-      setFaultForm({title:"",location:"",description:"",detected_date:"",photos:[],services:[]});
+      setFaultForm({title:"",location:"",description:"",detected_date:"",photos:[],services:[],fault_type:"service",material_needed:""});
       setFaultPhotoFiles([]);setModNewFault(false);
       setToast("✓ Arıza kaydedildi");
     }catch(e){setToast("Hata: "+(e?.message||""));}
@@ -566,14 +566,14 @@ export default function App(){
   const renderFaults=()=>{
     const activeFaults=faults.filter(f=>f.status==="active");
     const resolvedFaults=faults.filter(f=>f.status==="resolved");
-    const list=faultTab==="active"?activeFaults:resolvedFaults;
+    const list=isAdmin?(faultTab==="active"?activeFaults:resolvedFaults):activeFaults;
     return(<div>
       <div style={S.sec}><span>🔧</span> Arızalı Envanter</div>
-      <div style={{display:"flex",gap:8,marginBottom:12}}>
+      {isAdmin?<div style={{display:"flex",gap:8,marginBottom:12}}>
         <button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="active"?C.red:C.border}`,background:faultTab==="active"?C.redD:"transparent",color:faultTab==="active"?C.red:C.muted,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>setFaultTab("active")}>🔴 Aktif ({activeFaults.length})</button>
         <button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="resolved"?C.green:C.border}`,background:faultTab==="resolved"?C.greenD:"transparent",color:faultTab==="resolved"?C.green:C.muted,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>setFaultTab("resolved")}>✅ Çözülen ({resolvedFaults.length})</button>
-      </div>
-      {canEditFault&&<button style={S.btn(C.accent)} onClick={()=>{setFaultForm({title:"",location:"",description:"",detected_date:todayStr(),photos:[],services:[]});setFaultPhotoFiles([]);setModNewFault(true);}}>+ Yeni Arıza Ekle</button>}
+      </div>:<div style={{fontSize:12,color:C.dim,marginBottom:12}}>🔴 {activeFaults.length} aktif arıza</div>}
+      {canEditFault&&<button style={S.btn(C.accent)} onClick={()=>{setFaultForm({title:"",location:"",description:"",detected_date:todayStr(),photos:[],services:[],fault_type:"service",material_needed:""});setFaultPhotoFiles([]);setModNewFault(true);}}>+ Yeni Arıza Ekle</button>}
       {list.length===0&&<div style={S.emp}>{faultTab==="active"?"Aktif arıza yok ✓":"Çözülen arıza yok"}</div>}
       {list.map(f=>{
         const days=daysSince(f.detected_date);
@@ -593,6 +593,7 @@ export default function App(){
             </div>}
           </div>
           <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
+            {f.fault_type==="material"?<div style={S.tag("rgba(245,158,11,0.15)",C.orange)}>📦 Malzeme</div>:<div style={S.tag(C.blueD,C.blue)}>🔧 Servis</div>}
             {svcCount>0&&<div style={S.tag(C.blueD,C.blue)}>🔧 {svcCount} servis</div>}
             {f.photos?.length>0&&<div style={S.tag(C.accentD,C.accent)}>📷 {f.photos.length}</div>}
             {myVote&&<div style={S.tag(myVote.vote==="continues"?C.redD:C.greenD,myVote.vote==="continues"?C.red:C.green)}>{myVote.vote==="continues"?"🔴 Devam":"🟢 Giderildi"}</div>}
@@ -623,6 +624,9 @@ export default function App(){
         <span style={{fontSize:11,color:C.dim}}>arızalı</span>
       </div>}
       <div style={{fontSize:12,color:C.dim,marginBottom:12}}>Tespit: {fD(f.detected_date)} {creator&&`• ${creator.full_name}`}</div>
+      <div style={{marginBottom:12}}>{f.fault_type==="material"?<div style={S.tag("rgba(245,158,11,0.15)",C.orange)}>📦 Malzeme Eksikliği</div>:<div style={S.tag(C.blueD,C.blue)}>🔧 Servis Gerektiren</div>}</div>
+
+      {f.material_needed&&<div style={{...S.lawBox,marginBottom:12,borderColor:`${C.orange}44`}}><div style={{fontSize:10,color:C.orange,fontWeight:600,marginBottom:4}}>📦 İhtiyaç Duyulan Malzeme</div><div style={{fontSize:13}}>{f.material_needed}</div></div>}
 
       {f.description&&<div style={{...S.lawBox,marginBottom:12}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4}}>Açıklama</div><div style={{fontSize:13}}>{f.description}</div></div>}
 
@@ -689,6 +693,17 @@ export default function App(){
       <div style={S.fInp} onClick={()=>setShowFaultDatePicker(true)}><span style={{color:faultForm.detected_date?C.text:C.muted}}>{faultForm.detected_date?fD(faultForm.detected_date):"Tarih seçin..."}</span><span>📅</span></div>
       <div style={S.lbl}>Açıklama</div>
       <textarea style={S.ta} placeholder="Arızanın detaylı açıklaması..." value={faultForm.description} onChange={e=>setFaultForm(p=>({...p,description:e.target.value}))}/>
+
+      <div style={S.lbl}>Arıza Türü</div>
+      <div style={{display:"flex",gap:8,marginBottom:12}}>
+        <button style={{flex:1,padding:"12px",borderRadius:10,border:`2px solid ${faultForm.fault_type==="service"?C.blue:C.border}`,background:faultForm.fault_type==="service"?C.blueD:"transparent",color:faultForm.fault_type==="service"?C.blue:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultForm(p=>({...p,fault_type:"service"}))}>🔧 Servis Gerektiren</button>
+        <button style={{flex:1,padding:"12px",borderRadius:10,border:`2px solid ${faultForm.fault_type==="material"?C.orange:C.border}`,background:faultForm.fault_type==="material"?"rgba(245,158,11,0.1)":"transparent",color:faultForm.fault_type==="material"?C.orange:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultForm(p=>({...p,fault_type:"material",services:[]}))}}>📦 Malzeme Eksikliği</button>
+      </div>
+
+      {faultForm.fault_type==="material"&&<>
+        <div style={S.lbl}>İhtiyaç Duyulan Malzeme</div>
+        <textarea style={S.ta} placeholder="Örn: 500 lt genleşme tankı, 1 adet..." value={faultForm.material_needed} onChange={e=>setFaultForm(p=>({...p,material_needed:e.target.value}))}/>
+      </>}
       <div style={S.lbl}>📷 Fotoğraflar</div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
         {faultForm.photos.map((p,i)=><div key={i} style={{position:"relative"}}><img src={p} alt="" style={{width:80,height:80,objectFit:"cover",borderRadius:10}}/><button onClick={()=>{setFaultForm(prev=>({...prev,photos:prev.photos.filter((_,j)=>j!==i)}));setFaultPhotoFiles(prev=>prev.filter((_,j)=>j!==i));}} style={{position:"absolute",top:-6,right:-6,width:20,height:20,borderRadius:10,background:C.red,color:"#fff",border:"none",fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button></div>)}
@@ -696,8 +711,8 @@ export default function App(){
       </div>
       <input ref={faultPhotoRef} type="file" accept="image/*" capture="environment" multiple style={{display:"none"}} onChange={handleFaultPhoto}/>
 
-      {/* Inline Services */}
-      <div style={{marginBottom:12}}>
+      {/* Inline Services - only for service type */}
+      {faultForm.fault_type==="service"&&<div style={{marginBottom:12}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
           <div style={S.lbl}>🔧 Servis Kayıtları</div>
           <button style={{fontSize:11,padding:"4px 12px",borderRadius:8,background:C.blueD,color:C.blue,border:"none",fontWeight:700,cursor:"pointer"}} onClick={()=>setFaultForm(p=>({...p,services:[...p.services,{service_name:"",visit_date:todayStr(),notes:""}]}))}>+ Servis Ekle</button>
@@ -716,7 +731,7 @@ export default function App(){
           <textarea style={{...S.ta,minHeight:50}} placeholder="Servisin tespiti veya yaptığı işlem..." value={svc.notes} onChange={e=>{const v=e.target.value;setFaultForm(p=>({...p,services:p.services.map((s,j)=>j===idx?{...s,notes:v}:s)}));}}/>
           {svc.visit_date&&faultForm.detected_date&&<div style={{fontSize:11,color:C.orange,marginTop:-4,marginBottom:4}}>⏱ Arıza tespitinden {daysSince(faultForm.detected_date)-daysSince(svc.visit_date)} gün sonra geldi</div>}
         </div>)}
-      </div>
+      </div>}
 
       <button style={S.btn(C.accent)} onClick={submitFault} disabled={submitting}>{submitting?"Kaydediliyor...":"Arıza Kaydet"}</button>
       <button style={S.btn(C.border,C.text)} onClick={()=>setModNewFault(false)}>İptal</button>
