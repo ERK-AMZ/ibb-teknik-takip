@@ -156,13 +156,15 @@ export default function App(){
   const[faultVotes,setFaultVotes]=useState([]);
   const[selFault,setSelFault]=useState(null);
   const[modNewFault,setModNewFault]=useState(false);
-  const[faultForm,setFaultForm]=useState({title:"",location:"",description:"",detected_date:"",photos:[]});
+  const[faultForm,setFaultForm]=useState({title:"",location:"",description:"",detected_date:"",photos:[],services:[]});
   const[faultPhotoFiles,setFaultPhotoFiles]=useState([]);
   const[modAddService,setModAddService]=useState(false);
   const[serviceForm,setServiceForm]=useState({service_name:"",visit_date:"",notes:""});
   const[modEditFault,setModEditFault]=useState(null);
   const[showFaultDatePicker,setShowFaultDatePicker]=useState(false);
   const[showServiceDatePicker,setShowServiceDatePicker]=useState(false);
+  const[inlineSvcIdx,setInlineSvcIdx]=useState(-1);
+  const[showInlineSvcDatePicker,setShowInlineSvcDatePicker]=useState(false);
   const[faultTab,setFaultTab]=useState("active");
   const faultPhotoRef=useRef(null);
   const[deleteConfirm,setDeleteConfirm]=useState(null);
@@ -499,9 +501,14 @@ export default function App(){
         const r=await uploadPhoto(file,'fault-photos');
         if(r?.url)photoUrls.push(r.url);
       }
-      await supabase.from('faults').insert({title:faultForm.title,location:faultForm.location,description:faultForm.description||"",photos:photoUrls,detected_date:faultForm.detected_date,created_by:profile.id});
+      const{data:inserted}=await supabase.from('faults').insert({title:faultForm.title,location:faultForm.location,description:faultForm.description||"",photos:photoUrls,detected_date:faultForm.detected_date,created_by:profile.id}).select().single();
+      if(inserted&&faultForm.services.length>0){
+        const svcRows=faultForm.services.map(s=>({fault_id:inserted.id,service_name:s.service_name,visit_date:s.visit_date,notes:s.notes||"",created_by:profile.id}));
+        await supabase.from('fault_services').insert(svcRows);
+        await fetchFaultServices();
+      }
       await fetchFaults();
-      setFaultForm({title:"",location:"",description:"",detected_date:"",photos:[]});
+      setFaultForm({title:"",location:"",description:"",detected_date:"",photos:[],services:[]});
       setFaultPhotoFiles([]);setModNewFault(false);
       setToast("✓ Arıza kaydedildi");
     }catch(e){setToast("Hata: "+(e?.message||""));}
@@ -566,7 +573,7 @@ export default function App(){
         <button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="active"?C.red:C.border}`,background:faultTab==="active"?C.redD:"transparent",color:faultTab==="active"?C.red:C.muted,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>setFaultTab("active")}>🔴 Aktif ({activeFaults.length})</button>
         <button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="resolved"?C.green:C.border}`,background:faultTab==="resolved"?C.greenD:"transparent",color:faultTab==="resolved"?C.green:C.muted,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>setFaultTab("resolved")}>✅ Çözülen ({resolvedFaults.length})</button>
       </div>
-      {canEditFault&&<button style={S.btn(C.accent)} onClick={()=>{setFaultForm({title:"",location:"",description:"",detected_date:todayStr(),photos:[]});setFaultPhotoFiles([]);setModNewFault(true);}}>+ Yeni Arıza Ekle</button>}
+      {canEditFault&&<button style={S.btn(C.accent)} onClick={()=>{setFaultForm({title:"",location:"",description:"",detected_date:todayStr(),photos:[],services:[]});setFaultPhotoFiles([]);setModNewFault(true);}}>+ Yeni Arıza Ekle</button>}
       {list.length===0&&<div style={S.emp}>{faultTab==="active"?"Aktif arıza yok ✓":"Çözülen arıza yok"}</div>}
       {list.map(f=>{
         const days=daysSince(f.detected_date);
@@ -621,8 +628,8 @@ export default function App(){
 
       {f.photos?.length>0&&<div style={{marginBottom:12}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:6}}>📷 Fotoğraflar ({f.photos.length})</div><div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:8}}>{f.photos.map((p,i)=><img key={i} src={p} alt="" style={{width:200,height:150,objectFit:"cover",borderRadius:10,flexShrink:0}}/>)}</div></div>}
 
-      {services.length>0&&<div style={{marginBottom:12}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:6}}>🔧 Servis Geçmişi ({services.length})</div>{services.map(s=>{const sp=profiles.find(p=>p.id===s.created_by);return(<div key={s.id} style={{background:C.bg,borderRadius:10,padding:10,marginBottom:6,border:`1px solid ${C.border}`}}>
-        <div style={{display:"flex",justifyContent:"space-between"}}><div style={{fontWeight:700,fontSize:13}}>{s.service_name}</div><div style={{fontSize:11,color:C.dim}}>{fD(s.visit_date)}</div></div>
+      {services.length>0&&<div style={{marginBottom:12}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:6}}>🔧 Servis Geçmişi ({services.length})</div>{services.map(s=>{const sp=profiles.find(p=>p.id===s.created_by);const daysAfter=f.detected_date&&s.visit_date?daysSince(f.detected_date)-daysSince(s.visit_date):null;return(<div key={s.id} style={{background:C.bg,borderRadius:10,padding:10,marginBottom:6,border:`1px solid ${C.border}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}><div><div style={{fontSize:10,color:C.muted}}>Servis Veren Firma</div><div style={{fontWeight:700,fontSize:13}}>{s.service_name}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:12,color:C.dim}}>{fD(s.visit_date)}</div>{daysAfter!==null&&daysAfter>=0&&<div style={{fontSize:10,color:C.orange}}>tespitden {daysAfter} gün sonra</div>}</div></div>
         {s.notes&&<div style={{fontSize:12,color:C.text,marginTop:4}}>{s.notes}</div>}
         {sp&&<div style={{fontSize:10,color:C.muted,marginTop:4}}>Ekleyen: {sp.full_name}</div>}
       </div>);})}</div>}
@@ -630,7 +637,7 @@ export default function App(){
       {canEditFault&&!modAddService&&<button style={S.btn(C.blueD,C.blue)} onClick={()=>{setServiceForm({service_name:"",visit_date:todayStr(),notes:""});setModAddService(true);}}>+ Servis Kaydı Ekle</button>}
       {modAddService&&<div style={{background:C.bg,borderRadius:12,padding:14,marginBottom:12,border:`1px solid ${C.border}`}}>
         <div style={{fontSize:14,fontWeight:700,marginBottom:10,color:C.blue}}>🔧 Yeni Servis Kaydı</div>
-        <div style={S.lbl}>Servis / Firma Adı</div>
+        <div style={S.lbl}>Servis Veren Firma</div>
         <input style={S.inp} placeholder="Örn: ABC Klima Servisi" value={serviceForm.service_name} onChange={e=>setServiceForm(p=>({...p,service_name:e.target.value}))}/>
         <div style={S.lbl}>Ziyaret Tarihi</div>
         <div style={S.fInp} onClick={()=>setShowServiceDatePicker(true)}><span style={{color:serviceForm.visit_date?C.text:C.muted}}>{serviceForm.visit_date?fD(serviceForm.visit_date):"Tarih seçin..."}</span><span>📅</span></div>
@@ -688,6 +695,29 @@ export default function App(){
         <div style={{width:80,height:80,borderRadius:10,border:`2px dashed ${C.border}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:24,color:C.muted}} onClick={()=>faultPhotoRef.current?.click()}>+</div>
       </div>
       <input ref={faultPhotoRef} type="file" accept="image/*" capture="environment" multiple style={{display:"none"}} onChange={handleFaultPhoto}/>
+
+      {/* Inline Services */}
+      <div style={{marginBottom:12}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <div style={S.lbl}>🔧 Servis Kayıtları</div>
+          <button style={{fontSize:11,padding:"4px 12px",borderRadius:8,background:C.blueD,color:C.blue,border:"none",fontWeight:700,cursor:"pointer"}} onClick={()=>setFaultForm(p=>({...p,services:[...p.services,{service_name:"",visit_date:todayStr(),notes:""}]}))}>+ Servis Ekle</button>
+        </div>
+        {faultForm.services.length===0&&<div style={{fontSize:12,color:C.muted,padding:10,textAlign:"center",background:C.bg,borderRadius:8,border:`1px dashed ${C.border}`}}>Henüz servis kaydı yok. Servis geldiyse ekleyin.</div>}
+        {faultForm.services.map((svc,idx)=><div key={idx} style={{background:C.bg,borderRadius:10,padding:12,marginBottom:8,border:`1px solid ${C.border}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.blue}}>Servis #{idx+1}</div>
+            <button onClick={()=>setFaultForm(p=>({...p,services:p.services.filter((_,j)=>j!==idx)}))} style={{fontSize:16,color:C.red,background:"none",border:"none",cursor:"pointer",fontWeight:700}}>×</button>
+          </div>
+          <div style={S.lbl}>Servis Veren Firma</div>
+          <input style={S.inp} placeholder="Örn: ABC Klima Servisi" value={svc.service_name} onChange={e=>{const v=e.target.value;setFaultForm(p=>({...p,services:p.services.map((s,j)=>j===idx?{...s,service_name:v}:s)}));}}/>
+          <div style={S.lbl}>Ziyaret Tarihi</div>
+          <div style={S.fInp} onClick={()=>{setInlineSvcIdx(idx);setShowInlineSvcDatePicker(true);}}><span style={{color:svc.visit_date?C.text:C.muted}}>{svc.visit_date?fD(svc.visit_date):"Tarih seçin..."}</span><span>📅</span></div>
+          <div style={S.lbl}>Notlar / Yapılan İşlem</div>
+          <textarea style={{...S.ta,minHeight:50}} placeholder="Servisin tespiti veya yaptığı işlem..." value={svc.notes} onChange={e=>{const v=e.target.value;setFaultForm(p=>({...p,services:p.services.map((s,j)=>j===idx?{...s,notes:v}:s)}));}}/>
+          {svc.visit_date&&faultForm.detected_date&&<div style={{fontSize:11,color:C.orange,marginTop:-4,marginBottom:4}}>⏱ Arıza tespitinden {daysSince(faultForm.detected_date)-daysSince(svc.visit_date)} gün sonra geldi</div>}
+        </div>)}
+      </div>
+
       <button style={S.btn(C.accent)} onClick={submitFault} disabled={submitting}>{submitting?"Kaydediliyor...":"Arıza Kaydet"}</button>
       <button style={S.btn(C.border,C.text)} onClick={()=>setModNewFault(false)}>İptal</button>
     </div></div>);
@@ -988,6 +1018,7 @@ export default function App(){
       {showEditEndTP&&editOT&&<CustomTimePicker value={editOT.end_time||"18:00"} onChange={v=>setEditOT(p=>({...p,end_time:v}))} onClose={()=>setShowEditEndTP(false)} label="Bitiş Düzelt"/>}
       {showFaultDatePicker&&<CustomDatePicker value={faultForm.detected_date||todayStr()} onChange={v=>setFaultForm(p=>({...p,detected_date:v}))} onClose={()=>setShowFaultDatePicker(false)}/>}
       {showServiceDatePicker&&<CustomDatePicker value={serviceForm.visit_date||todayStr()} onChange={v=>setServiceForm(p=>({...p,visit_date:v}))} onClose={()=>setShowServiceDatePicker(false)}/>}
+      {showInlineSvcDatePicker&&inlineSvcIdx>=0&&<CustomDatePicker value={faultForm.services[inlineSvcIdx]?.visit_date||todayStr()} onChange={v=>{setFaultForm(p=>({...p,services:p.services.map((s,j)=>j===inlineSvcIdx?{...s,visit_date:v}:s)}));}} onClose={()=>{setShowInlineSvcDatePicker(false);setInlineSvcIdx(-1);}}/>}
       {toast&&<div style={S.tst}>{toast}</div>}
     </div>
   );
