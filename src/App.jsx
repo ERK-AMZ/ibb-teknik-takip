@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase, signIn, signOut, getProfiles, getOvertimes, getLeaves, createOvertime, updateOvertime, createLeave, updateLeave, uploadPhoto, subscribeToChanges } from './lib/supabase';
 
 const OT_MULT=1.5,WORK_END=17;
-function calcOT(st,et){if(!st||!et)return 0;const[sh,sm]=st.split(":").map(Number),[eh,em]=et.split(":").map(Number);let s=sh*60+sm,e=eh*60+em;if(e<=s)e+=1440;const eff=Math.max(s,WORK_END*60);return eff>=e?0:Math.round(((e-eff)/60)*10)/10;}
+function calcOT(st,et,type){if(!st||!et)return 0;const[sh,sm]=st.split(":").map(Number),[eh,em]=et.split(":").map(Number);let s=sh*60+sm,e=eh*60+em;if(e<=s)e+=1440;if(type==="daytime"){return Math.round(((e-s)/60)*10)/10;}const eff=Math.max(s,WORK_END*60);return eff>=e?0:Math.round(((e-eff)/60)*10)/10;}
 function calcLH(h){return Math.round(h*OT_MULT*10)/10;}
 function fD(d){if(!d)return"";try{return new Date(d+'T00:00:00').toLocaleDateString("tr-TR",{day:"numeric",month:"long",year:"numeric"});}catch{return d;}}
 function fDS(d){if(!d)return"";try{return new Date(d+'T00:00:00').toLocaleDateString("tr-TR",{day:"numeric",month:"short"});}catch{return d;}}
@@ -139,7 +139,7 @@ export default function App(){
   const[modEditUser,setModEditUser]=useState(null);
   const[toast,setToast]=useState(null);
   const[submitting,setSubmitting]=useState(false);
-  const[otForm,setOtForm]=useState({date:"",startTime:"17:00",endTime:"",desc:"",photoBefore:null,photoAfter:null,fileB:null,fileA:null});
+  const[otForm,setOtForm]=useState({date:"",startTime:"17:00",endTime:"",otType:"evening",desc:"",photoBefore:null,photoAfter:null,fileB:null,fileA:null});
   const[otErrors,setOtErrors]=useState([]);
   const[nUser,setNUser]=useState({name:"",email:"",password:"",role:"",night:false,userRole:"personnel"});
   const beforeRef=useRef(null),afterRef=useRef(null),descRef=useRef(null);
@@ -248,8 +248,8 @@ export default function App(){
 
   async function doEditOT(){
     if(!editOT)return;
-    const hours=calcOT(editOT.start_time,editOT.end_time);
-    if(hours<=0){setToast("⚠ Geçerli saat girin (17:00 sonrası)");return;}
+    const hours=calcOT(editOT.start_time,editOT.end_time,editOT.ot_type);
+    if(hours<=0){setToast("⚠ Geçerli saat girin");return;}
     setSubmitting(true);
     try{
       await updateOvertime(editOT.id,{start_time:editOT.start_time,end_time:editOT.end_time,hours,leave_hours:calcLH(hours)});
@@ -272,8 +272,8 @@ export default function App(){
     const errors=[];
     if(!otForm.date)errors.push("Tarih seçilmedi");
     if(!otForm.startTime||!otForm.endTime)errors.push("Saat bilgisi eksik");
-    const hours=calcOT(otForm.startTime,otForm.endTime);
-    if(hours<=0)errors.push("Mesai 17:00 sonrasi olmali");
+    const hours=calcOT(otForm.startTime,otForm.endTime,otForm.otType);
+    if(hours<=0)errors.push(otForm.otType==="daytime"?"Geçerli saat aralığı girin":"Mesai 17:00 sonrası olmalı");
     if(!otForm.photoBefore)errors.push("Başlangıç fotografi zorunlu");
     if(!otForm.photoAfter)errors.push("Bitiş fotografi zorunlu");
     if(!currentDesc||currentDesc.trim().length<20)errors.push("Açıklama zorunlu (min 20 karakter)");
@@ -283,9 +283,9 @@ export default function App(){
       let pB=null,pA=null;
       if(otForm.fileB){const r=await uploadPhoto(otForm.fileB,'before');pB=r?.url||null;}
       if(otForm.fileA){const r=await uploadPhoto(otForm.fileA,'after');pA=r?.url||null;}
-      await createOvertime({personnel_id:profile.id,work_date:otForm.date,start_time:otForm.startTime,end_time:otForm.endTime,hours,leave_hours:calcLH(hours),description:currentDesc.trim(),photo_before:pB,photo_after:pA,status:"pending_chef"});
+      await createOvertime({personnel_id:profile.id,work_date:otForm.date,start_time:otForm.startTime,end_time:otForm.endTime,hours,leave_hours:calcLH(hours),overtime_type:otForm.otType,description:currentDesc.trim(),photo_before:pB,photo_after:pA,status:"pending_chef"});
       await fetchOvertimes();
-      setOtForm({date:"",startTime:"17:00",endTime:"",desc:"",photoBefore:null,photoAfter:null,fileB:null,fileA:null});
+      setOtForm({date:"",startTime:"17:00",endTime:"",otType:"evening",desc:"",photoBefore:null,photoAfter:null,fileB:null,fileA:null});
       setOtErrors([]);setModNewOT(false);
       setToast(`${hours}s mesai - ${calcLH(hours)}s izin hakkı onaya gönderildi`);
     }catch(e){setToast("Gönderim hatası: "+(e?.message||""));}
@@ -402,7 +402,7 @@ export default function App(){
   const allPendOTs=overtimes.filter(o=>["pending_chef","pending_manager"].includes(o.status));
   const allPendLVs=leavesState.filter(l=>["pending_chef","pending_manager"].includes(l.status));
   const allPendCount=allPendOTs.length+allPendLVs.length;
-  const liveOTH=calcOT(otForm.startTime,otForm.endTime),liveLH=calcLH(liveOTH);
+  const liveOTH=calcOT(otForm.startTime,otForm.endTime,otForm.otType),liveLH=calcLH(liveOTH);
 
   if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
@@ -472,7 +472,7 @@ export default function App(){
           </div>
           {debt>0&&<div style={{marginTop:8,background:C.redD,borderRadius:8,padding:"6px 10px",textAlign:"center"}}><span style={{fontSize:12,color:C.red,fontWeight:700}}>⚠ {debt} gun mesai borcu</span></div>}
         </div>
-        <button style={S.btn(C.accent)} onClick={()=>{setOtForm({date:todayStr(),startTime:"17:00",endTime:"",desc:"",photoBefore:null,photoAfter:null,fileB:null,fileA:null});setOtErrors([]);setModNewOT(true);}}>+ Fazla Mesai Bildir</button>
+        <button style={S.btn(C.accent)} onClick={()=>{setOtForm({date:todayStr(),startTime:"17:00",endTime:"",otType:"evening",desc:"",photoBefore:null,photoAfter:null,fileB:null,fileA:null});setOtErrors([]);setModNewOT(true);}}>+ Fazla Mesai Bildir</button>
         <div style={{height:12}}/>
         <div style={S.sec}><span>⏱</span> Son Mesailer</div>
         {myOTs.length===0&&<div style={S.emp}>Henüz mesai kaydi yok</div>}
@@ -494,7 +494,7 @@ export default function App(){
           <div style={S.st(C.greenD)}><div style={{fontSize:14,fontWeight:800,color:C.green}}>{myUH}s</div><div style={{fontSize:9,color:C.dim}}>Kullanılan</div></div>
           <div style={S.st(myRH<0?C.redD:"rgba(255,255,255,0.08)")}><div style={{fontSize:14,fontWeight:800,color:myRH<0?C.red:C.text}}>{myRH}s</div><div style={{fontSize:9,color:C.dim}}>{myRH<0?"BORÇ":"Kalan"}</div></div>
         </div>
-        <button style={{...S.btn(C.accent),marginTop:8}} onClick={()=>{setOtForm({date:todayStr(),startTime:"17:00",endTime:"",desc:"",photoBefore:null,photoAfter:null,fileB:null,fileA:null});setOtErrors([]);setModNewOT(true);}}>+ Fazla Mesai Bildir</button>
+        <button style={{...S.btn(C.accent),marginTop:8}} onClick={()=>{setOtForm({date:todayStr(),startTime:"17:00",endTime:"",otType:"evening",desc:"",photoBefore:null,photoAfter:null,fileB:null,fileA:null});setOtErrors([]);setModNewOT(true);}}>+ Fazla Mesai Bildir</button>
       </div>
       <div style={{...S.crd,background:vPC>0?C.orangeD:C.card,cursor:vPC>0?"pointer":"default",textAlign:"center"}} onClick={()=>vPC>0&&setPage("approvals")}>
         <div style={{fontSize:28,fontWeight:800,color:vPC>0?C.orange:C.green}}>{vPC>0?vPC:"✓"}</div>
@@ -630,7 +630,8 @@ export default function App(){
     if(!selOT)return null;const o=selOT,p=getU(o.personnel_id);
     return(<div style={S.mod} onClick={()=>{setSelOT(null);setDeleteConfirm(null);setEditOT(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:4}}>Mesai Detayı</div>
-      {p&&<div style={{fontSize:13,color:C.dim,marginBottom:12}}>{p.full_name}</div>}
+      {p&&<div style={{fontSize:13,color:C.dim,marginBottom:8}}>{p.full_name}</div>}
+      {o.overtime_type==="daytime"&&<div style={{...S.tag("rgba(245,158,11,0.15)",C.orange),marginBottom:12}}>☀️ Gündüz Mesai (İstirahat/Haftasonu)</div>}
       <div style={S.lawBox}>
         <div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:11,color:C.dim}}>Tarih</div><div style={{fontSize:15,fontWeight:700}}>{fD(o.work_date)}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:11,color:C.dim}}>Saat</div><div style={{fontSize:15,fontWeight:700}}>{o.start_time?.slice(0,5)} → {o.end_time?.slice(0,5)}</div></div></div>
         <div style={S.dv}/>
@@ -645,9 +646,9 @@ export default function App(){
           <div style={{flex:1}}><div style={S.lbl}>Başlangıç</div><div style={S.fInp} onClick={()=>setShowEditStartTP(true)}><span>{editOT.start_time||"Saat"}</span><span>🕐</span></div></div>
           <div style={{flex:1}}><div style={S.lbl}>Bitiş</div><div style={S.fInp} onClick={()=>setShowEditEndTP(true)}><span>{editOT.end_time||"Saat"}</span><span>🕐</span></div></div>
         </div>
-        {editOT.start_time&&editOT.end_time&&(()=>{const h=calcOT(editOT.start_time,editOT.end_time);return h>0?<div style={{...S.lawBox,marginTop:8,marginBottom:0}}><div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:10,color:C.dim}}>Yeni Mesai</div><div style={{fontSize:20,fontWeight:800,color:C.accent}}>{h}s</div></div><div><div style={{fontSize:10,color:C.dim}}>Yeni İzin</div><div style={{fontSize:20,fontWeight:800,color:C.purple}}>{calcLH(h)}s</div></div></div>{(h!==o.hours)&&<div style={{fontSize:11,color:C.orange,marginTop:6}}>Önceki: {o.hours}s mesai → {o.leave_hours}s izin</div>}</div>:null;})()}
+        {editOT.start_time&&editOT.end_time&&(()=>{const h=calcOT(editOT.start_time,editOT.end_time,editOT.ot_type);return h>0?<div style={{...S.lawBox,marginTop:8,marginBottom:0}}><div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:10,color:C.dim}}>Yeni Mesai</div><div style={{fontSize:20,fontWeight:800,color:C.accent}}>{h}s</div></div><div><div style={{fontSize:10,color:C.dim}}>Yeni İzin</div><div style={{fontSize:20,fontWeight:800,color:C.purple}}>{calcLH(h)}s</div></div></div>{(h!==o.hours)&&<div style={{fontSize:11,color:C.orange,marginTop:6}}>Önceki: {o.hours}s mesai → {o.leave_hours}s izin</div>}</div>:null;})()}
         <div style={{display:"flex",gap:8,marginTop:10}}><button style={{...S.btn(C.accent),flex:1}} onClick={doEditOT} disabled={submitting}>{submitting?"Kaydediliyor...":"💾 Kaydet"}</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setEditOT(null)}>İptal</button></div>
-      </div>:isAdmin&&<button style={{...S.btn(C.accentD,C.accent),marginTop:8}} onClick={()=>setEditOT({id:o.id,start_time:o.start_time?.slice(0,5)||"17:00",end_time:o.end_time?.slice(0,5)||"18:00"})}>✏️ Saatleri Düzelt</button>}
+      </div>:isAdmin&&<button style={{...S.btn(C.accentD,C.accent),marginTop:8}} onClick={()=>setEditOT({id:o.id,start_time:o.start_time?.slice(0,5)||"17:00",end_time:o.end_time?.slice(0,5)||"18:00",ot_type:o.overtime_type||"evening"})}>✏️ Saatleri Düzelt</button>}
       {canApprove&&o.status!=="approved"&&o.status!=="rejected"&&<><div style={S.dv}/><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.green),flex:1}} onClick={()=>{doApproveOT(o.id,isChef?"chef":"manager");setSelOT(null);}}>✓ Onayla</button><button style={{...S.btn(C.redD,C.red),flex:1}} onClick={()=>{doRejectOT(o.id);setSelOT(null);}}>✗ Reddet</button></div></>}
       {isAdmin&&<><div style={S.dv}/>{deleteConfirm===o.id?<div style={{background:C.redD,borderRadius:10,padding:14}}><div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:8,textAlign:"center"}}>⚠ Bu mesaiyi silmek istediğinize emin misiniz?</div><div style={{fontSize:11,color:C.dim,textAlign:"center",marginBottom:12}}>Geri alınamaz. Izin hakki da silinir.</div><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.red),flex:1}} onClick={()=>doDeleteOT(o.id)} disabled={submitting}>{submitting?"Siliniyor...":"🗑 Evet, Sil"}</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setDeleteConfirm(null)}>İptal</button></div></div>:<button style={S.btn(C.redD,C.red)} onClick={()=>setDeleteConfirm(o.id)}>🗑 Bu Mesaiyi Sil</button>}</>}
       <button style={S.btn(C.border,C.text)} onClick={()=>{setSelOT(null);setDeleteConfirm(null);setEditOT(null);}}>Kapat</button>
@@ -682,6 +683,11 @@ export default function App(){
     if(!modNewOT)return null;
     return(<div style={S.mod} onClick={()=>setModNewOT(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:4}}>Fazla Mesai Bildir</div><div style={{fontSize:12,color:C.dim,marginBottom:16}}>Tum alanlar zorunlu</div>
+      <div style={S.lbl}>Mesai Türü</div>
+      <div style={{display:"flex",gap:8,marginBottom:12}}>
+        <button style={{flex:1,padding:"12px",borderRadius:10,border:`2px solid ${otForm.otType==="evening"?C.accent:C.border}`,background:otForm.otType==="evening"?C.accentD:C.bg,color:otForm.otType==="evening"?C.accent:C.muted,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>setOtForm(p=>({...p,otType:"evening",startTime:"17:00",endTime:""}))}>🌙 Akşam/Gece<div style={{fontSize:10,fontWeight:500,marginTop:2}}>17:00 sonrası</div></button>
+        <button style={{flex:1,padding:"12px",borderRadius:10,border:`2px solid ${otForm.otType==="daytime"?C.orange:C.border}`,background:otForm.otType==="daytime"?"rgba(245,158,11,0.1)":C.bg,color:otForm.otType==="daytime"?C.orange:C.muted,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>setOtForm(p=>({...p,otType:"daytime",startTime:"08:00",endTime:""}))}>☀️ Gündüz<div style={{fontSize:10,fontWeight:500,marginTop:2}}>İstirahat/Haftasonu</div></button>
+      </div>
       <div style={S.lbl}>Tarih</div>
       <div style={S.fInp} onClick={()=>setShowDatePicker(true)}><span style={{color:otForm.date?C.text:C.muted}}>{otForm.date?fD(otForm.date):"Tarih seçin..."}</span><span style={{fontSize:18}}>📅</span></div>
       <div style={{display:"flex",gap:10}}>
