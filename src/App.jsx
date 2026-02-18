@@ -216,7 +216,7 @@ export default function App(){
 
   useEffect(()=>{if(toast){const t=setTimeout(()=>setToast(null),3500);return()=>clearTimeout(t);}},[toast]);
 
-  const fetchProfiles=useCallback(async()=>{try{const d=await getProfiles();if(d)setProfilesState(d);}catch(e){console.error(e);}},[]);
+  const fetchProfiles=useCallback(async()=>{try{const{data}=await supabase.from('profiles').select('*');if(data)setProfilesState(data);}catch(e){console.error(e);}},[]);
   const fetchOvertimes=useCallback(async()=>{try{const d=await getOvertimes();if(d)setOvertimesState(d);}catch(e){console.error(e);}},[]);
   const fetchLeaves=useCallback(async()=>{try{const d=await getLeaves();if(d)setLeavesState(d);}catch(e){console.error(e);}},[]);
   const fetchFaults=useCallback(async()=>{try{const{data}=await supabase.from('faults').select('*').order('detected_date',{ascending:false});if(data)setFaults(data);}catch(e){console.error(e);}},[]);
@@ -229,8 +229,8 @@ export default function App(){
   const loadData=useCallback(async(uid)=>{
     setLoading(true);setLoadError(null);
     try{
-      const r=await Promise.allSettled([getProfiles(),getOvertimes(),getLeaves(),supabase.from('faults').select('*').order('detected_date',{ascending:false}),supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),supabase.from('fault_votes').select('*'),supabase.from('materials').select('*').order('name'),supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}),supabase.from('buildings').select('*').order('name')]);
-      const profs=r[0].status==="fulfilled"?(r[0].value||[]):[];
+      const r=await Promise.allSettled([supabase.from('profiles').select('*'),getOvertimes(),getLeaves(),supabase.from('faults').select('*').order('detected_date',{ascending:false}),supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),supabase.from('fault_votes').select('*'),supabase.from('materials').select('*').order('name'),supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}),supabase.from('buildings').select('*').order('name')]);
+      const profs=r[0].status==="fulfilled"?(r[0].value?.data||[]):[];
       const ots=r[1].status==="fulfilled"?(r[1].value||[]):[];
       const lvs=r[2].status==="fulfilled"?(r[2].value||[]):[];
       const fts=r[3].status==="fulfilled"?(r[3].value?.data||[]):[];
