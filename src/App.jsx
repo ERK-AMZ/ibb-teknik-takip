@@ -288,13 +288,21 @@ export default function App(){
   const curBuildingName=buildings.find(b=>b.id===selBuilding)?.short_name||"";
 
   function getU(id){return profiles.find(u=>u.id===id);}
-  function totLH(pid){return overtimes.filter(o=>o.personnel_id===pid&&o.status==="approved").reduce((s,o)=>s+Number(o.leave_hours||0),0);}
-  function totUsedLV(pid){return leavesState.filter(l=>l.personnel_id===pid&&["approved","pending_chef","pending_manager"].includes(l.status)).reduce((s,l)=>s+(l.total_hours||0),0);}
+  // Building-scoped helpers (for dashboard/approvals - shows selected building's data)
+  function totLH(pid){return bOvertimes.filter(o=>o.personnel_id===pid&&o.status==="approved").reduce((s,o)=>s+Number(o.leave_hours||0),0);}
+  function totUsedLV(pid){return bLeaves.filter(l=>l.personnel_id===pid&&["approved","pending_chef","pending_manager"].includes(l.status)).reduce((s,l)=>s+(l.total_hours||0),0);}
   function remHours(pid){return Math.round((totLH(pid)-totUsedLV(pid))*10)/10;}
-  function totOTH(pid){return overtimes.filter(o=>o.personnel_id===pid&&o.status==="approved").reduce((s,o)=>s+Number(o.hours||0),0);}
+  function totOTH(pid){return bOvertimes.filter(o=>o.personnel_id===pid&&o.status==="approved").reduce((s,o)=>s+Number(o.hours||0),0);}
   function remDays(pid){return Math.round((remHours(pid)/8)*10)/10;}
   function debtDays(pid){const r=remDays(pid);return r<0?Math.abs(r):0;}
-  function pendCount(pid){return overtimes.filter(o=>o.personnel_id===pid&&["pending_chef","pending_manager"].includes(o.status)).length+leavesState.filter(l=>l.personnel_id===pid&&["pending_chef","pending_manager"].includes(l.status)).length;}
+  function pendCount(pid){return bOvertimes.filter(o=>o.personnel_id===pid&&["pending_chef","pending_manager"].includes(o.status)).length+bLeaves.filter(l=>l.personnel_id===pid&&["pending_chef","pending_manager"].includes(l.status)).length;}
+  // Global helpers (for user's own summary - always shows own data regardless of building)
+  function myTotLH(pid){return overtimes.filter(o=>o.personnel_id===pid&&o.status==="approved").reduce((s,o)=>s+Number(o.leave_hours||0),0);}
+  function myTotUsedLV(pid){return leavesState.filter(l=>l.personnel_id===pid&&["approved","pending_chef","pending_manager"].includes(l.status)).reduce((s,l)=>s+(l.total_hours||0),0);}
+  function myRemHours(pid){return Math.round((myTotLH(pid)-myTotUsedLV(pid))*10)/10;}
+  function myTotOTH(pid){return overtimes.filter(o=>o.personnel_id===pid&&o.status==="approved").reduce((s,o)=>s+Number(o.hours||0),0);}
+  function myRemDays(pid){return Math.round((myRemHours(pid)/8)*10)/10;}
+  function myDebtDays(pid){const r=myRemDays(pid);return r<0?Math.abs(r):0;}
 
   async function doLogin(){setLoginErr("");try{const{error}=await signIn(login.email,login.password);if(error)setLoginErr("Giriş başarısız: "+error.message);}catch(e){setLoginErr("Bağlantı hatası");}}
   async function doLogout(){try{await signOut();}catch(e){}setProfile(null);setPage("dashboard");setSelPerson(null);}
@@ -365,7 +373,7 @@ export default function App(){
 
   async function submitLeaveReq(){
     if(calSel.length===0){setToast("⚠ Gün seçin");return;}
-    const needH=calSel.length*8,rH=remHours(profile.id),willDebt=rH<needH;
+    const needH=calSel.length*8,rH=myRemHours(profile.id),willDebt=rH<needH;
     if(willDebt&&(!leaveReason||leaveReason.trim().length<10)){setToast("⚠ Borçlanma durumu var - izin sebebini yazın (min 10 karakter)");return;}
     if(!leaveDoc){setToast("⚠ İzin belgesi fotoğrafı zorunlu");return;}
     setSubmitting(true);
@@ -1057,7 +1065,7 @@ export default function App(){
   const renderDashboard=()=>{
     if(isPerso){
       const myOTs=overtimes.filter(o=>o.personnel_id===profile.id).sort((a,b)=>(b.work_date||"").localeCompare(a.work_date||""));
-      const tOT=totOTH(profile.id),tLHV=totLH(profile.id),uH=totUsedLV(profile.id),rH=remHours(profile.id),debt=debtDays(profile.id);
+      const tOT=myTotOTH(profile.id),tLHV=myTotLH(profile.id),uH=myTotUsedLV(profile.id),rH=myRemHours(profile.id),debt=myDebtDays(profile.id);
       return(<div>
         <div style={{...S.crd,background:"linear-gradient(135deg,#1e1b4b,#312e81)",cursor:"default"}}>
           <div style={S.row}><div style={S.av(C.accentD,50)}>{ini(profile.full_name)}</div><div><div style={{fontSize:16,fontWeight:700}}>{profile.full_name}</div><div style={{fontSize:12,color:C.dim}}>{profile.role}</div></div></div>
@@ -1080,7 +1088,7 @@ export default function App(){
     const debtors=list.filter(u=>debtDays(u.id)>0);
     const vPC=isViewer?allPendCount:totPend;
     const myOTs=overtimes.filter(o=>o.personnel_id===profile.id).sort((a,b)=>(b.work_date||"").localeCompare(a.work_date||""));
-    const myTOT=totOTH(profile.id),myLH=totLH(profile.id),myUH=totUsedLV(profile.id),myRH=remHours(profile.id),myDebt=debtDays(profile.id);
+    const myTOT=myTotOTH(profile.id),myLH=myTotLH(profile.id),myUH=myTotUsedLV(profile.id),myRH=myRemHours(profile.id),myDB=myDebtDays(profile.id);
     return(<div>
       {/* Kendi özet kartım */}
       <div style={{...S.crd,background:"linear-gradient(135deg,#1e1b4b,#312e81)",cursor:"default",marginBottom:12}}>
@@ -1155,13 +1163,13 @@ export default function App(){
     const allLvs=isPerso?myLvs:bLeaves.filter(l=>l.status!=="rejected");
     const myLvDates={};myLvs.forEach(l=>(Array.isArray(l.dates)?l.dates:[]).forEach(d=>{myLvDates[d]={status:l.status,id:l.id};}));
     const lvDates={};allLvs.forEach(l=>(Array.isArray(l.dates)?l.dates:[]).forEach(d=>{lvDates[d]={status:l.status,id:l.id};}));
-    const avD=remDays(profile.id),today=todayStr();
+    const avD=myRemDays(profile.id),today=todayStr();
     function tog(d){if(!isSel)return;const ds=dateStr(calY,calM,d);if(myLvDates[ds]&&(!calModId||myLvDates[ds].id!==calModId)){setToast("Bu tarihte zaten izniniz var");return;}setCalSel(p=>p.includes(ds)?p.filter(x=>x!==ds):[...p,ds].sort());}
     function prev(){calM===0?(setCalY(calY-1),setCalM(11)):setCalM(calM-1);}
     function next(){calM===11?(setCalY(calY+1),setCalM(0)):setCalM(calM+1);}
     const cells=[];for(let i=0;i<fd;i++)cells.push(<div key={`e${i}`}/>);
     for(let d=1;d<=dim;d++){const ds=dateStr(calY,calM,d),isSeld=calSel.includes(ds),lv=lvDates[ds],isToday=ds===today;let bg="transparent",clr=C.text,brd="2px solid transparent";if(isSeld){bg=C.accent;clr="#fff";brd=`2px solid ${C.accentL}`;}else if(lv){bg=lv.status==="approved"?C.greenD:C.orangeD;clr=lv.status==="approved"?C.green:C.orange;}else if(isToday)brd=`2px solid ${C.accent}`;cells.push(<div key={d} onClick={()=>tog(d)} style={{width:"100%",paddingTop:"100%",borderRadius:10,background:bg,border:brd,position:"relative",cursor:isSel?"pointer":"default"}}><div style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}><div style={{fontSize:14,fontWeight:isToday||isSeld?700:500,color:clr}}>{d}</div>{lv&&!isSeld&&<div style={{width:4,height:4,borderRadius:"50%",background:lv.status==="approved"?C.green:C.orange,marginTop:2}}/>}</div></div>);}
-    const needH=calSel.length*8,currentRH=remHours(profile.id),willDebt=needH>0&&currentRH<needH,debtAmt=willDebt?Math.round((needH-currentRH)/8*10)/10:0;
+    const needH=calSel.length*8,currentRH=myRemHours(profile.id),willDebt=needH>0&&currentRH<needH,debtAmt=willDebt?Math.round((needH-currentRH)/8*10)/10:0;
     return(<div>
       <div style={S.sec}><span>📅</span> İzin Takvimi</div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
@@ -1218,7 +1226,7 @@ export default function App(){
       </div>}
       {!isSel&&<div style={{marginTop:16}}>
         <div style={S.sec}><span>🏖</span> İzin Talepleri</div>
-        {(isPerso?leavesState.filter(l=>l.personnel_id===profile.id):leavesState).filter(l=>l.status!=="rejected").map(l=>{const p=getU(l.personnel_id);const dates=Array.isArray(l.dates)?l.dates:[];const isHourly=l.leave_type==="hourly";return(<div key={l.id} style={S.crd} onClick={()=>setSelLV(l)}><div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}><div>{!isPerso&&<div style={{fontSize:13,fontWeight:600,marginBottom:4}}>{p?.full_name}</div>}{isHourly?<div><div style={{...S.tag(C.blueD,C.blue),marginBottom:4}}>🕐 Saatlik İzin</div><div style={{fontSize:12,color:C.text}}>{fDS(dates[0])} • {l.leave_start_time?.slice(0,5)}-{l.leave_end_time?.slice(0,5)}</div></div>:<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{dates.map(d=><span key={d} style={S.tag(l.status==="approved"?C.greenD:C.orangeD,l.status==="approved"?C.green:C.orange)}>{fDS(d)}</span>)}</div>}{l.reason&&<div style={{fontSize:10,color:l.reason.includes("borc")?C.red:C.dim,marginTop:4}}>{l.reason.length>50?l.reason.slice(0,50)+"...":l.reason}</div>}</div><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:700}}>{isHourly?l.total_hours+"s":dates.length+"g"}</div><div style={S.tag(sColor(l.status)+"22",sColor(l.status))}>{sIcon(l.status)}</div>{l.leave_doc_url&&<div style={{fontSize:10,color:C.green,marginTop:2}}>📄</div>}</div></div>{!isHourly&&(isPerso||isAdmin)&&l.status!=="approved"&&<button style={{...S.btnS(C.orangeD,C.orange),marginTop:8,fontSize:11}} onClick={e=>{e.stopPropagation();startModLV(l);}}>🔄 Tarihleri Değiştir</button>}</div>);})}
+        {(isPerso?leavesState.filter(l=>l.personnel_id===profile.id):bLeaves).filter(l=>l.status!=="rejected").map(l=>{const p=getU(l.personnel_id);const dates=Array.isArray(l.dates)?l.dates:[];const isHourly=l.leave_type==="hourly";return(<div key={l.id} style={S.crd} onClick={()=>setSelLV(l)}><div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}><div>{!isPerso&&<div style={{fontSize:13,fontWeight:600,marginBottom:4}}>{p?.full_name}</div>}{isHourly?<div><div style={{...S.tag(C.blueD,C.blue),marginBottom:4}}>🕐 Saatlik İzin</div><div style={{fontSize:12,color:C.text}}>{fDS(dates[0])} • {l.leave_start_time?.slice(0,5)}-{l.leave_end_time?.slice(0,5)}</div></div>:<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{dates.map(d=><span key={d} style={S.tag(l.status==="approved"?C.greenD:C.orangeD,l.status==="approved"?C.green:C.orange)}>{fDS(d)}</span>)}</div>}{l.reason&&<div style={{fontSize:10,color:l.reason.includes("borc")?C.red:C.dim,marginTop:4}}>{l.reason.length>50?l.reason.slice(0,50)+"...":l.reason}</div>}</div><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:700}}>{isHourly?l.total_hours+"s":dates.length+"g"}</div><div style={S.tag(sColor(l.status)+"22",sColor(l.status))}>{sIcon(l.status)}</div>{l.leave_doc_url&&<div style={{fontSize:10,color:C.green,marginTop:2}}>📄</div>}</div></div>{!isHourly&&(isPerso||isAdmin)&&l.status!=="approved"&&<button style={{...S.btnS(C.orangeD,C.orange),marginTop:8,fontSize:11}} onClick={e=>{e.stopPropagation();startModLV(l);}}>🔄 Tarihleri Değiştir</button>}</div>);})}
       </div>}
     </div>);
   };
