@@ -1,24 +1,35 @@
 import { useState, useEffect, useRef, useCallback, useMemo, Component } from 'react';
 import { supabase, signIn, signOut, getProfiles, getOvertimes, getLeaves, createOvertime, updateOvertime, createLeave, updateLeave, uploadPhoto, subscribeToChanges } from './lib/supabase';
 
-// Error Boundary - siyah ekran yerine hata mesajı gösterir
 class ErrorBoundary extends Component {
-  constructor(props){super(props);this.state={hasError:false,error:null};}
+  constructor(props){super(props);this.state={hasError:false,error:null,info:null};}
   static getDerivedStateFromError(error){return{hasError:true,error};}
-  componentDidCatch(error,info){console.error("App crash:",error,info);}
+  componentDidCatch(error,info){this.setState({info});console.error("APP CRASH:",error,"\nStack:",info?.componentStack);}
   render(){
     if(this.state.hasError){
+      const errMsg=this.state.error?.message||"Bilinmeyen hata";
+      const stack=this.state.info?.componentStack||"";
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:20,textAlign:"center"}}>
         <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
         <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası</div>
-        <div style={{fontSize:13,color:"#94a3b8",marginBottom:16,maxWidth:300}}>{this.state.error?.message||"Bilinmeyen hata"}</div>
-        <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer"}} onClick={()=>{
-          // Cache temizle ve yeniden yükle
-          if('caches' in window){caches.keys().then(names=>names.forEach(name=>caches.delete(name)));}
-          if('serviceWorker' in navigator){navigator.serviceWorker.getRegistrations().then(regs=>regs.forEach(r=>r.unregister()));}
-          window.location.reload(true);
+        <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:320,wordBreak:"break-word"}}>{errMsg}</div>
+        <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:12}} onClick={()=>{
+          if('caches' in window){caches.keys().then(n=>n.forEach(k=>caches.delete(k)));}
+          if('serviceWorker' in navigator){navigator.serviceWorker.getRegistrations().then(r=>r.forEach(x=>x.unregister()));}
+          localStorage.clear();sessionStorage.clear();
+          window.location.href=window.location.origin+"?t="+Date.now();
         }}>🔄 Temizle ve Yeniden Yükle</button>
-        <div style={{marginTop:12,fontSize:11,color:"#64748b"}}>Bu butona basınca cache temizlenip sayfa yenilenir</div>
+        <button style={{padding:"10px 20px",background:"#ef4444",color:"white",border:"none",borderRadius:10,fontSize:13,cursor:"pointer",marginBottom:16}} onClick={()=>{
+          supabase.auth.signOut().then(()=>{
+            localStorage.clear();sessionStorage.clear();
+            if('caches' in window){caches.keys().then(n=>n.forEach(k=>caches.delete(k)));}
+            window.location.href=window.location.origin+"?t="+Date.now();
+          });
+        }}>🚪 Çıkış Yap + Temizle</button>
+        <details style={{maxWidth:320,textAlign:"left",fontSize:10,color:"#64748b"}}>
+          <summary style={{cursor:"pointer"}}>Teknik Detay</summary>
+          <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:8,maxHeight:200,overflow:"auto"}}>{errMsg+"\n"+stack}</pre>
+        </details>
       </div>);
     }
     return this.props.children;
@@ -26,6 +37,7 @@ class ErrorBoundary extends Component {
 }
 
 const OT_MULT=1.5,WORK_END=17;
+const sa=(x)=>Array.isArray(x)?x:[];  // safe array helper
 function calcOT(st,et,type){if(!st||!et)return 0;const[sh,sm]=st.split(":").map(Number),[eh,em]=et.split(":").map(Number);let s=sh*60+sm,e=eh*60+em;if(e<=s)e+=1440;if(type==="daytime"){return Math.round(((e-s)/60)*10)/10;}const eff=Math.max(s,WORK_END*60);return eff>=e?0:Math.round(((e-eff)/60)*10)/10;}
 function calcLH(h){return Math.round(h*OT_MULT*10)/10;}
 function compressImg(file,maxW=1200,q=0.7){return new Promise((res)=>{const img=new Image();img.onload=()=>{let w=img.width,h=img.height;if(w>maxW){h=Math.round(h*(maxW/w));w=maxW;}if(h>maxW){w=Math.round(w*(maxW/h));h=maxW;}const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);c.toBlob(b=>{if(b)res(new File([b],file.name.replace(/\.\w+$/,'.jpg'),{type:'image/jpeg'}));else res(file);}, 'image/jpeg',q);};img.onerror=()=>res(file);img.src=URL.createObjectURL(file);});}
@@ -260,14 +272,14 @@ function AppInner(){
 
   useEffect(()=>{if(toast){const t=setTimeout(()=>setToast(null),3500);return()=>clearTimeout(t);}},[toast]);
 
-  const fetchProfiles=useCallback(async()=>{try{const{data}=await supabase.from('profiles').select('*');if(data)setProfilesState(data);}catch(e){console.error(e);}},[]);
-  const fetchOvertimes=useCallback(async()=>{try{const d=await getOvertimes();if(d)setOvertimesState(d);}catch(e){console.error(e);}},[]);
-  const fetchLeaves=useCallback(async()=>{try{const d=await getLeaves();if(d)setLeavesState(d);}catch(e){console.error(e);}},[]);
-  const fetchFaults=useCallback(async()=>{try{const{data}=await supabase.from('faults').select('*').order('detected_date',{ascending:false});if(data)setFaults(data);}catch(e){console.error(e);}},[]);
-  const fetchFaultServices=useCallback(async()=>{try{const{data}=await supabase.from('fault_services').select('*').order('visit_date',{ascending:false});if(data)setFaultServices(data);}catch(e){console.error(e);}},[]);
-  const fetchFaultVotes=useCallback(async()=>{try{const{data}=await supabase.from('fault_votes').select('*');if(data)setFaultVotes(data);}catch(e){console.error(e);}},[]); 
-  const fetchMaterials=useCallback(async()=>{try{const{data}=await supabase.from('materials').select('*').order('name');if(data)setMaterials(data);}catch(e){console.error(e);}},[]);
-  const fetchStockMovements=useCallback(async()=>{try{const{data}=await supabase.from('stock_movements').select('*').order('movement_date',{ascending:false});if(data)setStockMovements(data);}catch(e){console.error(e);}},[]);
+  const fetchProfiles=useCallback(async()=>{try{const{data}=await supabase.from('profiles').select('*');if(Array.isArray(data))setProfilesState(data);}catch(e){console.error(e);}},[]);
+  const fetchOvertimes=useCallback(async()=>{try{const d=await getOvertimes();if(Array.isArray(d))setOvertimesState(d);else if(d?.data&&Array.isArray(d.data))setOvertimesState(d.data);}catch(e){console.error(e);}},[]);
+  const fetchLeaves=useCallback(async()=>{try{const d=await getLeaves();if(Array.isArray(d))setLeavesState(d);else if(d?.data&&Array.isArray(d.data))setLeavesState(d.data);}catch(e){console.error(e);}},[]);
+  const fetchFaults=useCallback(async()=>{try{const{data}=await supabase.from('faults').select('*').order('detected_date',{ascending:false});if(Array.isArray(data))setFaults(data);}catch(e){console.error(e);}},[]);
+  const fetchFaultServices=useCallback(async()=>{try{const{data}=await supabase.from('fault_services').select('*').order('visit_date',{ascending:false});if(Array.isArray(data))setFaultServices(data);}catch(e){console.error(e);}},[]);
+  const fetchFaultVotes=useCallback(async()=>{try{const{data}=await supabase.from('fault_votes').select('*');if(Array.isArray(data))setFaultVotes(data);}catch(e){console.error(e);}},[]); 
+  const fetchMaterials=useCallback(async()=>{try{const{data}=await supabase.from('materials').select('*').order('name');if(Array.isArray(data))setMaterials(data);}catch(e){console.error(e);}},[]);
+  const fetchStockMovements=useCallback(async()=>{try{const{data}=await supabase.from('stock_movements').select('*').order('movement_date',{ascending:false});if(Array.isArray(data))setStockMovements(data);}catch(e){console.error(e);}},[]);
   const fetchBuildings=useCallback(async()=>{try{const{data}=await supabase.from('buildings').select('*').order('name');if(data)setBuildings(data);}catch(e){console.error(e);}},[]);
 
   const loadData=useCallback(async(uid)=>{
@@ -275,10 +287,10 @@ function AppInner(){
     try{
       // Phase 1: Critical data (profiles, buildings, overtimes, leaves) - needed for first render
       const r1=await Promise.allSettled([supabase.from('profiles').select('*'),getOvertimes(),getLeaves(),supabase.from('buildings').select('*').order('name')]);
-      const profs=r1[0].status==="fulfilled"?(r1[0].value?.data||[]):[];
-      const ots=r1[1].status==="fulfilled"?(r1[1].value||[]):[];
-      const lvs=r1[2].status==="fulfilled"?(r1[2].value||[]):[];
-      const blds=r1[3].status==="fulfilled"?(r1[3].value?.data||[]):[];
+      const profs=r1[0].status==="fulfilled"?((a)=>Array.isArray(a)?a:a?.data||[])(r1[0].value?.data||r1[0].value):[];
+      const ots=r1[1].status==="fulfilled"?((a)=>Array.isArray(a)?a:[])(r1[1].value):[];
+      const lvs=r1[2].status==="fulfilled"?((a)=>Array.isArray(a)?a:[])(r1[2].value):[];
+      const blds=r1[3].status==="fulfilled"?((a)=>Array.isArray(a)?a:a?.data||[])(r1[3].value?.data||r1[3].value):[];
       setProfilesState(profs);setOvertimesState(ots);setLeavesState(lvs);setBuildings(blds);
       const fp=profs.find(p=>p.id===uid);setProfile(fp||null);
       if(fp&&blds.length>0&&!selBuilding){setSelBuilding(fp.building_id||blds[0]?.id||null);}
@@ -287,11 +299,11 @@ function AppInner(){
     // Phase 2: Secondary data (faults, materials, stock) - loads in background
     try{
       const r2=await Promise.allSettled([supabase.from('faults').select('*').order('detected_date',{ascending:false}),supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),supabase.from('fault_votes').select('*'),supabase.from('materials').select('*').order('name'),supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}).limit(200)]);
-      if(r2[0].status==="fulfilled")setFaults(r2[0].value?.data||[]);
-      if(r2[1].status==="fulfilled")setFaultServices(r2[1].value?.data||[]);
-      if(r2[2].status==="fulfilled")setFaultVotes(r2[2].value?.data||[]);
-      if(r2[3].status==="fulfilled")setMaterials(r2[3].value?.data||[]);
-      if(r2[4].status==="fulfilled")setStockMovements(r2[4].value?.data||[]);
+      if(r2[0].status==="fulfilled")setFaults(Array.isArray(r2[0].value?.data)?r2[0].value.data:[]);
+      if(r2[1].status==="fulfilled")setFaultServices(Array.isArray(r2[1].value?.data)?r2[1].value.data:[]);
+      if(r2[2].status==="fulfilled")setFaultVotes(Array.isArray(r2[2].value?.data)?r2[2].value.data:[]);
+      if(r2[3].status==="fulfilled")setMaterials(Array.isArray(r2[3].value?.data)?r2[3].value.data:[]);
+      if(r2[4].status==="fulfilled")setStockMovements(Array.isArray(r2[4].value?.data)?r2[4].value.data:[]);
     }catch(e){}
   },[]);
 
@@ -326,16 +338,16 @@ function AppInner(){
   const canApprove=isAdmin||isChef;
   const canSwitchBuilding=isAdmin||isChef;
   // O(1) profile lookup map
-  const profileMap=useMemo(()=>{const m=new Map();profiles.forEach(p=>m.set(p.id,p));return m;},[profiles]);
+  const profileMap=useMemo(()=>{const m=new Map();(Array.isArray(profiles)?profiles:[]).forEach(p=>m.set(p.id,p));return m;},[profiles]);
   // Building-scoped data (memoized)
-  const bProfiles=useMemo(()=>profiles.filter(p=>!selBuilding||p.building_id===selBuilding),[profiles,selBuilding]);
-  const bOvertimes=useMemo(()=>overtimes.filter(o=>{const p=profileMap.get(o.personnel_id);return !selBuilding||p?.building_id===selBuilding;}),[overtimes,profileMap,selBuilding]);
-  const bLeaves=useMemo(()=>leavesState.filter(l=>{const p=profileMap.get(l.personnel_id);return !selBuilding||p?.building_id===selBuilding;}),[leavesState,profileMap,selBuilding]);
-  const bFaults=useMemo(()=>faults.filter(f=>!selBuilding||f.building_id===selBuilding),[faults,selBuilding]);
-  const bMaterials=useMemo(()=>materials.filter(m=>!selBuilding||m.building_id===selBuilding),[materials,selBuilding]);
-  const materialMap=useMemo(()=>{const m=new Map();materials.forEach(mt=>m.set(mt.id,mt));return m;},[materials]);
-  const bStockMovements=useMemo(()=>stockMovements.filter(mv=>{const mat=materialMap.get(mv.material_id);return !selBuilding||mat?.building_id===selBuilding;}),[stockMovements,materialMap,selBuilding]);
-  const curBuildingName=useMemo(()=>buildings.find(b=>b.id===selBuilding)?.short_name||"",[buildings,selBuilding]);
+  const bProfiles=useMemo(()=>(Array.isArray(profiles)?profiles:[]).filter(p=>!selBuilding||p.building_id===selBuilding),[profiles,selBuilding]);
+  const bOvertimes=useMemo(()=>(Array.isArray(overtimes)?overtimes:[]).filter(o=>{const p=profileMap.get(o.personnel_id);return !selBuilding||p?.building_id===selBuilding;}),[overtimes,profileMap,selBuilding]);
+  const bLeaves=useMemo(()=>(Array.isArray(leavesState)?leavesState:[]).filter(l=>{const p=profileMap.get(l.personnel_id);return !selBuilding||p?.building_id===selBuilding;}),[leavesState,profileMap,selBuilding]);
+  const bFaults=useMemo(()=>(Array.isArray(faults)?faults:[]).filter(f=>!selBuilding||f.building_id===selBuilding),[faults,selBuilding]);
+  const bMaterials=useMemo(()=>(Array.isArray(materials)?materials:[]).filter(m=>!selBuilding||m.building_id===selBuilding),[materials,selBuilding]);
+  const materialMap=useMemo(()=>{const m=new Map();(Array.isArray(materials)?materials:[]).forEach(mt=>m.set(mt.id,mt));return m;},[materials]);
+  const bStockMovements=useMemo(()=>(Array.isArray(stockMovements)?stockMovements:[]).filter(mv=>{const mat=materialMap.get(mv.material_id);return !selBuilding||mat?.building_id===selBuilding;}),[stockMovements,materialMap,selBuilding]);
+  const curBuildingName=useMemo(()=>(Array.isArray(buildings)?buildings:[]).find(b=>b.id===selBuilding)?.short_name||"",[buildings,selBuilding]);
 
   function getU(id){return profileMap.get(id);}
   // Building-scoped helpers (for dashboard/approvals - shows selected building's data)
@@ -347,10 +359,10 @@ function AppInner(){
   function debtDays(pid){const r=remDays(pid);return r<0?Math.abs(r):0;}
   function pendCount(pid){return bOvertimes.filter(o=>o.personnel_id===pid&&["pending_chef","pending_manager"].includes(o.status)).length+bLeaves.filter(l=>l.personnel_id===pid&&["pending_chef","pending_manager"].includes(l.status)).length;}
   // Global helpers (for user's own summary - always shows own data regardless of building)
-  function myTotLH(pid){return overtimes.filter(o=>o.personnel_id===pid&&o.status==="approved").reduce((s,o)=>s+Number(o.leave_hours||0),0);}
-  function myTotUsedLV(pid){return leavesState.filter(l=>l.personnel_id===pid&&["approved","pending_chef","pending_manager"].includes(l.status)).reduce((s,l)=>s+(l.total_hours||0),0);}
+  function myTotLH(pid){return (Array.isArray(overtimes)?overtimes:[]).filter(o=>o.personnel_id===pid&&o.status==="approved").reduce((s,o)=>s+Number(o.leave_hours||0),0);}
+  function myTotUsedLV(pid){return (Array.isArray(leavesState)?leavesState:[]).filter(l=>l.personnel_id===pid&&["approved","pending_chef","pending_manager"].includes(l.status)).reduce((s,l)=>s+(l.total_hours||0),0);}
   function myRemHours(pid){return Math.round((myTotLH(pid)-myTotUsedLV(pid))*10)/10;}
-  function myTotOTH(pid){return overtimes.filter(o=>o.personnel_id===pid&&o.status==="approved").reduce((s,o)=>s+Number(o.hours||0),0);}
+  function myTotOTH(pid){return (Array.isArray(overtimes)?overtimes:[]).filter(o=>o.personnel_id===pid&&o.status==="approved").reduce((s,o)=>s+Number(o.hours||0),0);}
   function myRemDays(pid){return Math.round((myRemHours(pid)/8)*10)/10;}
   function myDebtDays(pid){const r=myRemDays(pid);return r<0?Math.abs(r):0;}
 
@@ -534,7 +546,7 @@ function AppInner(){
   const allPendCount=allPendOTs.length+allPendLVs.length;
   const liveOTH=calcOT(otForm.startTime,otForm.endTime,otForm.otType),liveLH=calcLH(liveOTH);
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:C.muted,marginTop:20}}>v2.5</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:C.muted,marginTop:20}}>v2.6</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -563,8 +575,8 @@ function AppInner(){
 
   const renderPersonDetail=()=>{
     const p=getU(selPerson);if(!p)return<div style={S.emp}>Personel bulunamadi</div>;
-    const pOTs=overtimes.filter(o=>o.personnel_id===p.id).sort((a,b)=>(b.work_date||"").localeCompare(a.work_date||""));
-    const pLVs=leavesState.filter(l=>l.personnel_id===p.id&&l.status!=="rejected");
+    const pOTs=sa(overtimes).filter(o=>o.personnel_id===p.id).sort((a,b)=>(b.work_date||"").localeCompare(a.work_date||""));
+    const pLVs=sa(leavesState).filter(l=>l.personnel_id===p.id&&l.status!=="rejected");
     const tOT=totOTH(p.id),tLHV=totLH(p.id),uH=totUsedLV(p.id),rH=remHours(p.id),debt=debtDays(p.id);
     return(<div>
       <button style={S.back} onClick={()=>{setSelPerson(null);setPage("dashboard");}}>&#8592; Geri</button>
@@ -593,8 +605,8 @@ function AppInner(){
   const isOwnFault=(f)=>f?.created_by===profile?.id;
   const currentWeek=getVoteWeek();
   const votePeriod=getVotePeriodInfo();
-  const activeFaultsAll=useMemo(()=>bFaults.filter(f=>f.status==="active"),[bFaults]);
-  const myPendingVotes=useMemo(()=>{if(!profile)return[];return activeFaultsAll.filter(f=>!faultVotes.some(v=>v.fault_id===f.id&&v.personnel_id===profile.id&&v.vote_week===currentWeek));},[activeFaultsAll,faultVotes,profile,currentWeek]);
+  const activeFaultsAll=useMemo(()=>(Array.isArray(bFaults)?bFaults:[]).filter(f=>f.status==="active"),[bFaults]);
+  const myPendingVotes=useMemo(()=>{if(!profile)return[];return activeFaultsAll.filter(f=>!(Array.isArray(faultVotes)?faultVotes:[]).some(v=>v.fault_id===f.id&&v.personnel_id===profile.id&&v.vote_week===currentWeek));},[activeFaultsAll,faultVotes,profile,currentWeek]);
 
   async function submitFault(){
     if(!faultForm.title||!faultForm.location){setToast("⚠ Başlık ve konum zorunlu");return;}
@@ -695,8 +707,8 @@ function AppInner(){
       {list.length===0&&<div style={S.emp}>{faultTab==="active"?"Aktif arıza yok ✓":"Çözülen arıza yok"}</div>}
       {list.map(f=>{
         const days=daysSince(f.detected_date);
-        const svcCount=faultServices.filter(s=>s.fault_id===f.id).length;
-        const weekVotes=faultVotes.filter(v=>v.fault_id===f.id&&v.vote_week===currentWeek);
+        const svcCount=sa(faultServices).filter(s=>s.fault_id===f.id).length;
+        const weekVotes=sa(faultVotes).filter(v=>v.fault_id===f.id&&v.vote_week===currentWeek);
         const votedCount=weekVotes.length;
         const myVote=weekVotes.find(v=>v.personnel_id===profile.id);
         return(<div key={f.id} style={{...S.crd,borderLeft:`4px solid ${f.status==="active"?C.red:C.green}`}} onClick={()=>setSelFault(f)}>
@@ -727,8 +739,8 @@ function AppInner(){
     if(!selFault)return null;
     const f=selFault;
     const days=daysSince(f.detected_date);
-    const services=faultServices.filter(s=>s.fault_id===f.id).sort((a,b)=>(b.visit_date||"").localeCompare(a.visit_date||""));
-    const weekVotes=faultVotes.filter(v=>v.fault_id===f.id&&v.vote_week===currentWeek);
+    const services=sa(faultServices).filter(s=>s.fault_id===f.id).sort((a,b)=>(b.visit_date||"").localeCompare(a.visit_date||""));
+    const weekVotes=sa(faultVotes).filter(v=>v.fault_id===f.id&&v.vote_week===currentWeek);
     const myVote=weekVotes.find(v=>v.personnel_id===profile.id);
     const allActiveProfiles=bProfiles.filter(p=>p.active);
     const creator=profiles.find(p=>p.id===f.created_by);
@@ -1029,7 +1041,7 @@ function AppInner(){
 
   const renderMaterialDetail=()=>{
     if(!selMaterial)return null;const m=selMaterial;
-    const mvs=stockMovements.filter(mv=>mv.material_id===m.id).slice(0,20);
+    const mvs=sa(stockMovements).filter(mv=>mv.material_id===m.id).slice(0,20);
     const isLow=m.current_stock<=m.min_stock&&m.min_stock>0;
     return(<div style={S.mod} onClick={()=>setSelMaterial(null)}><div style={{...S.modC,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/>
@@ -1134,7 +1146,7 @@ function AppInner(){
 
   const renderDashboard=()=>{
     if(isPerso){
-      const myOTs=overtimes.filter(o=>o.personnel_id===profile.id).sort((a,b)=>(b.work_date||"").localeCompare(a.work_date||""));
+      const myOTs=sa(overtimes).filter(o=>o.personnel_id===profile.id).sort((a,b)=>(b.work_date||"").localeCompare(a.work_date||""));
       const tOT=myTotOTH(profile.id),tLHV=myTotLH(profile.id),uH=myTotUsedLV(profile.id),rH=myRemHours(profile.id),debt=myDebtDays(profile.id);
       return(<div>
         <div style={{...S.crd,background:"linear-gradient(135deg,#1e1b4b,#312e81)",cursor:"default"}}>
@@ -1162,7 +1174,7 @@ function AppInner(){
     const list=bProfiles.filter(u=>u.active&&u.id!==profile?.id);
     const debtors=list.filter(u=>debtDays(u.id)>0);
     const vPC=isViewer?allPendCount:totPend;
-    const myOTs=overtimes.filter(o=>o.personnel_id===profile.id).sort((a,b)=>(b.work_date||"").localeCompare(a.work_date||""));
+    const myOTs=sa(overtimes).filter(o=>o.personnel_id===profile.id).sort((a,b)=>(b.work_date||"").localeCompare(a.work_date||""));
     const myTOT=myTotOTH(profile.id),myLH=myTotLH(profile.id),myUH=myTotUsedLV(profile.id),myRH=myRemHours(profile.id),myDB=myDebtDays(profile.id);
     return(<div>
       {/* Kendi özet kartım */}
@@ -1240,7 +1252,7 @@ function AppInner(){
 
   const renderCalendar=()=>{
     const dim=daysInMonth(calY,calM),fd=firstDay(calY,calM),isSel=calMode!=="view";
-    const myLvs=leavesState.filter(l=>l.personnel_id===profile.id&&l.status!=="rejected");
+    const myLvs=sa(leavesState).filter(l=>l.personnel_id===profile.id&&l.status!=="rejected");
     const allLvs=isPerso?myLvs:bLeaves.filter(l=>l.status!=="rejected");
     const myLvDates={};myLvs.forEach(l=>(Array.isArray(l.dates)?l.dates:[]).forEach(d=>{myLvDates[d]={status:l.status,id:l.id};}));
     const lvDates={};allLvs.forEach(l=>(Array.isArray(l.dates)?l.dates:[]).forEach(d=>{lvDates[d]={status:l.status,id:l.id};}));
@@ -1307,7 +1319,7 @@ function AppInner(){
       </div>}
       {!isSel&&<div style={{marginTop:16}}>
         <div style={S.sec}><span>🏖</span> İzin Talepleri</div>
-        {(isPerso?leavesState.filter(l=>l.personnel_id===profile.id):bLeaves).filter(l=>l.status!=="rejected").map(l=>{const p=getU(l.personnel_id);const dates=Array.isArray(l.dates)?l.dates:[];const isHourly=l.leave_type==="hourly";return(<div key={l.id} style={S.crd} onClick={()=>setSelLV(l)}><div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}><div>{!isPerso&&<div style={{fontSize:13,fontWeight:600,marginBottom:4}}>{p?.full_name}</div>}{isHourly?<div><div style={{...S.tag(C.blueD,C.blue),marginBottom:4}}>🕐 Saatlik İzin</div><div style={{fontSize:12,color:C.text}}>{fDS(dates[0])} • {l.leave_start_time?.slice(0,5)}-{l.leave_end_time?.slice(0,5)}</div></div>:<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{dates.map(d=><span key={d} style={S.tag(l.status==="approved"?C.greenD:C.orangeD,l.status==="approved"?C.green:C.orange)}>{fDS(d)}</span>)}</div>}{l.reason&&<div style={{fontSize:10,color:l.reason.includes("borc")?C.red:C.dim,marginTop:4}}>{l.reason.length>50?l.reason.slice(0,50)+"...":l.reason}</div>}</div><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:700}}>{isHourly?l.total_hours+"s":dates.length+"g"}</div><div style={S.tag(sColor(l.status)+"22",sColor(l.status))}>{sIcon(l.status)}</div>{l.leave_doc_url&&<div style={{fontSize:10,color:C.green,marginTop:2}}>📄</div>}</div></div>{!isHourly&&(isPerso||isAdmin)&&l.status!=="approved"&&<button style={{...S.btnS(C.orangeD,C.orange),marginTop:8,fontSize:11}} onClick={e=>{e.stopPropagation();startModLV(l);}}>🔄 Tarihleri Değiştir</button>}</div>);})}
+        {(isPerso?sa(leavesState).filter(l=>l.personnel_id===profile.id):bLeaves).filter(l=>l.status!=="rejected").map(l=>{const p=getU(l.personnel_id);const dates=Array.isArray(l.dates)?l.dates:[];const isHourly=l.leave_type==="hourly";return(<div key={l.id} style={S.crd} onClick={()=>setSelLV(l)}><div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}><div>{!isPerso&&<div style={{fontSize:13,fontWeight:600,marginBottom:4}}>{p?.full_name}</div>}{isHourly?<div><div style={{...S.tag(C.blueD,C.blue),marginBottom:4}}>🕐 Saatlik İzin</div><div style={{fontSize:12,color:C.text}}>{fDS(dates[0])} • {l.leave_start_time?.slice(0,5)}-{l.leave_end_time?.slice(0,5)}</div></div>:<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{dates.map(d=><span key={d} style={S.tag(l.status==="approved"?C.greenD:C.orangeD,l.status==="approved"?C.green:C.orange)}>{fDS(d)}</span>)}</div>}{l.reason&&<div style={{fontSize:10,color:l.reason.includes("borc")?C.red:C.dim,marginTop:4}}>{l.reason.length>50?l.reason.slice(0,50)+"...":l.reason}</div>}</div><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:700}}>{isHourly?l.total_hours+"s":dates.length+"g"}</div><div style={S.tag(sColor(l.status)+"22",sColor(l.status))}>{sIcon(l.status)}</div>{l.leave_doc_url&&<div style={{fontSize:10,color:C.green,marginTop:2}}>📄</div>}</div></div>{!isHourly&&(isPerso||isAdmin)&&l.status!=="approved"&&<button style={{...S.btnS(C.orangeD,C.orange),marginTop:8,fontSize:11}} onClick={e=>{e.stopPropagation();startModLV(l);}}>🔄 Tarihleri Değiştir</button>}</div>);})}
       </div>}
     </div>);
   };
@@ -1395,9 +1407,9 @@ function AppInner(){
     </div></div>);
   };
 
-  const renderAddUser=()=>{if(!modAddUser)return null;return(<div style={S.mod} onClick={()=>setModAddUser(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>+ Personel</div><div style={S.lbl}>Ad Soyad</div><input style={S.inp} value={nUser.name} onChange={e=>setNUser(p=>({...p,name:e.target.value}))}/><div style={S.lbl}>E-posta</div><input style={S.inp} type="email" inputMode="email" autoCapitalize="none" value={nUser.email} onChange={e=>setNUser(p=>({...p,email:e.target.value}))}/><div style={S.lbl}>Sifre</div><input style={S.inp} type="text" value={nUser.password} onChange={e=>setNUser(p=>({...p,password:e.target.value}))}/><div style={S.lbl}>Görev</div><input style={S.inp} value={nUser.role} onChange={e=>setNUser(p=>({...p,role:e.target.value}))}/><div style={S.lbl}>Bina</div><select style={S.sel} value={nUser.buildingId||selBuilding||""} onChange={e=>setNUser(p=>({...p,buildingId:e.target.value}))}>{buildings.map(b=><option key={b.id} value={b.id}>{b.short_name||b.name}</option>)}</select><div style={S.lbl}>Yetki</div><select style={S.sel} value={nUser.userRole} onChange={e=>setNUser(p=>({...p,userRole:e.target.value}))}><option value="personnel">Personel</option><option value="chef">Teknik Şef (Onay Yetkili)</option><option value="viewer">İzleyici (Tam Görüntüleme)</option></select><button style={S.btn(C.accent)} onClick={doAddUser} disabled={submitting}>{submitting?"...":"Ekle"}</button><button style={S.btn(C.border,C.text)} onClick={()=>setModAddUser(false)}>İptal</button></div></div>);};
+  const renderAddUser=()=>{if(!modAddUser)return null;return(<div style={S.mod} onClick={()=>setModAddUser(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>+ Personel</div><div style={S.lbl}>Ad Soyad</div><input style={S.inp} value={nUser.name} onChange={e=>setNUser(p=>({...p,name:e.target.value}))}/><div style={S.lbl}>E-posta</div><input style={S.inp} type="email" inputMode="email" autoCapitalize="none" value={nUser.email} onChange={e=>setNUser(p=>({...p,email:e.target.value}))}/><div style={S.lbl}>Sifre</div><input style={S.inp} type="text" value={nUser.password} onChange={e=>setNUser(p=>({...p,password:e.target.value}))}/><div style={S.lbl}>Görev</div><input style={S.inp} value={nUser.role} onChange={e=>setNUser(p=>({...p,role:e.target.value}))}/><div style={S.lbl}>Bina</div><select style={S.sel} value={nUser.buildingId||selBuilding||""} onChange={e=>setNUser(p=>({...p,buildingId:e.target.value}))}>{sa(buildings).map(b=><option key={b.id} value={b.id}>{b.short_name||b.name}</option>)}</select><div style={S.lbl}>Yetki</div><select style={S.sel} value={nUser.userRole} onChange={e=>setNUser(p=>({...p,userRole:e.target.value}))}><option value="personnel">Personel</option><option value="chef">Teknik Şef (Onay Yetkili)</option><option value="viewer">İzleyici (Tam Görüntüleme)</option></select><button style={S.btn(C.accent)} onClick={doAddUser} disabled={submitting}>{submitting?"...":"Ekle"}</button><button style={S.btn(C.border,C.text)} onClick={()=>setModAddUser(false)}>İptal</button></div></div>);};
 
-  const renderEditUser=()=>{if(!modEditUser)return null;const u=modEditUser;return(<div style={S.mod} onClick={()=>{setModEditUser(null);setDeleteConfirm(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>Düzenle: {u.full_name}</div><div style={S.lbl}>Görev</div><input style={S.inp} value={u.role||""} onChange={e=>setModEditUser({...u,role:e.target.value})}/><div style={S.lbl}>Bina</div><select style={S.sel} value={u.building_id||""} onChange={e=>setModEditUser({...u,building_id:e.target.value})}>{buildings.map(b=><option key={b.id} value={b.id}>{b.short_name||b.name}</option>)}</select><div style={S.lbl}>Yetki</div><select style={S.sel} value={u.user_role||"personnel"} onChange={e=>setModEditUser({...u,user_role:e.target.value})}><option value="personnel">Personel</option><option value="chef">Teknik Şef (Onay Yetkili)</option><option value="viewer">İzleyici (Tam Görüntüleme)</option></select><button style={S.btn(C.accent)} onClick={async()=>{try{await supabase.from('profiles').update({role:u.role,user_role:u.user_role,building_id:u.building_id}).eq('id',u.id);await fetchProfiles();setModEditUser(null);setToast("Kaydedildi");}catch(e){setToast("Hata: "+e?.message);}}}>Kaydet</button><div style={S.dv}/><button style={S.btn(C.orangeD,C.orange)} onClick={()=>doDeactivateU(u.id)}>🚫 Pasif Yap</button>{deleteConfirm===u.id?<div style={{background:C.redD,borderRadius:10,padding:14,marginTop:8}}><div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:8,textAlign:"center"}}>⚠ {u.full_name} silinecek. Mesai ve izin kayıtları arşivde kalır.</div><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.red),flex:1}} onClick={()=>doDeleteUser(u.id)}>🗑 Evet, Sil</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setDeleteConfirm(null)}>İptal</button></div></div>:<button style={S.btn(C.redD,C.red)} onClick={()=>setDeleteConfirm(u.id)}>🗑 Personeli Sil</button>}<button style={S.btn(C.border,C.text)} onClick={()=>{setModEditUser(null);setDeleteConfirm(null);}}>Kapat</button></div></div>);};
+  const renderEditUser=()=>{if(!modEditUser)return null;const u=modEditUser;return(<div style={S.mod} onClick={()=>{setModEditUser(null);setDeleteConfirm(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>Düzenle: {u.full_name}</div><div style={S.lbl}>Görev</div><input style={S.inp} value={u.role||""} onChange={e=>setModEditUser({...u,role:e.target.value})}/><div style={S.lbl}>Bina</div><select style={S.sel} value={u.building_id||""} onChange={e=>setModEditUser({...u,building_id:e.target.value})}>{sa(buildings).map(b=><option key={b.id} value={b.id}>{b.short_name||b.name}</option>)}</select><div style={S.lbl}>Yetki</div><select style={S.sel} value={u.user_role||"personnel"} onChange={e=>setModEditUser({...u,user_role:e.target.value})}><option value="personnel">Personel</option><option value="chef">Teknik Şef (Onay Yetkili)</option><option value="viewer">İzleyici (Tam Görüntüleme)</option></select><button style={S.btn(C.accent)} onClick={async()=>{try{await supabase.from('profiles').update({role:u.role,user_role:u.user_role,building_id:u.building_id}).eq('id',u.id);await fetchProfiles();setModEditUser(null);setToast("Kaydedildi");}catch(e){setToast("Hata: "+e?.message);}}}>Kaydet</button><div style={S.dv}/><button style={S.btn(C.orangeD,C.orange)} onClick={()=>doDeactivateU(u.id)}>🚫 Pasif Yap</button>{deleteConfirm===u.id?<div style={{background:C.redD,borderRadius:10,padding:14,marginTop:8}}><div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:8,textAlign:"center"}}>⚠ {u.full_name} silinecek. Mesai ve izin kayıtları arşivde kalır.</div><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.red),flex:1}} onClick={()=>doDeleteUser(u.id)}>🗑 Evet, Sil</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setDeleteConfirm(null)}>İptal</button></div></div>:<button style={S.btn(C.redD,C.red)} onClick={()=>setDeleteConfirm(u.id)}>🗑 Personeli Sil</button>}<button style={S.btn(C.border,C.text)} onClick={()=>{setModEditUser(null);setDeleteConfirm(null);}}>Kapat</button></div></div>);};
 
   const navItems=isAdmin?[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"depo",i:"📦",l:"Depo"},{k:"calendar",i:"📅",l:"Takvim"},{k:"approvals",i:"✅",l:"Onaylar"},{k:"admin",i:"⚙️",l:"Yönetim"}]:(isChef||isViewer)?[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"depo",i:"📦",l:"Depo"},{k:"calendar",i:"📅",l:"Takvim"},{k:"approvals",i:isViewer?"👁":"✅",l:isViewer?"Takip":"Onaylar"}]:[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"depo",i:"📦",l:"Depo"},{k:"calendar",i:"📅",l:"Takvim"}];
   const roleLabel=isAdmin?"👑 Yonetici":isChef?"🔧 Sef":isViewer?"👁 Izleyici":"👷 Personel";
@@ -1411,7 +1423,7 @@ function AppInner(){
         </div>
         {/* Building Selector */}
         {canSwitchBuilding&&buildings.length>1&&<div style={{display:"flex",gap:6,marginBottom:8,overflowX:"auto",paddingBottom:2}}>
-          {buildings.map(b=><button key={b.id} style={{padding:"6px 14px",borderRadius:20,border:"2px solid "+(selBuilding===b.id?C.accent:C.border),background:selBuilding===b.id?C.accentD:"transparent",color:selBuilding===b.id?C.accent:C.muted,fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}} onClick={()=>setSelBuilding(b.id)}>{b.short_name||b.name}</button>)}
+          {sa(buildings).map(b=><button key={b.id} style={{padding:"6px 14px",borderRadius:20,border:"2px solid "+(selBuilding===b.id?C.accent:C.border),background:selBuilding===b.id?C.accentD:"transparent",color:selBuilding===b.id?C.accent:C.muted,fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}} onClick={()=>setSelBuilding(b.id)}>{b.short_name||b.name}</button>)}
         </div>}
         <div style={{display:"flex",alignItems:"center",gap:8,background:"rgba(255,255,255,0.05)",borderRadius:8,padding:"8px 12px"}}><div style={S.av(C.accentD,28)}>{ini(profile.full_name)}</div><div><div style={{fontSize:13,fontWeight:600}}>{profile.full_name}</div><div style={{fontSize:10,color:C.dim}}>{roleLabel}</div></div></div>
       </div>
