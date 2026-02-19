@@ -10,7 +10,25 @@ function fDS(d){if(!d)return"";try{return new Date(d+'T00:00:00').toLocaleDateSt
 function sColor(s){return s==="approved"?"#22c55e":s==="pending_chef"?"#f59e0b":s==="pending_manager"?"#3b82f6":s==="rejected"?"#ef4444":"#94a3b8";}
 function sText(s){return s==="approved"?"Onaylandı":s==="pending_chef"?"Şef Onayı Bekliyor":s==="pending_manager"?"Müh. Onayı Bekliyor":s==="rejected"?"Reddedildi":s;}
 function daysSince(d){if(!d)return 0;const t=new Date(),s=new Date(d+'T00:00:00');return Math.max(0,Math.floor((t-s)/(1000*60*60*24)));}
-function getVoteWeek(d){const dt=d||new Date();const jan1=new Date(dt.getFullYear(),0,1);const days=Math.floor((dt-jan1)/(86400000));const wn=Math.ceil((days+jan1.getDay()+1)/7);return `${dt.getFullYear()}-W${String(wn).padStart(2,'0')}`;}
+function getVoteWeek(d){
+  // Vote period: Wednesday 00:00 → next Tuesday 23:59
+  const dt=d?new Date(d):new Date();
+  const day=dt.getDay(); // 0=Sun,1=Mon,2=Tue,3=Wed...
+  // Find the Wednesday that starts this period
+  const diff=day>=3?(day-3):(day+4); // days since last Wednesday
+  const wed=new Date(dt);wed.setDate(dt.getDate()-diff);wed.setHours(0,0,0,0);
+  return `${wed.getFullYear()}-${String(wed.getMonth()+1).padStart(2,'0')}-${String(wed.getDate()).padStart(2,'0')}`;
+}
+function getVotePeriodInfo(){
+  const now=new Date();const day=now.getDay();
+  const diff=day>=3?(day-3):(day+4);
+  const wed=new Date(now);wed.setDate(now.getDate()-diff);wed.setHours(0,0,0,0);
+  const tue=new Date(wed);tue.setDate(wed.getDate()+6);tue.setHours(23,59,59);
+  const daysLeft=Math.max(0,Math.ceil((tue-now)/(1000*60*60*24)));
+  const isUrgent=daysLeft<=1; // Salı (son gün)
+  const isWarning=daysLeft<=2; // Pazartesi-Salı
+  return{start:wed,end:tue,daysLeft,isUrgent,isWarning};
+}
 function isFriday(){return new Date().getDay()===5;}
 function sIcon(s){return s==="approved"?"\u2713":s==="rejected"?"\u2717":"\u23F3";}
 function ini(n){if(!n)return"?";try{return n.split(" ").map(x=>x[0]).slice(0,2).join("").toUpperCase();}catch{return"?";}}
@@ -549,6 +567,9 @@ export default function App(){
   const canAddFault=true; // herkes arıza ekleyebilir
   const isOwnFault=(f)=>f?.created_by===profile?.id;
   const currentWeek=getVoteWeek();
+  const votePeriod=getVotePeriodInfo();
+  const activeFaultsAll=useMemo(()=>bFaults.filter(f=>f.status==="active"),[bFaults]);
+  const myPendingVotes=useMemo(()=>{if(!profile)return[];return activeFaultsAll.filter(f=>!faultVotes.some(v=>v.fault_id===f.id&&v.personnel_id===profile.id&&v.vote_week===currentWeek));},[activeFaultsAll,faultVotes,profile,currentWeek]);
 
   async function submitFault(){
     if(!faultForm.title||!faultForm.location){setToast("⚠ Başlık ve konum zorunlu");return;}
@@ -724,7 +745,7 @@ export default function App(){
 
       {/* OYLAMA */}
       {f.status==="active"&&<div style={{...S.lawBox,marginBottom:12,borderColor:`${C.orange}44`}}>
-        <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>📊 Haftalık Durum Oylaması <span style={{fontSize:10,color:C.muted,fontWeight:500}}>({currentWeek})</span></div>
+        <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>📊 Haftalık Durum Oylaması <span style={{fontSize:10,color:votePeriod.isUrgent?C.red:C.muted,fontWeight:votePeriod.isUrgent?700:500}}>({fDS(votePeriod.start.toISOString().slice(0,10))} → {fDS(votePeriod.end.toISOString().slice(0,10))}{votePeriod.isUrgent?" ⏰ SON GÜN!":votePeriod.isWarning?" ⚠ "+votePeriod.daysLeft+" gün kaldı":""})</span></div>
         {!myVote?<div style={{display:"flex",gap:8}}>
           <button style={{flex:1,padding:12,borderRadius:10,background:C.redD,border:`2px solid ${C.red}44`,color:C.red,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>submitVote(f.id,"continues")} disabled={submitting}>🔴 Arıza Devam Ediyor</button>
           <button style={{flex:1,padding:12,borderRadius:10,background:C.greenD,border:`2px solid ${C.green}44`,color:C.green,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>submitVote(f.id,"resolved")} disabled={submitting}>🟢 Arıza Giderildi</button>
@@ -1102,6 +1123,11 @@ export default function App(){
           {debt>0&&<div style={{marginTop:8,background:C.redD,borderRadius:8,padding:"6px 10px",textAlign:"center"}}><span style={{fontSize:12,color:C.red,fontWeight:700}}>⚠ {debt} gun mesai borcu</span></div>}
         </div>
         <button style={S.btn(C.accent)} onClick={()=>{setOtForm({date:todayStr(),startTime:"17:00",endTime:"",otType:"evening",desc:"",photoBefore:null,photoAfter:null,fileB:null,fileA:null});setOtErrors([]);setModNewOT(true);}}>+ Fazla Mesai Bildir</button>
+        {myPendingVotes.length>0&&<div style={{...S.crd,background:votePeriod.isUrgent?C.redD:votePeriod.isWarning?"rgba(245,158,11,0.12)":"rgba(99,102,241,0.1)",borderColor:votePeriod.isUrgent?`${C.red}66`:votePeriod.isWarning?`${C.orange}44`:`${C.accent}44`,cursor:"pointer",textAlign:"center"}} onClick={()=>setPage("faults")}>
+          <div style={{fontSize:votePeriod.isUrgent?24:20,fontWeight:800,color:votePeriod.isUrgent?C.red:votePeriod.isWarning?C.orange:C.accent}}>🗳 {myPendingVotes.length}</div>
+          <div style={{fontSize:12,fontWeight:600,color:votePeriod.isUrgent?C.red:votePeriod.isWarning?C.orange:C.text}}>Arıza için oy bekleniyor</div>
+          <div style={{fontSize:10,color:C.muted,marginTop:4}}>{votePeriod.isUrgent?"⏰ Son gün! Bugün oy kullanın":"Kalan süre: "+votePeriod.daysLeft+" gün"}</div>
+        </div>}
         <div style={{height:12}}/>
         <div style={S.sec}><span>⏱</span> Son Mesailer</div>
         {myOTs.length===0&&<div style={S.emp}>Henüz mesai kaydi yok</div>}
@@ -1130,6 +1156,12 @@ export default function App(){
         <div style={{fontSize:12,color:C.dim}}>{vPC>0?"Onay Bekleyen Talep":"Bekleyen talep yok"}</div>
         {isViewer&&vPC>0&&<div style={{fontSize:10,color:C.muted,marginTop:4}}>Sadece görüntüleme</div>}
       </div>
+      {myPendingVotes.length>0&&<div style={{...S.crd,background:votePeriod.isUrgent?C.redD:votePeriod.isWarning?"rgba(245,158,11,0.12)":"rgba(99,102,241,0.1)",borderColor:votePeriod.isUrgent?`${C.red}66`:votePeriod.isWarning?`${C.orange}44`:`${C.accent}44`,cursor:"pointer"}} onClick={()=>setPage("faults")}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div><div style={{fontSize:14,fontWeight:700,color:votePeriod.isUrgent?C.red:C.accent}}>🗳 {myPendingVotes.length} arıza için oy bekleniyor</div><div style={{fontSize:10,color:C.muted,marginTop:2}}>{votePeriod.isUrgent?"⏰ Son gün!":"Kalan: "+votePeriod.daysLeft+" gün"}</div></div>
+          <div style={{fontSize:24}}>{votePeriod.isUrgent?"🔴":"📊"}</div>
+        </div>
+      </div>}
       {debtors.length>0&&<div style={{marginBottom:16}}><div style={{...S.sec,color:C.red}}><span>⚠</span> Borçlu Personel</div>{debtors.map(u=>(<div key={u.id} style={{...S.crd,borderColor:`${C.red}44`}} onClick={()=>{setSelPerson(u.id);setPage("person");}}><div style={S.row}><div style={S.av(C.redD)}>{ini(u.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14,fontWeight:600}}>{u.full_name}</div><div style={{fontSize:11,color:C.dim}}>{u.role}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:18,fontWeight:800,color:C.red}}>{debtDays(u.id)}</div><div style={{fontSize:10,color:C.red}}>gün borç</div></div></div></div>))}</div>}
       <div style={S.sec}><span>👥</span> Personel ({list.length})</div>
       {list.map((p,i)=>{const rD=remDays(p.id),debt=debtDays(p.id),pend=pendCount(p.id);return(<div key={p.id} style={S.crd} onClick={()=>{setSelPerson(p.id);setPage("person");}}><div style={S.row}><div style={S.av(getAv(i))}>{ini(p.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14,fontWeight:600}}>{p.full_name}</div><div style={{fontSize:11,color:C.dim}}>{p.role}{p.night_shift?" 🌙":""}</div></div><div style={{textAlign:"right"}}>{pend>0&&<div style={{...S.tag(C.orangeD,C.orange),marginBottom:4}}>⏳ {pend}</div>}{debt>0?<><div style={{fontSize:18,fontWeight:800,color:C.red}}>-{debt}</div><div style={{fontSize:10,color:C.red}}>borc</div></>:<><div style={{fontSize:18,fontWeight:800,color:rD>0?C.green:C.muted}}>{rD}</div><div style={{fontSize:10,color:C.dim}}>gun</div></>}</div></div></div>);})}
