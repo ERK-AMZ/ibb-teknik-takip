@@ -1,5 +1,29 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, Component } from 'react';
 import { supabase, signIn, signOut, getProfiles, getOvertimes, getLeaves, createOvertime, updateOvertime, createLeave, updateLeave, uploadPhoto, subscribeToChanges } from './lib/supabase';
+
+// Error Boundary - siyah ekran yerine hata mesajı gösterir
+class ErrorBoundary extends Component {
+  constructor(props){super(props);this.state={hasError:false,error:null};}
+  static getDerivedStateFromError(error){return{hasError:true,error};}
+  componentDidCatch(error,info){console.error("App crash:",error,info);}
+  render(){
+    if(this.state.hasError){
+      return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:20,textAlign:"center"}}>
+        <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
+        <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası</div>
+        <div style={{fontSize:13,color:"#94a3b8",marginBottom:16,maxWidth:300}}>{this.state.error?.message||"Bilinmeyen hata"}</div>
+        <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer"}} onClick={()=>{
+          // Cache temizle ve yeniden yükle
+          if('caches' in window){caches.keys().then(names=>names.forEach(name=>caches.delete(name)));}
+          if('serviceWorker' in navigator){navigator.serviceWorker.getRegistrations().then(regs=>regs.forEach(r=>r.unregister()));}
+          window.location.reload(true);
+        }}>🔄 Temizle ve Yeniden Yükle</button>
+        <div style={{marginTop:12,fontSize:11,color:"#64748b"}}>Bu butona basınca cache temizlenip sayfa yenilenir</div>
+      </div>);
+    }
+    return this.props.children;
+  }
+}
 
 const OT_MULT=1.5,WORK_END=17;
 function calcOT(st,et,type){if(!st||!et)return 0;const[sh,sm]=st.split(":").map(Number),[eh,em]=et.split(":").map(Number);let s=sh*60+sm,e=eh*60+em;if(e<=s)e+=1440;if(type==="daytime"){return Math.round(((e-s)/60)*10)/10;}const eff=Math.max(s,WORK_END*60);return eff>=e?0:Math.round(((e-eff)/60)*10)/10;}
@@ -141,7 +165,8 @@ function PWAInstallGuide({onClose}){
       </div></div>);
 }
 
-export default function App(){
+export default function App(){return <ErrorBoundary><AppInner/></ErrorBoundary>;}
+function AppInner(){
   const[session,setSession]=useState(null);
   const[profile,setProfile]=useState(null);
   const[profiles,setProfilesState]=useState([]);
@@ -509,7 +534,7 @@ export default function App(){
   const allPendCount=allPendOTs.length+allPendLVs.length;
   const liveOTH=calcOT(otForm.startTime,otForm.endTime,otForm.otType),liveLH=calcLH(liveOTH);
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:C.muted,marginTop:20}}>v2.5</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
