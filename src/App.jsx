@@ -16,7 +16,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v2.8</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v2.9</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -285,6 +285,8 @@ function AppInner(){
 
   const loadData=useCallback(async(uid)=>{
     setLoading(true);setLoadError(null);
+    // Safety timeout: never stay stuck on loading screen
+    const safetyTimer=setTimeout(()=>{setLoading(false);},15000);
     try{
       // Phase 1: ALL direct supabase queries (no helper functions)
       const r1=await Promise.allSettled([supabase.from('profiles').select('*'),supabase.from('overtimes').select('*').order('work_date',{ascending:false}),supabase.from('leaves').select('*').order('created_at',{ascending:false}),supabase.from('buildings').select('*').order('name')]);
@@ -296,7 +298,7 @@ function AppInner(){
       const fp=profs.find(p=>p.id===uid);setProfile(fp||null);
       if(fp&&blds.length>0&&!selBuilding){setSelBuilding(fp.building_id||blds[0]?.id||null);}
       if(!fp&&profs.length===0)setLoadError("Veri yüklenemedi.");
-    }catch(err){setLoadError("Bağlantı hatası");}finally{setLoading(false);}
+    }catch(err){setLoadError("Bağlantı hatası");}finally{clearTimeout(safetyTimer);setLoading(false);}
     // Phase 2: Secondary data (faults, materials, stock) - loads in background
     try{
       const r2=await Promise.allSettled([supabase.from('faults').select('*').order('detected_date',{ascending:false}),supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),supabase.from('fault_votes').select('*'),supabase.from('materials').select('*').order('name'),supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}).limit(200)]);
@@ -314,7 +316,7 @@ function AppInner(){
       try{const{data,error}=await supabase.auth.getSession();if(!m)return;if(error){setLoading(false);return;}const s=data?.session||null;setSession(s);if(s?.user?.id)await loadData(s.user.id);else setLoading(false);}
       catch(e){if(m){setLoading(false);setLoadError("Oturum hatası");}}
     };
-    try{const{data}=supabase.auth.onAuthStateChange((_,s)=>{if(!m)return;setSession(s);if(s?.user?.id)loadData(s.user.id);else{setProfile(null);setLoading(false);}});sub=data?.subscription;}catch(e){}
+    try{const{data}=supabase.auth.onAuthStateChange((event,s)=>{if(!m)return;setSession(s);if(event==='SIGNED_IN'&&s?.user?.id)loadData(s.user.id);else if(event==='SIGNED_OUT'){setProfile(null);setLoading(false);}});sub=data?.subscription;}catch(e){}
     init();return()=>{m=false;try{sub?.unsubscribe();}catch(e){}};
   },[loadData]);
 
@@ -569,7 +571,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v2.8</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v2.9</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
