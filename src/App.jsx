@@ -616,10 +616,11 @@ export default function App(){
   const renderFaults=()=>{
     const activeFaults=bFaults.filter(f=>f.status==="active");
     const resolvedFaults=bFaults.filter(f=>f.status==="resolved");
-    const list=isAdmin?(faultTab==="active"?activeFaults:resolvedFaults):activeFaults;
+    const canSeeResolved=isAdmin||isViewer;
+    const list=canSeeResolved?(faultTab==="active"?activeFaults:resolvedFaults):activeFaults;
     return(<div>
       <div style={S.sec}><span>🔧</span> Arızalı Envanter</div>
-      {isAdmin?<div style={{display:"flex",gap:8,marginBottom:12}}>
+      {canSeeResolved?<div style={{display:"flex",gap:8,marginBottom:12}}>
         <button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="active"?C.red:C.border}`,background:faultTab==="active"?C.redD:"transparent",color:faultTab==="active"?C.red:C.muted,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>setFaultTab("active")}>🔴 Aktif ({activeFaults.length})</button>
         <button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="resolved"?C.green:C.border}`,background:faultTab==="resolved"?C.greenD:"transparent",color:faultTab==="resolved"?C.green:C.muted,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>setFaultTab("resolved")}>✅ Çözülen ({resolvedFaults.length})</button>
       </div>:<div style={{fontSize:12,color:C.dim,marginBottom:12}}>🔴 {activeFaults.length} aktif arıza</div>}
@@ -762,7 +763,7 @@ export default function App(){
         {faultForm.photos.map((p,i)=><div key={i} style={{position:"relative"}}><img src={p} alt="" style={{width:80,height:80,objectFit:"cover",borderRadius:10}}/><button onClick={()=>{setFaultForm(prev=>({...prev,photos:prev.photos.filter((_,j)=>j!==i)}));setFaultPhotoFiles(prev=>prev.filter((_,j)=>j!==i));}} style={{position:"absolute",top:-6,right:-6,width:20,height:20,borderRadius:10,background:C.red,color:"#fff",border:"none",fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button></div>)}
         <div style={{width:80,height:80,borderRadius:10,border:`2px dashed ${C.border}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:24,color:C.muted}} onClick={()=>faultPhotoRef.current?.click()}>+</div>
       </div>
-      <input ref={faultPhotoRef} type="file" accept="image/*" multiple style={{display:"none"}} onChange={handleFaultPhoto}/>
+      <input ref={faultPhotoRef} type="file" multiple style={{display:"none"}} onChange={handleFaultPhoto}/>
 
       {/* Inline Services - only for service type */}
       {faultForm.fault_type==="service"&&<div style={{marginBottom:12}}>
@@ -1191,7 +1192,7 @@ export default function App(){
             <span style={{color:leaveDoc?C.green:C.muted}}>{leaveDoc?"✓ Belge yüklendi":"Fotoğraf çekin veya seçin..."}</span><span style={{fontSize:18}}>📄</span>
           </div>
           {leaveDoc&&<img src={leaveDoc} alt="" style={{width:"100%",maxHeight:160,objectFit:"cover",borderRadius:10,marginBottom:8}}/>}
-          <input ref={leaveDocRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>handleLeaveDoc(e,setLeaveDoc,setLeaveDocFile)}/>
+          <input ref={leaveDocRef} type="file"  style={{display:"none"}} onChange={e=>handleLeaveDoc(e,setLeaveDoc,setLeaveDocFile)}/>
         </div>
       </div>}
       {isSel&&<div>
@@ -1220,7 +1221,7 @@ export default function App(){
           <span style={{color:hourlyLeaveDoc?C.green:C.muted}}>{hourlyLeaveDoc?"✓ Belge yüklendi":"Fotoğraf çekin veya seçin..."}</span><span style={{fontSize:18}}>📄</span>
         </div>
         {hourlyLeaveDoc&&<img src={hourlyLeaveDoc} alt="" style={{width:"100%",maxHeight:160,objectFit:"cover",borderRadius:10,marginBottom:8}}/>}
-        <input ref={hourlyLeaveDocRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>handleLeaveDoc(e,setHourlyLeaveDoc,setHourlyLeaveDocFile)}/>
+        <input ref={hourlyLeaveDocRef} type="file"  style={{display:"none"}} onChange={e=>handleLeaveDoc(e,setHourlyLeaveDoc,setHourlyLeaveDocFile)}/>
         <button style={S.btn(C.blue)} onClick={submitHourlyLeave} disabled={submitting}>{submitting?"Gönderiliyor...":"🕐 Saatlik İzin Gönder"}</button>
         <button style={S.btn(C.border,C.text)} onClick={()=>{setHourlyMode(false);setHourlyLeaveDoc(null);setHourlyLeaveDocFile(null);}}>İptal</button>
       </div>}
@@ -1302,8 +1303,8 @@ export default function App(){
       {otForm.endTime&&<div style={S.lawBox}><div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:11,color:C.dim}}>Mesai</div><div style={{fontSize:24,fontWeight:800,color:liveOTH>0?C.accent:C.red}}>{liveOTH}s</div></div><div style={{fontSize:20,color:C.dim,display:"flex",alignItems:"center"}}>→</div><div style={{textAlign:"right"}}><div style={{fontSize:11,color:C.dim}}>Izin (x1.5)</div><div style={{fontSize:24,fontWeight:800,color:C.purple}}>{liveLH}s</div></div></div></div>}
       <div style={S.lbl}>📷 Fotoğraflar (2 zorunlu)</div>
       <div style={{display:"flex",gap:10,marginBottom:12,justifyContent:"space-between"}}>
-        <div style={S.pBox(!!otForm.photoBefore)} onClick={()=>beforeRef.current?.click()}><div style={S.pBoxI}>{otForm.photoBefore?<><img src={otForm.photoBefore} alt="" style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:10,position:"absolute",top:0,left:0}}/><div style={{position:"absolute",bottom:6,left:6,fontSize:10,background:"rgba(0,0,0,0.7)",padding:"2px 6px",borderRadius:4,color:C.orange,fontWeight:700,zIndex:1}}>ONCE ✓</div></>:<><div style={{fontSize:28}}>📷</div><div style={{fontSize:11,color:C.orange,fontWeight:600}}>BASLANGIC</div></>}</div><input ref={beforeRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>handlePhoto(e,"before")}/></div>
-        <div style={S.pBox(!!otForm.photoAfter)} onClick={()=>afterRef.current?.click()}><div style={S.pBoxI}>{otForm.photoAfter?<><img src={otForm.photoAfter} alt="" style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:10,position:"absolute",top:0,left:0}}/><div style={{position:"absolute",bottom:6,left:6,fontSize:10,background:"rgba(0,0,0,0.7)",padding:"2px 6px",borderRadius:4,color:C.green,fontWeight:700,zIndex:1}}>SONRA ✓</div></>:<><div style={{fontSize:28}}>📷</div><div style={{fontSize:11,color:C.green,fontWeight:600}}>BITIS</div></>}</div><input ref={afterRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>handlePhoto(e,"after")}/></div>
+        <div style={S.pBox(!!otForm.photoBefore)} onClick={()=>beforeRef.current?.click()}><div style={S.pBoxI}>{otForm.photoBefore?<><img src={otForm.photoBefore} alt="" style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:10,position:"absolute",top:0,left:0}}/><div style={{position:"absolute",bottom:6,left:6,fontSize:10,background:"rgba(0,0,0,0.7)",padding:"2px 6px",borderRadius:4,color:C.orange,fontWeight:700,zIndex:1}}>ONCE ✓</div></>:<><div style={{fontSize:28}}>📷</div><div style={{fontSize:11,color:C.orange,fontWeight:600}}>BASLANGIC</div></>}</div><input ref={beforeRef} type="file"  style={{display:"none"}} onChange={e=>handlePhoto(e,"before")}/></div>
+        <div style={S.pBox(!!otForm.photoAfter)} onClick={()=>afterRef.current?.click()}><div style={S.pBoxI}>{otForm.photoAfter?<><img src={otForm.photoAfter} alt="" style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:10,position:"absolute",top:0,left:0}}/><div style={{position:"absolute",bottom:6,left:6,fontSize:10,background:"rgba(0,0,0,0.7)",padding:"2px 6px",borderRadius:4,color:C.green,fontWeight:700,zIndex:1}}>SONRA ✓</div></>:<><div style={{fontSize:28}}>📷</div><div style={{fontSize:11,color:C.green,fontWeight:600}}>BITIS</div></>}</div><input ref={afterRef} type="file"  style={{display:"none"}} onChange={e=>handlePhoto(e,"after")}/></div>
       </div>
       <div style={S.lbl}>Açıklama (min 20 karakter)</div>
       <textarea ref={descRef} style={S.ta} placeholder="Yapılan işi detaylı açıklayın..." defaultValue={otForm.desc} onChange={e=>setOtForm(prev=>({...prev,desc:e.target.value}))}/>
