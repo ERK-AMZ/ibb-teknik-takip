@@ -16,7 +16,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v2.7</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v2.8</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -547,6 +547,12 @@ function AppInner(){
   const allPendCount=allPendOTs.length+allPendLVs.length;
   const liveOTH=calcOT(otForm.startTime,otForm.endTime,otForm.otType),liveLH=calcLH(liveOTH);
 
+  // Vote system hooks - MUST be before any early returns (React hooks rules)
+  const currentWeek=getVoteWeek();
+  const votePeriod=getVotePeriodInfo();
+  const activeFaultsAll=useMemo(()=>bFaults.filter(f=>f.status==="active"),[bFaults]);
+  const myPendingVotes=useMemo(()=>{if(!profile)return[];return activeFaultsAll.filter(f=>!faultVotes.some(v=>v.fault_id===f.id&&v.personnel_id===profile.id&&v.vote_week===currentWeek));},[activeFaultsAll,faultVotes,profile,currentWeek]);
+
   // Diagnostic: log state types so ErrorBoundary can display them
   useEffect(()=>{
     try{
@@ -559,13 +565,11 @@ function AppInner(){
       d.push("faultVotes: "+(Array.isArray(faultVotes)?"Array("+faultVotes.length+")":typeof faultVotes+" "+String(faultVotes).slice(0,50)));
       d.push("materials: "+(Array.isArray(materials)?"Array("+materials.length+")":typeof materials+" "+String(materials).slice(0,50)));
       d.push("profile: "+(profile?"id:"+String(profile.id).slice(0,8)+".. name:"+String(profile.full_name):"null"));
-      if(Array.isArray(overtimes)&&overtimes[0]){const o=overtimes[0];d.push("ot[0] keys:"+Object.keys(o).join(","));d.push("ot[0].hours type:"+typeof o.hours+" val:"+String(o.hours));}
-      if(Array.isArray(leavesState)&&leavesState[0]){const l=leavesState[0];d.push("lv[0] keys:"+Object.keys(l).join(","));d.push("lv[0].dates type:"+typeof l.dates+" isArr:"+Array.isArray(l.dates));}
       window.__DIAG=d.join("\n");
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v2.7</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v2.8</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -622,10 +626,6 @@ function AppInner(){
   const canEditFault=isAdmin||isChef||isViewer;
   const canAddFault=true; // herkes arıza ekleyebilir
   const isOwnFault=(f)=>f?.created_by===profile?.id;
-  const currentWeek=getVoteWeek();
-  const votePeriod=getVotePeriodInfo();
-  const activeFaultsAll=useMemo(()=>bFaults.filter(f=>f.status==="active"),[bFaults]);
-  const myPendingVotes=useMemo(()=>{if(!profile)return[];return activeFaultsAll.filter(f=>!faultVotes.some(v=>v.fault_id===f.id&&v.personnel_id===profile.id&&v.vote_week===currentWeek));},[activeFaultsAll,faultVotes,profile,currentWeek]);
 
   async function submitFault(){
     if(!faultForm.title||!faultForm.location){setToast("⚠ Başlık ve konum zorunlu");return;}
