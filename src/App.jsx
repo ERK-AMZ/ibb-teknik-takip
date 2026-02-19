@@ -606,7 +606,10 @@ export default function App(){
     setSubmitting(true);
     try{
       const{data:existing}=await supabase.from('fault_votes').select('id').eq('fault_id',faultId).eq('personnel_id',profile.id).eq('vote_week',currentWeek).single();
-      if(existing){await supabase.from('fault_votes').update({vote}).eq('id',existing.id);}
+      if(existing){
+        if(isPerso){setToast("🔒 Oyunuz zaten kaydedildi, değiştirilemez");setSubmitting(false);return;}
+        await supabase.from('fault_votes').update({vote}).eq('id',existing.id);
+      }
       else{await supabase.from('fault_votes').insert({fault_id:faultId,personnel_id:profile.id,vote,vote_week:currentWeek});}
       await fetchFaultVotes();setToast(vote==="continues"?"🔴 Arıza devam ediyor olarak kaydedildi":"🟢 Arıza giderildi olarak kaydedildi");
     }catch(e){setToast("Hata: "+(e?.message||""));}
@@ -727,9 +730,10 @@ export default function App(){
           <button style={{flex:1,padding:12,borderRadius:10,background:C.greenD,border:`2px solid ${C.green}44`,color:C.green,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>submitVote(f.id,"resolved")} disabled={submitting}>🟢 Arıza Giderildi</button>
         </div>:<div style={{textAlign:"center",padding:8,background:myVote.vote==="continues"?C.redD:C.greenD,borderRadius:8}}>
           <span style={{color:myVote.vote==="continues"?C.red:C.green,fontWeight:700}}>{myVote.vote==="continues"?"🔴 Devam ediyor olarak oy kullandınız":"🟢 Giderildi olarak oy kullandınız"}</span>
-          <div style={{marginTop:6}}><button style={{fontSize:11,color:C.muted,background:"none",border:"none",textDecoration:"underline",cursor:"pointer"}} onClick={()=>submitVote(f.id,myVote.vote==="continues"?"resolved":"continues")}>Oyumu değiştir</button></div>
+          {canEditFault&&<div style={{marginTop:6}}><button style={{fontSize:11,color:C.muted,background:"none",border:"none",textDecoration:"underline",cursor:"pointer"}} onClick={()=>submitVote(f.id,myVote.vote==="continues"?"resolved":"continues")}>Oyumu değiştir</button></div>}
+          {isPerso&&<div style={{fontSize:10,color:C.muted,marginTop:6}}>🔒 Oyunuz kaydedildi</div>}
         </div>}
-        <div style={{marginTop:10}}>
+        {canEditFault&&<div style={{marginTop:10}}>
           <div style={{fontSize:11,color:C.muted,fontWeight:600,marginBottom:6}}>Bu hafta oylar ({weekVotes.length}/{allActiveProfiles.length})</div>
           {allActiveProfiles.map(p=>{
             const v=weekVotes.find(vt=>vt.personnel_id===p.id);
@@ -739,7 +743,7 @@ export default function App(){
               :<div style={{fontSize:11,color:C.orange}}>⏳ Oy yok</div>}
             </div>);
           })}
-        </div>
+        </div>}
       </div>}
 
       {/* Edit / Admin actions */}
