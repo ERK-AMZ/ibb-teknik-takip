@@ -539,6 +539,8 @@ export default function App(){
 
   // ===== FAULT SYSTEM =====
   const canEditFault=isAdmin||isChef||isViewer;
+  const canAddFault=true; // herkes arıza ekleyebilir
+  const isOwnFault=(f)=>f?.created_by===profile?.id;
   const currentWeek=getVoteWeek();
 
   async function submitFault(){
@@ -546,21 +548,29 @@ export default function App(){
     if(!faultForm.detected_date){setToast("⚠ Tespit tarihi seçin");return;}
     setSubmitting(true);
     try{
-      let photoUrls=[];
+      let photoUrls=[...(faultForm.photos||[])];
       for(const file of faultPhotoFiles){
         const r=await uploadPhoto(file,'fault-photos');
         if(r?.url)photoUrls.push(r.url);
       }
-      const{data:inserted}=await supabase.from('faults').insert({title:faultForm.title,location:faultForm.location,description:faultForm.description||"",photos:photoUrls,detected_date:faultForm.detected_date,fault_type:faultForm.fault_type,material_needed:faultForm.material_needed||"",building_id:selBuilding,created_by:profile.id}).select().single();
-      if(inserted&&faultForm.services.length>0){
-        const svcRows=faultForm.services.map(s=>({fault_id:inserted.id,service_name:s.service_name,visit_date:s.visit_date,notes:s.notes||"",created_by:profile.id}));
-        await supabase.from('fault_services').insert(svcRows);
-        await fetchFaultServices();
+      if(faultForm.editId){
+        // Edit mode
+        await supabase.from('faults').update({title:faultForm.title,location:faultForm.location,description:faultForm.description||"",photos:photoUrls,detected_date:faultForm.detected_date,fault_type:faultForm.fault_type,material_needed:faultForm.material_needed||""}).eq('id',faultForm.editId);
+        await fetchFaults();
+        setToast("✓ Arıza güncellendi");
+      } else {
+        // New fault
+        const{data:inserted}=await supabase.from('faults').insert({title:faultForm.title,location:faultForm.location,description:faultForm.description||"",photos:photoUrls,detected_date:faultForm.detected_date,fault_type:faultForm.fault_type,material_needed:faultForm.material_needed||"",building_id:selBuilding,created_by:profile.id}).select().single();
+        if(inserted&&faultForm.services.length>0){
+          const svcRows=faultForm.services.map(s=>({fault_id:inserted.id,service_name:s.service_name,visit_date:s.visit_date,notes:s.notes||"",created_by:profile.id}));
+          await supabase.from('fault_services').insert(svcRows);
+          await fetchFaultServices();
+        }
+        await fetchFaults();
+        setToast("✓ Arıza kaydedildi");
       }
-      await fetchFaults();
       setFaultForm({title:"",location:"",description:"",detected_date:"",photos:[],services:[],fault_type:"service",material_needed:""});
       setFaultPhotoFiles([]);setModNewFault(false);
-      setToast("✓ Arıza kaydedildi");
     }catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
   }
@@ -624,7 +634,7 @@ export default function App(){
         <button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="active"?C.red:C.border}`,background:faultTab==="active"?C.redD:"transparent",color:faultTab==="active"?C.red:C.muted,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>setFaultTab("active")}>🔴 Aktif ({activeFaults.length})</button>
         <button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="resolved"?C.green:C.border}`,background:faultTab==="resolved"?C.greenD:"transparent",color:faultTab==="resolved"?C.green:C.muted,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>setFaultTab("resolved")}>✅ Çözülen ({resolvedFaults.length})</button>
       </div>:<div style={{fontSize:12,color:C.dim,marginBottom:12}}>🔴 {activeFaults.length} aktif arıza</div>}
-      {canEditFault&&<button style={S.btn(C.accent)} onClick={()=>{setFaultForm({title:"",location:"",description:"",detected_date:todayStr(),photos:[],services:[],fault_type:"service",material_needed:""});setFaultPhotoFiles([]);setModNewFault(true);}}>+ Yeni Arıza Ekle</button>}
+      {canAddFault&&<button style={S.btn(C.accent)} onClick={()=>{setFaultForm({title:"",location:"",description:"",detected_date:todayStr(),photos:[],services:[],fault_type:"service",material_needed:""});setFaultPhotoFiles([]);setModNewFault(true);}}>+ Yeni Arıza Ekle</button>}
       {list.length===0&&<div style={S.emp}>{faultTab==="active"?"Aktif arıza yok ✓":"Çözülen arıza yok"}</div>}
       {list.map(f=>{
         const days=daysSince(f.detected_date);
@@ -689,7 +699,7 @@ export default function App(){
         {sp&&<div style={{fontSize:10,color:C.muted,marginTop:4}}>Ekleyen: {sp.full_name}</div>}
       </div>);})}</div>}
 
-      {canEditFault&&!modAddService&&<button style={S.btn(C.blueD,C.blue)} onClick={()=>{setServiceForm({service_name:"",visit_date:todayStr(),notes:""});setModAddService(true);}}>+ Servis Kaydı Ekle</button>}
+      {(canEditFault||isOwnFault(f))&&!modAddService&&<button style={S.btn(C.blueD,C.blue)} onClick={()=>{setServiceForm({service_name:"",visit_date:todayStr(),notes:""});setModAddService(true);}}>+ Servis Kaydı Ekle</button>}
       {modAddService&&<div style={{background:C.bg,borderRadius:12,padding:14,marginBottom:12,border:`1px solid ${C.border}`}}>
         <div style={{fontSize:14,fontWeight:700,marginBottom:10,color:C.blue}}>🔧 Yeni Servis Kaydı</div>
         <div style={S.lbl}>Servis Veren Firma</div>
@@ -725,6 +735,7 @@ export default function App(){
       </div>}
 
       {/* Edit / Admin actions */}
+      {isOwnFault(f)&&f.status==="active"&&<button style={S.btn(C.accentD,C.accent)} onClick={()=>{setFaultForm({title:f.title,location:f.location,description:f.description||"",detected_date:f.detected_date,photos:f.photos||[],services:[],fault_type:f.fault_type||"service",material_needed:f.material_needed||"",editId:f.id});setFaultPhotoFiles([]);setSelFault(null);setModNewFault(true);}}>✏️ Arızayı Düzenle</button>}
       {canEditFault&&f.status==="active"&&<button style={S.btn(C.greenD,C.green)} onClick={async()=>{await updateFaultData(f.id,{status:"resolved",resolved_date:todayStr()});setSelFault({...f,status:"resolved"});}}>✅ Arıza Çözüldü Olarak İşaretle</button>}
       {canEditFault&&f.status==="resolved"&&<button style={S.btn(C.orangeD,C.orange)} onClick={async()=>{await updateFaultData(f.id,{status:"active",resolved_date:null});setSelFault({...f,status:"active"});}}>🔄 Tekrar Aktif Yap</button>}
       {isAdmin&&<>{deleteConfirm===f.id?<div style={{background:C.redD,borderRadius:10,padding:14,marginTop:8}}><div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:8,textAlign:"center"}}>⚠ Bu arızayı silmek istediğinize emin misiniz?</div><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.red),flex:1}} onClick={()=>deleteFault(f.id)} disabled={submitting}>🗑 Evet, Sil</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setDeleteConfirm(null)}>İptal</button></div></div>:<button style={S.btn(C.redD,C.red)} onClick={()=>setDeleteConfirm(f.id)}>🗑 Arızayı Sil</button>}</>}
@@ -735,7 +746,7 @@ export default function App(){
   const renderNewFault=()=>{
     if(!modNewFault)return null;
     return(<div style={S.mod} onClick={()=>setModNewFault(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
-      <div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:4}}>Yeni Arıza Kaydı</div><div style={{fontSize:12,color:C.dim,marginBottom:16}}>Arızalı envanter bilgilerini girin</div>
+      <div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:4}}>{faultForm.editId?"✏️ Arıza Düzenle":"Yeni Arıza Kaydı"}</div><div style={{fontSize:12,color:C.dim,marginBottom:16}}>{faultForm.editId?"Arıza bilgilerini güncelleyin":"Arızalı envanter bilgilerini girin"}</div>
       <div style={S.lbl}>Arıza Başlığı</div>
       <input style={S.inp} placeholder="Örn: Bayan WC kabin camı kırık" value={faultForm.title} onChange={e=>setFaultForm(p=>({...p,title:e.target.value}))}/>
       <div style={S.lbl}>Konum</div>
@@ -787,7 +798,7 @@ export default function App(){
         </div>)}
       </div>}
 
-      <button style={S.btn(C.accent)} onClick={submitFault} disabled={submitting}>{submitting?"Kaydediliyor...":"Arıza Kaydet"}</button>
+      <button style={S.btn(C.accent)} onClick={submitFault} disabled={submitting}>{submitting?"Kaydediliyor...":faultForm.editId?"Güncelle":"Arıza Kaydet"}</button>
       <button style={S.btn(C.border,C.text)} onClick={()=>setModNewFault(false)}>İptal</button>
     </div></div>);
   };
