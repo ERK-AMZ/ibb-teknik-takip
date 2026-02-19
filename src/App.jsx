@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { supabase, signIn, signOut, getProfiles, getOvertimes, getLeaves, createOvertime, updateOvertime, createLeave, updateLeave, uploadPhoto, subscribeToChanges } from './lib/supabase';
 
 const OT_MULT=1.5,WORK_END=17;
 function calcOT(st,et,type){if(!st||!et)return 0;const[sh,sm]=st.split(":").map(Number),[eh,em]=et.split(":").map(Number);let s=sh*60+sm,e=eh*60+em;if(e<=s)e+=1440;if(type==="daytime"){return Math.round(((e-s)/60)*10)/10;}const eff=Math.max(s,WORK_END*60);return eff>=e?0:Math.round(((e-eff)/60)*10)/10;}
 function calcLH(h){return Math.round(h*OT_MULT*10)/10;}
+function compressImg(file,maxW=1200,q=0.7){return new Promise((res)=>{const img=new Image();img.onload=()=>{let w=img.width,h=img.height;if(w>maxW){h=Math.round(h*(maxW/w));w=maxW;}if(h>maxW){w=Math.round(w*(maxW/h));h=maxW;}const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);c.toBlob(b=>{if(b)res(new File([b],file.name.replace(/\.\w+$/,'.jpg'),{type:'image/jpeg'}));else res(file);}, 'image/jpeg',q);};img.onerror=()=>res(file);img.src=URL.createObjectURL(file);});}
 function fD(d){if(!d)return"";try{return new Date(d+'T00:00:00').toLocaleDateString("tr-TR",{day:"numeric",month:"long",year:"numeric"});}catch{return d;}}
 function fDS(d){if(!d)return"";try{return new Date(d+'T00:00:00').toLocaleDateString("tr-TR",{day:"numeric",month:"short"});}catch{return d;}}
 function sColor(s){return s==="approved"?"#22c55e":s==="pending_chef"?"#f59e0b":s==="pending_manager"?"#3b82f6":s==="rejected"?"#ef4444":"#94a3b8";}
@@ -229,23 +230,26 @@ export default function App(){
   const loadData=useCallback(async(uid)=>{
     setLoading(true);setLoadError(null);
     try{
-      const r=await Promise.allSettled([supabase.from('profiles').select('*'),getOvertimes(),getLeaves(),supabase.from('faults').select('*').order('detected_date',{ascending:false}),supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),supabase.from('fault_votes').select('*'),supabase.from('materials').select('*').order('name'),supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}),supabase.from('buildings').select('*').order('name')]);
-      const profs=r[0].status==="fulfilled"?(r[0].value?.data||[]):[];
-      const ots=r[1].status==="fulfilled"?(r[1].value||[]):[];
-      const lvs=r[2].status==="fulfilled"?(r[2].value||[]):[];
-      const fts=r[3].status==="fulfilled"?(r[3].value?.data||[]):[];
-      const fss=r[4].status==="fulfilled"?(r[4].value?.data||[]):[];
-      const fvs=r[5].status==="fulfilled"?(r[5].value?.data||[]):[];
-      const mats=r[6].status==="fulfilled"?(r[6].value?.data||[]):[];
-      const smvs=r[7].status==="fulfilled"?(r[7].value?.data||[]):[];
-      const blds=r[8].status==="fulfilled"?(r[8].value?.data||[]):[];
-      setProfilesState(profs);setOvertimesState(ots);setLeavesState(lvs);
-      setFaults(fts);setFaultServices(fss);setFaultVotes(fvs);
-      setMaterials(mats);setStockMovements(smvs);setBuildings(blds);
+      // Phase 1: Critical data (profiles, buildings, overtimes, leaves) - needed for first render
+      const r1=await Promise.allSettled([supabase.from('profiles').select('*'),getOvertimes(),getLeaves(),supabase.from('buildings').select('*').order('name')]);
+      const profs=r1[0].status==="fulfilled"?(r1[0].value?.data||[]):[];
+      const ots=r1[1].status==="fulfilled"?(r1[1].value||[]):[];
+      const lvs=r1[2].status==="fulfilled"?(r1[2].value||[]):[];
+      const blds=r1[3].status==="fulfilled"?(r1[3].value?.data||[]):[];
+      setProfilesState(profs);setOvertimesState(ots);setLeavesState(lvs);setBuildings(blds);
       const fp=profs.find(p=>p.id===uid);setProfile(fp||null);
       if(fp&&blds.length>0&&!selBuilding){setSelBuilding(fp.building_id||blds[0]?.id||null);}
       if(!fp&&profs.length===0)setLoadError("Veri yüklenemedi.");
     }catch(err){setLoadError("Bağlantı hatası");}finally{setLoading(false);}
+    // Phase 2: Secondary data (faults, materials, stock) - loads in background
+    try{
+      const r2=await Promise.allSettled([supabase.from('faults').select('*').order('detected_date',{ascending:false}),supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),supabase.from('fault_votes').select('*'),supabase.from('materials').select('*').order('name'),supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}).limit(200)]);
+      if(r2[0].status==="fulfilled")setFaults(r2[0].value?.data||[]);
+      if(r2[1].status==="fulfilled")setFaultServices(r2[1].value?.data||[]);
+      if(r2[2].status==="fulfilled")setFaultVotes(r2[2].value?.data||[]);
+      if(r2[3].status==="fulfilled")setMaterials(r2[3].value?.data||[]);
+      if(r2[4].status==="fulfilled")setStockMovements(r2[4].value?.data||[]);
+    }catch(e){}
   },[]);
 
   useEffect(()=>{
@@ -278,16 +282,19 @@ export default function App(){
   const isPerso=profile?.user_role==="personnel";
   const canApprove=isAdmin||isChef;
   const canSwitchBuilding=isAdmin||isChef;
-  // Building-scoped data
-  const bProfiles=profiles.filter(p=>!selBuilding||p.building_id===selBuilding);
-  const bOvertimes=overtimes.filter(o=>{const p=profiles.find(pp=>pp.id===o.personnel_id);return !selBuilding||p?.building_id===selBuilding;});
-  const bLeaves=leavesState.filter(l=>{const p=profiles.find(pp=>pp.id===l.personnel_id);return !selBuilding||p?.building_id===selBuilding;});
-  const bFaults=faults.filter(f=>!selBuilding||f.building_id===selBuilding);
-  const bMaterials=materials.filter(m=>!selBuilding||m.building_id===selBuilding);
-  const bStockMovements=stockMovements.filter(mv=>{const mat=materials.find(m=>m.id===mv.material_id);return !selBuilding||mat?.building_id===selBuilding;});
-  const curBuildingName=buildings.find(b=>b.id===selBuilding)?.short_name||"";
+  // O(1) profile lookup map
+  const profileMap=useMemo(()=>{const m=new Map();profiles.forEach(p=>m.set(p.id,p));return m;},[profiles]);
+  // Building-scoped data (memoized)
+  const bProfiles=useMemo(()=>profiles.filter(p=>!selBuilding||p.building_id===selBuilding),[profiles,selBuilding]);
+  const bOvertimes=useMemo(()=>overtimes.filter(o=>{const p=profileMap.get(o.personnel_id);return !selBuilding||p?.building_id===selBuilding;}),[overtimes,profileMap,selBuilding]);
+  const bLeaves=useMemo(()=>leavesState.filter(l=>{const p=profileMap.get(l.personnel_id);return !selBuilding||p?.building_id===selBuilding;}),[leavesState,profileMap,selBuilding]);
+  const bFaults=useMemo(()=>faults.filter(f=>!selBuilding||f.building_id===selBuilding),[faults,selBuilding]);
+  const bMaterials=useMemo(()=>materials.filter(m=>!selBuilding||m.building_id===selBuilding),[materials,selBuilding]);
+  const materialMap=useMemo(()=>{const m=new Map();materials.forEach(mt=>m.set(mt.id,mt));return m;},[materials]);
+  const bStockMovements=useMemo(()=>stockMovements.filter(mv=>{const mat=materialMap.get(mv.material_id);return !selBuilding||mat?.building_id===selBuilding;}),[stockMovements,materialMap,selBuilding]);
+  const curBuildingName=useMemo(()=>buildings.find(b=>b.id===selBuilding)?.short_name||"",[buildings,selBuilding]);
 
-  function getU(id){return profiles.find(u=>u.id===id);}
+  function getU(id){return profileMap.get(id);}
   // Building-scoped helpers (for dashboard/approvals - shows selected building's data)
   function totLH(pid){return bOvertimes.filter(o=>o.personnel_id===pid&&o.status==="approved").reduce((s,o)=>s+Number(o.leave_hours||0),0);}
   function totUsedLV(pid){return bLeaves.filter(l=>l.personnel_id===pid&&["approved","pending_chef","pending_manager"].includes(l.status)).reduce((s,l)=>s+(l.total_hours||0),0);}
@@ -340,9 +347,9 @@ export default function App(){
     setSubmitting(false);
   }
 
-  function handlePhoto(e,type){
+  async function handlePhoto(e,type){
     const file=e.target.files?.[0];if(!file)return;
-    try{const reader=new FileReader();reader.onload=(ev)=>{setOtForm(prev=>({...prev,[type==="before"?"photoBefore":"photoAfter"]:ev.target.result,[type==="before"?"fileB":"fileA"]:file}));};reader.onerror=()=>{setToast("Fotoğraf okunamadı");};reader.readAsDataURL(file);}catch(e){setToast("Foto yüklenemedi");}
+    try{const compressed=await compressImg(file);const reader=new FileReader();reader.onload=(ev)=>{setOtForm(prev=>({...prev,[type==="before"?"photoBefore":"photoAfter"]:ev.target.result,[type==="before"?"fileB":"fileA"]:compressed}));};reader.onerror=()=>{setToast("Fotoğraf okunamadı");};reader.readAsDataURL(compressed);}catch(e){setToast("Foto yüklenemedi");}
     if(e.target)e.target.value="";
   }
 
@@ -388,9 +395,9 @@ export default function App(){
     setSubmitting(false);
   }
 
-  function handleLeaveDoc(e,setDoc,setFile){
+  async function handleLeaveDoc(e,setDoc,setFile){
     const file=e.target.files?.[0];if(!file)return;
-    try{const reader=new FileReader();reader.onload=(ev)=>{setDoc(ev.target.result);setFile(file);};reader.onerror=()=>{setToast("Fotoğraf okunamadı");};reader.readAsDataURL(file);}catch(e){setToast("Fotoğraf yüklenemedi");}
+    try{const compressed=await compressImg(file);const reader=new FileReader();reader.onload=(ev)=>{setDoc(ev.target.result);setFile(compressed);};reader.onerror=()=>{setToast("Fotoğraf okunamadı");};reader.readAsDataURL(compressed);}catch(e){setToast("Fotoğraf yüklenemedi");}
     if(e.target)e.target.value="";
   }
 
@@ -476,11 +483,11 @@ export default function App(){
     fInp:{width:"100%",padding:"12px",borderRadius:10,border:`1px solid ${C.border}`,background:C.bg,color:C.text,fontSize:16,boxSizing:"border-box",marginBottom:10,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"},
   };
 
-  const pendOTs=bOvertimes.filter(o=>(isChef&&o.status==="pending_chef")||(isAdmin&&["pending_chef","pending_manager"].includes(o.status)));
-  const pendLVs=bLeaves.filter(l=>(isChef&&l.status==="pending_chef")||(isAdmin&&["pending_chef","pending_manager"].includes(l.status)));
+  const pendOTs=useMemo(()=>bOvertimes.filter(o=>(isChef&&o.status==="pending_chef")||(isAdmin&&["pending_chef","pending_manager"].includes(o.status))),[bOvertimes,isChef,isAdmin]);
+  const pendLVs=useMemo(()=>bLeaves.filter(l=>(isChef&&l.status==="pending_chef")||(isAdmin&&["pending_chef","pending_manager"].includes(l.status))),[bLeaves,isChef,isAdmin]);
   const totPend=pendOTs.length+pendLVs.length;
-  const allPendOTs=bOvertimes.filter(o=>["pending_chef","pending_manager"].includes(o.status));
-  const allPendLVs=bLeaves.filter(l=>["pending_chef","pending_manager"].includes(l.status));
+  const allPendOTs=useMemo(()=>bOvertimes.filter(o=>["pending_chef","pending_manager"].includes(o.status)),[bOvertimes]);
+  const allPendLVs=useMemo(()=>bLeaves.filter(l=>["pending_chef","pending_manager"].includes(l.status)),[bLeaves]);
   const allPendCount=allPendOTs.length+allPendLVs.length;
   const liveOTH=calcOT(otForm.startTime,otForm.endTime,otForm.otType),liveLH=calcLH(liveOTH);
 
@@ -613,13 +620,14 @@ export default function App(){
     setSubmitting(false);
   }
 
-  function handleFaultPhoto(e){
+  async function handleFaultPhoto(e){
     const files=Array.from(e.target.files||[]);if(!files.length)return;
-    files.forEach(file=>{
+    for(const file of files){
+      const compressed=await compressImg(file);
       const reader=new FileReader();
-      reader.onload=(ev)=>{setFaultForm(p=>({...p,photos:[...p.photos,ev.target.result]}));setFaultPhotoFiles(p=>[...p,file]);};
-      reader.readAsDataURL(file);
-    });
+      reader.onload=(ev)=>{setFaultForm(p=>({...p,photos:[...p.photos,ev.target.result]}));setFaultPhotoFiles(p=>[...p,compressed]);};
+      reader.readAsDataURL(compressed);
+    }
     if(e.target)e.target.value="";
   }
 
