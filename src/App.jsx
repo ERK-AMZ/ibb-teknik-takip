@@ -16,7 +16,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v3.1</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v3.2</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -270,6 +270,7 @@ function AppInner(){
   const[calSel,setCalSel]=useState([]);
   const[calMode,setCalMode]=useState("view");
   const[calModId,setCalModId]=useState(null);
+  const[expandedPast,setExpandedPast]=useState(null);
 
   useEffect(()=>{if(toast){const t=setTimeout(()=>setToast(null),3500);return()=>clearTimeout(t);}},[toast]);
 
@@ -622,7 +623,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.1</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.2</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -658,7 +659,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.1</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.2</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -1407,8 +1408,84 @@ function AppInner(){
         <button style={S.btn(C.border,C.text)} onClick={()=>{setHourlyMode(false);setHourlyLeaveDoc(null);setHourlyLeaveDocFile(null);}}>İptal</button>
       </div>}
       {!isSel&&<div style={{marginTop:16}}>
-        <div style={S.sec}><span>🏖</span> İzin Talepleri</div>
-        {(isPerso?leavesState.filter(l=>l.personnel_id===profile.id):bLeaves).filter(l=>l.status!=="rejected").map(l=>{const p=getU(l.personnel_id);const dates=Array.isArray(l.dates)?l.dates:[];const isHourly=l.leave_type==="hourly";return(<div key={l.id} style={S.crd} onClick={()=>setSelLV(l)}><div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}><div>{!isPerso&&<div style={{fontSize:13,fontWeight:600,marginBottom:4}}>{p?.full_name}</div>}{isHourly?<div><div style={{...S.tag(C.blueD,C.blue),marginBottom:4}}>🕐 Saatlik İzin</div><div style={{fontSize:12,color:C.text}}>{fDS(dates[0])} • {l.leave_start_time?.slice(0,5)}-{l.leave_end_time?.slice(0,5)}</div></div>:<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{dates.map(d=><span key={d} style={S.tag(l.status==="approved"?C.greenD:C.orangeD,l.status==="approved"?C.green:C.orange)}>{fDS(d)}</span>)}</div>}{l.reason&&<div style={{fontSize:10,color:l.reason.includes("borc")?C.red:C.dim,marginTop:4}}>{l.reason.length>50?l.reason.slice(0,50)+"...":l.reason}</div>}</div><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:700}}>{isHourly?l.total_hours+"s":dates.length+"g"}</div><div style={S.tag(sColor(l.status)+"22",sColor(l.status))}>{sIcon(l.status)}</div>{l.leave_doc_url&&<div style={{fontSize:10,color:C.green,marginTop:2}}>📄</div>}</div></div>{!isHourly&&(isPerso||isAdmin)&&l.status!=="approved"&&<button style={{...S.btnS(C.orangeD,C.orange),marginTop:8,fontSize:11}} onClick={e=>{e.stopPropagation();startModLV(l);}}>🔄 Tarihleri Değiştir</button>}</div>);})}
+        {(()=>{
+          const today=todayStr();
+          const allLeaves=(isPerso?leavesState.filter(l=>l.personnel_id===profile.id):bLeaves).filter(l=>l.status!=="rejected");
+          // Future: at least one date >= today OR status is pending
+          const future=allLeaves.filter(l=>{
+            const dates=Array.isArray(l.dates)?l.dates:[];
+            const isPending=["pending_chef","pending_manager"].includes(l.status);
+            const hasFuture=dates.some(d=>d>=today);
+            const isHourly=l.leave_type==="hourly";
+            if(isHourly){return (dates[0]||"")>=today||isPending;}
+            return hasFuture||isPending;
+          });
+          // Past: all dates < today AND approved/used
+          const past=allLeaves.filter(l=>{
+            const dates=Array.isArray(l.dates)?l.dates:[];
+            const isPending=["pending_chef","pending_manager"].includes(l.status);
+            const isHourly=l.leave_type==="hourly";
+            if(isPending)return false;
+            if(isHourly)return (dates[0]||"")<today;
+            return dates.length>0&&dates.every(d=>d<today);
+          });
+          // Group past by person
+          const pastByPerson={};
+          past.forEach(l=>{const pid=l.personnel_id;if(!pastByPerson[pid])pastByPerson[pid]=[];pastByPerson[pid].push(l);});
+          return(<>
+            <div style={S.sec}><span>🏖</span> İzin Talepleri {future.length>0&&<span style={{color:C.orange,fontSize:12}}>({future.length})</span>}</div>
+            {future.length===0&&<div style={S.emp}>Bekleyen veya gelecek izin yok</div>}
+            {future.map(l=>{const p=getU(l.personnel_id);const dates=Array.isArray(l.dates)?l.dates:[];const isHourly=l.leave_type==="hourly";return(<div key={l.id} style={S.crd} onClick={()=>setSelLV(l)}><div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}><div>{!isPerso&&<div style={{fontSize:13,fontWeight:600,marginBottom:4}}>{p?.full_name}</div>}{isHourly?<div><div style={{...S.tag(C.blueD,C.blue),marginBottom:4}}>🕐 Saatlik İzin</div><div style={{fontSize:12,color:C.text}}>{fDS(dates[0])} • {l.leave_start_time?.slice(0,5)}-{l.leave_end_time?.slice(0,5)}</div></div>:<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{dates.map(d=><span key={d} style={S.tag(l.status==="approved"?C.greenD:C.orangeD,l.status==="approved"?C.green:C.orange)}>{fDS(d)}</span>)}</div>}{l.reason&&<div style={{fontSize:10,color:l.reason.includes("borc")?C.red:C.dim,marginTop:4}}>{l.reason.length>50?l.reason.slice(0,50)+"...":l.reason}</div>}</div><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:700}}>{isHourly?l.total_hours+"s":dates.length+"g"}</div><div style={S.tag(sColor(l.status)+"22",sColor(l.status))}>{sIcon(l.status)}</div>{l.leave_doc_url&&<div style={{fontSize:10,color:C.green,marginTop:2}}>📄</div>}</div></div>{!isHourly&&(isPerso||isAdmin)&&l.status!=="approved"&&<button style={{...S.btnS(C.orangeD,C.orange),marginTop:8,fontSize:11}} onClick={e=>{e.stopPropagation();startModLV(l);}}>🔄 Tarihleri Değiştir</button>}</div>);})}
+
+            {past.length>0&&<>
+              <div style={{...S.sec,marginTop:20}}><span>✅</span> İzin Kullananlar <span style={{color:C.green,fontSize:12}}>({Object.keys(pastByPerson).length} kişi)</span></div>
+              {Object.entries(pastByPerson).map(([pid,leaves])=>{
+                const p=getU(pid);
+                const totalDays=leaves.reduce((s,l)=>{const d=Array.isArray(l.dates)?l.dates:[];return s+(l.leave_type==="hourly"?0:d.length);},0);
+                const totalHourly=leaves.filter(l=>l.leave_type==="hourly").reduce((s,l)=>s+(l.total_hours||0),0);
+                const isExpanded=expandedPast===pid;
+                return(<div key={pid} style={{...S.crd,cursor:"pointer"}} onClick={()=>{setExpandedPast(isExpanded?null:pid);}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <div style={S.av(C.greenD,36)}>{ini(p?.full_name||"?")}</div>
+                      <div>
+                        <div style={{fontSize:14,fontWeight:600}}>{p?.full_name||"—"}</div>
+                        <div style={{fontSize:11,color:C.dim}}>{p?.role||""}</div>
+                      </div>
+                    </div>
+                    <div style={{textAlign:"right",display:"flex",alignItems:"center",gap:8}}>
+                      <div>
+                        {totalDays>0&&<div style={{fontSize:15,fontWeight:800,color:C.green}}>{totalDays}g</div>}
+                        {totalHourly>0&&<div style={{fontSize:12,fontWeight:700,color:C.blue}}>{totalHourly}s</div>}
+                      </div>
+                      <div style={{fontSize:16,color:C.dim,transition:"transform 0.2s",transform:isExpanded?"rotate(180deg)":"rotate(0deg)"}}>▼</div>
+                    </div>
+                  </div>
+                  {isExpanded&&<div style={{marginTop:12,borderTop:`1px solid ${C.border}`,paddingTop:12}} onClick={e=>e.stopPropagation()}>
+                    {leaves.sort((a,b)=>{const da=(Array.isArray(a.dates)?a.dates:[a.created_at])[0]||"";const db=(Array.isArray(b.dates)?b.dates:[b.created_at])[0]||"";return db.localeCompare(da);}).map(l=>{
+                      const dates=Array.isArray(l.dates)?l.dates:[];
+                      const isHourly=l.leave_type==="hourly";
+                      return(<div key={l.id} style={{background:C.bg,borderRadius:10,padding:10,marginBottom:8,border:`1px solid ${C.border}`}} onClick={()=>setSelLV(l)}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}>
+                          <div>
+                            {isHourly?<div><div style={{...S.tag(C.blueD,C.blue),marginBottom:4,display:"inline-block"}}>🕐 Saatlik</div><div style={{fontSize:12}}>{fDS(dates[0])} {l.leave_start_time?.slice(0,5)}-{l.leave_end_time?.slice(0,5)}</div></div>
+                            :<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{dates.map(d=><span key={d} style={{...S.tag(C.greenD,C.green),fontSize:11}}>{fDS(d)}</span>)}</div>}
+                            {l.reason&&<div style={{fontSize:10,color:l.reason.includes("borc")?C.red:C.dim,marginTop:4}}>{l.reason.length>80?l.reason.slice(0,80)+"...":l.reason}</div>}
+                          </div>
+                          <div style={{textAlign:"right",flexShrink:0,marginLeft:8}}>
+                            <div style={{fontSize:14,fontWeight:700}}>{isHourly?l.total_hours+"s":dates.length+"g"}</div>
+                            <div style={S.tag(sColor(l.status)+"22",sColor(l.status))}>{sIcon(l.status)}</div>
+                            {l.leave_doc_url&&<div style={{fontSize:10,color:C.green,marginTop:2}}>📄 Belge</div>}
+                          </div>
+                        </div>
+                      </div>);
+                    })}
+                  </div>}
+                </div>);
+              })}
+            </>}
+          </>);
+        })()}
       </div>}
     </div>);
   };
