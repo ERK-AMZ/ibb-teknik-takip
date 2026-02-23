@@ -16,7 +16,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v3.2</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v3.3</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -623,7 +623,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.2</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.3</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -659,7 +659,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.2</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.3</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -932,9 +932,10 @@ function AppInner(){
       <div style={S.lbl}>📷 Fotoğraflar</div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
         {faultForm.photos.map((p,i)=><div key={i} style={{position:"relative"}}><img src={p} alt="" style={{width:80,height:80,objectFit:"cover",borderRadius:10}}/><button onClick={()=>{setFaultForm(prev=>({...prev,photos:prev.photos.filter((_,j)=>j!==i)}));setFaultPhotoFiles(prev=>prev.filter((_,j)=>j!==i));}} style={{position:"absolute",top:-6,right:-6,width:20,height:20,borderRadius:10,background:C.red,color:"#fff",border:"none",fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button></div>)}
-        <div style={{width:80,height:80,borderRadius:10,border:`2px dashed ${C.border}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:24,color:C.muted}} onClick={()=>faultPhotoRef.current?.click()}>+</div>
+        <label style={{width:80,height:80,borderRadius:10,border:`2px dashed ${C.border}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:24,color:C.muted,position:"relative",overflow:"hidden"}}>+
+          <input ref={faultPhotoRef} type="file" accept="image/*" multiple style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",opacity:0,cursor:"pointer"}} onChange={handleFaultPhoto}/>
+        </label>
       </div>
-      <input ref={faultPhotoRef} type="file" multiple style={{display:"none"}} onChange={handleFaultPhoto}/>
 
       {/* Inline Services - only for service type */}
       {faultForm.fault_type==="service"&&<div style={{marginBottom:12}}>
@@ -1370,11 +1371,11 @@ function AppInner(){
         {willDebt&&<><div style={{marginTop:8,background:C.redD,borderRadius:8,padding:"6px 10px",textAlign:"center"}}><span style={{fontSize:12,color:C.red,fontWeight:700}}>⚠ {debtAmt} gün borçlanma olacak</span></div><div style={{marginTop:10}}><div style={{...S.lbl,color:C.red}}>📝 Fazla izin sebebi (zorunlu)</div><textarea style={{...S.ta,borderColor:`${C.red}66`,minHeight:60}} placeholder="Neden fazla izin istiyorsunuz?" value={leaveReason} onChange={e=>setLeaveReason(e.target.value)}/></div></>}
         {!willDebt&&calMode==="select"&&<div style={{marginTop:10}}><div style={S.lbl}>📝 İzin sebebi (isteğe bağlı)</div><textarea style={{...S.ta,minHeight:50}} placeholder="İzin sebebiniz..." value={leaveReason} onChange={e=>setLeaveReason(e.target.value)}/></div>}
         <div style={{marginTop:10}}><div style={{...S.lbl,color:C.orange}}>📄 İzin Belgesi Fotoğrafı (zorunlu)</div>
-          <div style={{...S.fInp,borderColor:leaveDoc?C.green+"88":C.orange+"88",background:leaveDoc?C.greenD:C.bg}} onClick={()=>leaveDocRef.current?.click()}>
+          <label style={{...S.fInp,borderColor:leaveDoc?C.green+"88":C.orange+"88",background:leaveDoc?C.greenD:C.bg,position:"relative",overflow:"hidden"}}>
             <span style={{color:leaveDoc?C.green:C.muted}}>{leaveDoc?"✓ Belge yüklendi":"Fotoğraf çekin veya seçin..."}</span><span style={{fontSize:18}}>📄</span>
-          </div>
+            <input ref={leaveDocRef} type="file" accept="image/*" style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",opacity:0,cursor:"pointer"}} onChange={e=>handleLeaveDoc(e,setLeaveDoc,setLeaveDocFile)}/>
+          </label>
           {leaveDoc&&<img src={leaveDoc} alt="" style={{width:"100%",maxHeight:160,objectFit:"cover",borderRadius:10,marginBottom:8}}/>}
-          <input ref={leaveDocRef} type="file"  style={{display:"none"}} onChange={e=>handleLeaveDoc(e,setLeaveDoc,setLeaveDocFile)}/>
         </div>
       </div>}
       {isSel&&<div>
@@ -1399,11 +1400,11 @@ function AppInner(){
         <textarea style={S.ta} placeholder="İzin sebebinizi yazın..." value={hourlyForm.reason} onChange={e=>setHourlyForm(p=>({...p,reason:e.target.value}))}/>
         <div style={{fontSize:11,color:hourlyForm.reason.length>=10?C.green:C.muted,marginTop:-6,marginBottom:10,textAlign:"right"}}>{hourlyForm.reason.length}/10</div>
         <div style={{...S.lbl,color:C.orange}}>📄 İzin Belgesi Fotoğrafı (zorunlu)</div>
-        <div style={{...S.fInp,borderColor:hourlyLeaveDoc?C.green+"88":C.orange+"88",background:hourlyLeaveDoc?C.greenD:C.bg}} onClick={()=>hourlyLeaveDocRef.current?.click()}>
+        <label style={{...S.fInp,borderColor:hourlyLeaveDoc?C.green+"88":C.orange+"88",background:hourlyLeaveDoc?C.greenD:C.bg,position:"relative",overflow:"hidden"}}>
           <span style={{color:hourlyLeaveDoc?C.green:C.muted}}>{hourlyLeaveDoc?"✓ Belge yüklendi":"Fotoğraf çekin veya seçin..."}</span><span style={{fontSize:18}}>📄</span>
-        </div>
+          <input ref={hourlyLeaveDocRef} type="file" accept="image/*" style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",opacity:0,cursor:"pointer"}} onChange={e=>handleLeaveDoc(e,setHourlyLeaveDoc,setHourlyLeaveDocFile)}/>
+        </label>
         {hourlyLeaveDoc&&<img src={hourlyLeaveDoc} alt="" style={{width:"100%",maxHeight:160,objectFit:"cover",borderRadius:10,marginBottom:8}}/>}
-        <input ref={hourlyLeaveDocRef} type="file"  style={{display:"none"}} onChange={e=>handleLeaveDoc(e,setHourlyLeaveDoc,setHourlyLeaveDocFile)}/>
         <button style={S.btn(C.blue)} onClick={submitHourlyLeave} disabled={submitting}>{submitting?"Gönderiliyor...":"🕐 Saatlik İzin Gönder"}</button>
         <button style={S.btn(C.border,C.text)} onClick={()=>{setHourlyMode(false);setHourlyLeaveDoc(null);setHourlyLeaveDocFile(null);}}>İptal</button>
       </div>}
@@ -1561,8 +1562,8 @@ function AppInner(){
       {otForm.endTime&&<div style={S.lawBox}><div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:11,color:C.dim}}>Mesai</div><div style={{fontSize:24,fontWeight:800,color:liveOTH>0?C.accent:C.red}}>{liveOTH}s</div></div><div style={{fontSize:20,color:C.dim,display:"flex",alignItems:"center"}}>→</div><div style={{textAlign:"right"}}><div style={{fontSize:11,color:C.dim}}>Izin (x1.5)</div><div style={{fontSize:24,fontWeight:800,color:C.purple}}>{liveLH}s</div></div></div></div>}
       <div style={S.lbl}>📷 Fotoğraflar (2 zorunlu)</div>
       <div style={{display:"flex",gap:10,marginBottom:12,justifyContent:"space-between"}}>
-        <div style={S.pBox(!!otForm.photoBefore)} onClick={()=>beforeRef.current?.click()}><div style={S.pBoxI}>{otForm.photoBefore?<><img src={otForm.photoBefore} alt="" style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:10,position:"absolute",top:0,left:0}}/><div style={{position:"absolute",bottom:6,left:6,fontSize:10,background:"rgba(0,0,0,0.7)",padding:"2px 6px",borderRadius:4,color:C.orange,fontWeight:700,zIndex:1}}>ONCE ✓</div></>:<><div style={{fontSize:28}}>📷</div><div style={{fontSize:11,color:C.orange,fontWeight:600}}>BASLANGIC</div></>}</div><input ref={beforeRef} type="file"  style={{display:"none"}} onChange={e=>handlePhoto(e,"before")}/></div>
-        <div style={S.pBox(!!otForm.photoAfter)} onClick={()=>afterRef.current?.click()}><div style={S.pBoxI}>{otForm.photoAfter?<><img src={otForm.photoAfter} alt="" style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:10,position:"absolute",top:0,left:0}}/><div style={{position:"absolute",bottom:6,left:6,fontSize:10,background:"rgba(0,0,0,0.7)",padding:"2px 6px",borderRadius:4,color:C.green,fontWeight:700,zIndex:1}}>SONRA ✓</div></>:<><div style={{fontSize:28}}>📷</div><div style={{fontSize:11,color:C.green,fontWeight:600}}>BITIS</div></>}</div><input ref={afterRef} type="file"  style={{display:"none"}} onChange={e=>handlePhoto(e,"after")}/></div>
+        <div style={S.pBox(!!otForm.photoBefore)}><div style={S.pBoxI}>{otForm.photoBefore?<><img src={otForm.photoBefore} alt="" style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:10,position:"absolute",top:0,left:0}}/><div style={{position:"absolute",bottom:6,left:6,fontSize:10,background:"rgba(0,0,0,0.7)",padding:"2px 6px",borderRadius:4,color:C.orange,fontWeight:700,zIndex:1}}>ONCE ✓</div></>:<><div style={{fontSize:28}}>📷</div><div style={{fontSize:11,color:C.orange,fontWeight:600}}>BASLANGIC</div></>}</div><input ref={beforeRef} type="file" accept="image/*" style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",opacity:0,cursor:"pointer",zIndex:5}} onChange={e=>handlePhoto(e,"before")}/></div>
+        <div style={S.pBox(!!otForm.photoAfter)}><div style={S.pBoxI}>{otForm.photoAfter?<><img src={otForm.photoAfter} alt="" style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:10,position:"absolute",top:0,left:0}}/><div style={{position:"absolute",bottom:6,left:6,fontSize:10,background:"rgba(0,0,0,0.7)",padding:"2px 6px",borderRadius:4,color:C.green,fontWeight:700,zIndex:1}}>SONRA ✓</div></>:<><div style={{fontSize:28}}>📷</div><div style={{fontSize:11,color:C.green,fontWeight:600}}>BITIS</div></>}</div><input ref={afterRef} type="file" accept="image/*" style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",opacity:0,cursor:"pointer",zIndex:5}} onChange={e=>handlePhoto(e,"after")}/></div>
       </div>
       <div style={S.lbl}>Açıklama (min 20 karakter)</div>
       <textarea ref={descRef} style={S.ta} placeholder="Yapılan işi detaylı açıklayın..." defaultValue={otForm.desc} onChange={e=>setOtForm(prev=>({...prev,desc:e.target.value}))}/>
