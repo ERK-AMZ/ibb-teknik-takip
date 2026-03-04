@@ -16,7 +16,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v3.3</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v3.4</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -55,6 +55,17 @@ function getVoteWeek(d){
   const diff=day>=3?(day-3):(day+4); // days since last Wednesday
   const wed=new Date(dt);wed.setDate(dt.getDate()-diff);wed.setHours(0,0,0,0);
   return `${wed.getFullYear()}-${String(wed.getMonth()+1).padStart(2,'0')}-${String(wed.getDate()).padStart(2,'0')}`;
+}
+function getPrevVoteWeek(){
+  const now=new Date();
+  const prev=new Date(now);prev.setDate(now.getDate()-7);
+  return getVoteWeek(prev);
+}
+function getVoteWeekRange(weekStr){
+  // Returns {start, end} date strings for a vote_week
+  const wed=new Date(weekStr+"T00:00:00");
+  const tue=new Date(wed);tue.setDate(wed.getDate()+6);
+  return{start:weekStr,end:`${tue.getFullYear()}-${String(tue.getMonth()+1).padStart(2,'0')}-${String(tue.getDate()).padStart(2,'0')}`};
 }
 function getVotePeriodInfo(){
   const now=new Date();const day=now.getDay();
@@ -603,6 +614,7 @@ function AppInner(){
 
   // Vote system hooks - MUST be before any early returns (React hooks rules)
   const currentWeek=getVoteWeek();
+  const prevWeek=getPrevVoteWeek();
   const votePeriod=getVotePeriodInfo();
   const activeFaultsAll=useMemo(()=>bFaults.filter(f=>f.status==="active"),[bFaults]);
   const myPendingVotes=useMemo(()=>{if(!profile)return[];return activeFaultsAll.filter(f=>!faultVotes.some(v=>v.fault_id===f.id&&v.personnel_id===profile.id&&v.vote_week===currentWeek));},[activeFaultsAll,faultVotes,profile,currentWeek]);
@@ -623,7 +635,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.3</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.4</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -659,7 +671,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.3</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.4</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -799,8 +811,11 @@ function AppInner(){
         const days=daysSince(f.detected_date);
         const svcCount=faultServices.filter(s=>s.fault_id===f.id).length;
         const weekVotes=faultVotes.filter(v=>v.fault_id===f.id&&v.vote_week===currentWeek);
+        const pvVotes=faultVotes.filter(v=>v.fault_id===f.id&&v.vote_week===prevWeek);
         const votedCount=weekVotes.length;
         const myVote=weekVotes.find(v=>v.personnel_id===profile.id);
+        const pvCont=pvVotes.filter(v=>v.vote==="continues").length;
+        const pvRes=pvVotes.filter(v=>v.vote==="resolved").length;
         return(<div key={f.id} style={{...S.crd,borderLeft:`4px solid ${f.status==="active"?C.red:C.green}`}} onClick={()=>setSelFault(f)}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}>
             <div style={{flex:1}}>
@@ -819,6 +834,7 @@ function AppInner(){
             {myVote&&<div style={S.tag(myVote.vote==="continues"?C.redD:C.greenD,myVote.vote==="continues"?C.red:C.green)}>{myVote.vote==="continues"?"🔴 Devam":"🟢 Giderildi"}</div>}
             {!myVote&&f.status==="active"&&<div style={S.tag(C.orangeD,C.orange)}>⏳ Oy bekleniyor</div>}
             {votedCount>0&&<div style={{fontSize:10,color:C.muted,alignSelf:"center"}}>{votedCount} oy</div>}
+            {pvVotes.length>0&&<div style={{fontSize:10,color:C.purple,alignSelf:"center"}}>📋 Önceki: {pvCont}🔴 {pvRes}🟢</div>}
           </div>
         </div>);
       })}
@@ -893,6 +909,55 @@ function AppInner(){
           })}
         </div>}
       </div>}
+
+      {/* ÖNCEKİ DÖNEM SONUÇLARI */}
+      {f.status==="active"&&(()=>{
+        // Collect ALL past vote weeks for this fault
+        const allVotesForFault=faultVotes.filter(v=>v.fault_id===f.id&&v.vote_week!==currentWeek);
+        const pastWeeks=[...new Set(allVotesForFault.map(v=>v.vote_week))].sort((a,b)=>b.localeCompare(a));
+        if(pastWeeks.length===0)return null;
+        return(<div style={{...S.lawBox,marginBottom:12,borderColor:`${C.purple}44`,background:"rgba(168,85,247,0.04)"}}>
+          <div style={{fontSize:13,fontWeight:700,color:C.purple,marginBottom:10}}>📋 Önceki Dönem Sonuçları</div>
+          {pastWeeks.map((wk,wi)=>{
+            const wkVotes=allVotesForFault.filter(v=>v.vote_week===wk);
+            const wkRange=getVoteWeekRange(wk);
+            const contCount=wkVotes.filter(v=>v.vote==="continues").length;
+            const resCount=wkVotes.filter(v=>v.vote==="resolved").length;
+            const noVote=allActiveProfiles.filter(p=>!wkVotes.some(v=>v.personnel_id===p.id));
+            const isLatest=wi===0;
+            return(<div key={wk} style={{marginBottom:wi<pastWeeks.length-1?12:0}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                <div style={{fontSize:11,fontWeight:600,color:isLatest?C.purple:C.muted}}>{isLatest?"Geçen Hafta":"Hafta"}: {fDS(wkRange.start)} → {fDS(wkRange.end)}</div>
+              </div>
+              <div style={{display:"flex",gap:6,marginBottom:canEditFault&&isLatest?8:0}}>
+                <div style={{flex:1,background:C.redD,borderRadius:6,padding:"6px 8px",textAlign:"center"}}>
+                  <div style={{fontSize:16,fontWeight:800,color:C.red}}>{contCount}</div>
+                  <div style={{fontSize:9,color:C.dim}}>🔴 Devam</div>
+                </div>
+                <div style={{flex:1,background:C.greenD,borderRadius:6,padding:"6px 8px",textAlign:"center"}}>
+                  <div style={{fontSize:16,fontWeight:800,color:C.green}}>{resCount}</div>
+                  <div style={{fontSize:9,color:C.dim}}>🟢 Giderildi</div>
+                </div>
+                <div style={{flex:1,background:C.orangeD,borderRadius:6,padding:"6px 8px",textAlign:"center"}}>
+                  <div style={{fontSize:16,fontWeight:800,color:C.orange}}>{noVote.length}</div>
+                  <div style={{fontSize:9,color:C.dim}}>❌ Yok</div>
+                </div>
+              </div>
+              {canEditFault&&isLatest&&<div>
+                {allActiveProfiles.map(p=>{
+                  const v=wkVotes.find(vt=>vt.personnel_id===p.id);
+                  return(<div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${C.border}`}}>
+                    <div style={{fontSize:12,fontWeight:500}}>{p.full_name}</div>
+                    {v?<div style={{fontSize:11,fontWeight:700,color:v.vote==="continues"?C.red:C.green}}>{v.vote==="continues"?"🔴 Devam":"🟢 Giderildi"}</div>
+                    :<div style={{fontSize:11,color:C.orange,fontWeight:600}}>❌ Oy kullanmadı</div>}
+                  </div>);
+                })}
+              </div>}
+              {wi<pastWeeks.length-1&&<div style={{borderBottom:`1px solid ${C.border}`,marginTop:8}}/>}
+            </div>);
+          })}
+        </div>);
+      })()}
 
       {/* Edit / Admin actions */}
       {isOwnFault(f)&&f.status==="active"&&<button style={S.btn(C.accentD,C.accent)} onClick={()=>{setFaultForm({title:f.title,location:f.location,description:f.description||"",detected_date:f.detected_date,photos:f.photos||[],services:[],fault_type:f.fault_type||"service",material_needed:f.material_needed||"",editId:f.id});setFaultPhotoFiles([]);setSelFault(null);setModNewFault(true);}}>✏️ Arızayı Düzenle</button>}
