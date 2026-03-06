@@ -16,7 +16,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v3.4</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v3.5</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -635,7 +635,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.4</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.5</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -671,7 +671,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.4</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.5</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -1164,19 +1164,118 @@ function AppInner(){
       </>}
 
       {/* PURCHASE LIST TAB */}
-      {depoTab==="purchase"&&<>
-        <div style={{...S.lawBox,marginBottom:12,borderColor:C.red+"44"}}><div style={{fontSize:14,fontWeight:700,marginBottom:4}}>🛒 Satın Alma Listesi</div><div style={{fontSize:12,color:C.dim}}>Minimum stok seviyesinin altındaki malzemeler</div></div>
-        {purchaseList.length===0?<div style={S.emp}>Tüm malzemeler yeterli seviyede ✓</div>:
-        purchaseList.map(m=>{const need=Math.max(0,m.min_stock*2-m.current_stock);return(
-          <div key={m.id} style={{...S.crd,borderLeft:"4px solid "+C.red}}>
+      {depoTab==="purchase"&&(()=>{
+        // Split into zero stock (tükenmiş) and low stock (azalan)
+        const zeroStock=purchaseList.filter(m=>m.current_stock===0);
+        const lowStock=purchaseList.filter(m=>m.current_stock>0);
+        // Group by category
+        const groupByCategory=(list)=>{
+          const groups={};
+          list.forEach(m=>{const cat=m.category||"Diğer";if(!groups[cat])groups[cat]=[];groups[cat].push(m);});
+          return Object.entries(groups).sort((a,b)=>a[0].localeCompare(b[0]));
+        };
+        const zeroGroups=groupByCategory(zeroStock);
+        const lowGroups=groupByCategory(lowStock);
+        const totalNeed=purchaseList.reduce((s,m)=>s+Math.max(0,(m.min_stock||1)*2-m.current_stock),0);
+        
+        // Build shareable text
+        const buildShareText=()=>{
+          let txt="📋 SATIN ALMA LİSTESİ\n"+curBuildingName+" — "+new Date().toLocaleDateString("tr-TR")+"\n\n";
+          if(zeroStock.length>0){
+            txt+="🔴 STOK TÜKENMİŞ ("+zeroStock.length+" kalem)\n";
+            zeroGroups.forEach(([cat,items])=>{
+              txt+="  "+cat+":\n";
+              items.forEach(m=>{txt+="    • "+m.name+" → "+Math.max(1,(m.min_stock||1)*2)+" "+m.unit+" alınmalı\n";});
+            });
+            txt+="\n";
+          }
+          if(lowStock.length>0){
+            txt+="🟡 STOK AZALIYOR ("+lowStock.length+" kalem)\n";
+            lowGroups.forEach(([cat,items])=>{
+              txt+="  "+cat+":\n";
+              items.forEach(m=>{const need=Math.max(0,(m.min_stock||1)*2-m.current_stock);txt+="    • "+m.name+" — Mevcut: "+m.current_stock+", "+need+" "+m.unit+" alınmalı\n";});
+            });
+          }
+          txt+="\nToplam "+purchaseList.length+" kalem";
+          return txt;
+        };
+
+        return(<>
+          {/* Summary banner */}
+          <div style={{...S.lawBox,marginBottom:12,borderColor:purchaseList.length>0?C.red+"66":C.green+"44",background:purchaseList.length>0?"rgba(239,68,68,0.06)":"rgba(34,197,94,0.06)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div><div style={{fontSize:14,fontWeight:700}}>{m.name}</div><div style={{fontSize:11,color:C.dim}}>{m.category}</div></div>
-              <div style={{textAlign:"right"}}><div style={{fontSize:11,color:C.red}}>Mevcut: {m.current_stock} {m.unit}</div><div style={{fontSize:11,color:C.dim}}>Min: {m.min_stock} {m.unit}</div><div style={{fontSize:13,fontWeight:800,color:C.accent}}>Önerilen: {need} {m.unit}</div></div>
+              <div>
+                <div style={{fontSize:15,fontWeight:800,color:purchaseList.length>0?C.red:C.green}}>🛒 Satın Alma Listesi</div>
+                <div style={{fontSize:11,color:C.dim,marginTop:2}}>Minimum stok altındaki malzemeler</div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontSize:24,fontWeight:800,color:purchaseList.length>0?C.red:C.green}}>{purchaseList.length}</div>
+                <div style={{fontSize:9,color:C.dim}}>kalem</div>
+              </div>
             </div>
+            {purchaseList.length>0&&<div style={{display:"flex",gap:8,marginTop:10}}>
+              <div style={{flex:1,background:C.redD,borderRadius:8,padding:"6px 10px",textAlign:"center"}}>
+                <div style={{fontSize:16,fontWeight:800,color:C.red}}>{zeroStock.length}</div>
+                <div style={{fontSize:9,color:C.dim}}>Tükenmiş</div>
+              </div>
+              <div style={{flex:1,background:C.orangeD,borderRadius:8,padding:"6px 10px",textAlign:"center"}}>
+                <div style={{fontSize:16,fontWeight:800,color:C.orange}}>{lowStock.length}</div>
+                <div style={{fontSize:9,color:C.dim}}>Azalan</div>
+              </div>
+            </div>}
           </div>
-        );})}
-        {purchaseList.length>0&&canEditFault&&<button style={S.btn(C.accent)} onClick={()=>{const txt=purchaseList.map(m=>"• "+m.name+" — "+Math.max(0,m.min_stock*2-m.current_stock)+" "+m.unit+" (Mevcut: "+m.current_stock+")").join("\n");navigator.clipboard?.writeText("SATIN ALMA LİSTESİ\n"+new Date().toLocaleDateString("tr-TR")+"\n\n"+txt).then(()=>setToast("📋 Liste panoya kopyalandı")).catch(()=>setToast("Kopyalanamadı"));}}>📋 Listeyi Kopyala</button>}
-      </>}
+
+          {purchaseList.length===0&&<div style={S.emp}>Tüm malzemeler yeterli seviyede ✓</div>}
+
+          {/* Zero stock section */}
+          {zeroStock.length>0&&<>
+            <div style={{...S.sec,color:C.red}}><span>🔴</span> Stok Tükenmiş ({zeroStock.length})</div>
+            {zeroGroups.map(([cat,items])=><div key={"z-"+cat}>
+              <div style={{fontSize:11,fontWeight:700,color:C.muted,padding:"6px 0",borderBottom:"1px solid "+C.border}}>{cat} ({items.length})</div>
+              {items.map(m=>{const need=Math.max(1,(m.min_stock||1)*2);return(
+                <div key={m.id} style={{...S.crd,borderLeft:"4px solid "+C.red,background:"rgba(239,68,68,0.04)"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div style={{flex:1}}><div style={{fontSize:13,fontWeight:700}}>{m.name}</div>{m.notes&&<div style={{fontSize:10,color:C.dim}}>{m.notes}</div>}</div>
+                    <div style={{textAlign:"right",flexShrink:0}}>
+                      <div style={{fontSize:12,fontWeight:800,color:C.red}}>STOK YOK</div>
+                      <div style={{fontSize:13,fontWeight:800,color:C.accent,marginTop:2}}>{need} {m.unit} al</div>
+                    </div>
+                  </div>
+                </div>
+              );})}
+            </div>)}
+          </>}
+
+          {/* Low stock section */}
+          {lowStock.length>0&&<>
+            <div style={{...S.sec,color:C.orange,marginTop:zeroStock.length>0?16:0}}><span>🟡</span> Stok Azalıyor ({lowStock.length})</div>
+            {lowGroups.map(([cat,items])=><div key={"l-"+cat}>
+              <div style={{fontSize:11,fontWeight:700,color:C.muted,padding:"6px 0",borderBottom:"1px solid "+C.border}}>{cat} ({items.length})</div>
+              {items.map(m=>{const need=Math.max(0,(m.min_stock||1)*2-m.current_stock);const pct=m.min_stock>0?Math.round((m.current_stock/m.min_stock)*100):0;return(
+                <div key={m.id} style={{...S.crd,borderLeft:"4px solid "+C.orange}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:13,fontWeight:700}}>{m.name}</div>
+                      <div style={{fontSize:11,color:C.dim}}>Mevcut: <span style={{color:C.orange,fontWeight:700}}>{m.current_stock}</span> / Min: {m.min_stock} {m.unit}</div>
+                      <div style={{height:4,borderRadius:2,background:C.bg,overflow:"hidden",marginTop:4,maxWidth:120}}><div style={{height:"100%",borderRadius:2,width:pct+"%",background:C.orange}}/></div>
+                    </div>
+                    <div style={{textAlign:"right",flexShrink:0}}>
+                      <div style={{fontSize:15,fontWeight:800,color:C.accent}}>{need}</div>
+                      <div style={{fontSize:10,color:C.dim}}>{m.unit} al</div>
+                    </div>
+                  </div>
+                </div>
+              );})}
+            </div>)}
+          </>}
+
+          {/* Action buttons */}
+          {purchaseList.length>0&&canEditFault&&<div style={{marginTop:16,display:"flex",flexDirection:"column",gap:8}}>
+            <button style={S.btn(C.accent)} onClick={()=>{const txt=buildShareText();navigator.clipboard?.writeText(txt).then(()=>setToast("📋 Liste panoya kopyalandı")).catch(()=>setToast("Kopyalanamadı"));}}>📋 Listeyi Kopyala</button>
+            <button style={S.btn(C.greenD,C.green)} onClick={()=>{const txt=buildShareText();const encoded=encodeURIComponent(txt);window.open("https://wa.me/?text="+encoded,"_blank");}}>💬 WhatsApp ile Paylaş</button>
+          </div>}
+        </>);
+      })()}
 
       {/* HISTORY TAB */}
       {depoTab==="history"&&<>
@@ -1356,6 +1455,12 @@ function AppInner(){
         </div>
       </div>}
       {debtors.length>0&&<div style={{marginBottom:16}}><div style={{...S.sec,color:C.red}}><span>⚠</span> Borçlu Personel</div>{debtors.map(u=>(<div key={u.id} style={{...S.crd,borderColor:`${C.red}44`}} onClick={()=>{setSelPerson(u.id);setPage("person");}}><div style={S.row}><div style={S.av(C.redD)}>{ini(u.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14,fontWeight:600}}>{u.full_name}</div><div style={{fontSize:11,color:C.dim}}>{u.role}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:18,fontWeight:800,color:C.red}}>{debtDays(u.id)}</div><div style={{fontSize:10,color:C.red}}>gün borç</div></div></div></div>))}</div>}
+      {criticalCount>0&&<div style={{...S.crd,background:"rgba(239,68,68,0.06)",borderColor:C.red+"44",cursor:"pointer"}} onClick={()=>{setPage("depo");setDepoTab("purchase");}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div><div style={{fontSize:14,fontWeight:700,color:C.red}}>🛒 {criticalCount} malzeme eksik</div><div style={{fontSize:10,color:C.muted,marginTop:2}}>{lowStockMats.filter(m=>m.current_stock===0).length>0?lowStockMats.filter(m=>m.current_stock===0).length+" tükenmiş, ":""}Satın alma listesini kontrol et</div></div>
+          <div style={{fontSize:24}}>📦</div>
+        </div>
+      </div>}
       <div style={S.sec}><span>👥</span> Personel ({list.length})</div>
       {list.map((p,i)=>{const rD=remDays(p.id),debt=debtDays(p.id),pend=pendCount(p.id);return(<div key={p.id} style={S.crd} onClick={()=>{setSelPerson(p.id);setPage("person");}}><div style={S.row}><div style={S.av(getAv(i))}>{ini(p.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14,fontWeight:600}}>{p.full_name}</div><div style={{fontSize:11,color:C.dim}}>{p.role}{p.night_shift?" 🌙":""}</div></div><div style={{textAlign:"right"}}>{pend>0&&<div style={{...S.tag(C.orangeD,C.orange),marginBottom:4}}>⏳ {pend}</div>}{debt>0?<><div style={{fontSize:18,fontWeight:800,color:C.red}}>-{debt}</div><div style={{fontSize:10,color:C.red}}>borc</div></>:<><div style={{fontSize:18,fontWeight:800,color:rD>0?C.green:C.muted}}>{rD}</div><div style={{fontSize:10,color:C.dim}}>gun</div></>}</div></div></div>);})}
     </div>);
