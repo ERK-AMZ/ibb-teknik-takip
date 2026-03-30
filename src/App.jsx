@@ -16,7 +16,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v4.0</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v4.1</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -313,44 +313,48 @@ function AppInner(){
 
   const loadingRef=useRef(false);
   const loadData=useCallback(async(uid)=>{
-    if(loadingRef.current)return; // Prevent double load
+    if(loadingRef.current)return;
     loadingRef.current=true;
     setLoading(true);setLoadError(null);
     const safetyTimer=setTimeout(()=>{setLoading(false);loadingRef.current=false;},15000);
+    // Start BOTH groups simultaneously (before try block for correct scoping)
+    const criticalP=Promise.allSettled([
+      supabase.from('profiles').select('*'),
+      supabase.from('overtimes').select('*').order('work_date',{ascending:false}),
+      supabase.from('leaves').select('*').order('created_at',{ascending:false}),
+      supabase.from('buildings').select('*').order('name')
+    ]);
+    const secondaryP=Promise.allSettled([
+      supabase.from('faults').select('*').order('detected_date',{ascending:false}),
+      supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),
+      supabase.from('fault_votes').select('*'),
+      supabase.from('materials').select('*').order('name'),
+      supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}).limit(200)
+    ]);
     try{
-      // ALL queries in parallel - single round trip
-      const r=await Promise.allSettled([
-        supabase.from('profiles').select('*'),
-        supabase.from('overtimes').select('*').order('work_date',{ascending:false}),
-        supabase.from('leaves').select('*').order('created_at',{ascending:false}),
-        supabase.from('buildings').select('*').order('name'),
-        supabase.from('faults').select('*').order('detected_date',{ascending:false}),
-        supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),
-        supabase.from('fault_votes').select('*'),
-        supabase.from('materials').select('*').order('name'),
-        supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}).limit(200)
-      ]);
-      const profs=toArr(r[0].status==="fulfilled"?r[0].value:null);
-      const ots=toArr(r[1].status==="fulfilled"?r[1].value:null);
-      const lvs=toArr(r[2].status==="fulfilled"?r[2].value:null);
-      const blds=toArr(r[3].status==="fulfilled"?r[3].value:null);
-      setProfilesState(profs);setOvertimesState(ots);setLeavesState(lvs);setBuildings(blds);
-      if(r[4].status==="fulfilled")setFaults(toArr(r[4].value));
-      if(r[5].status==="fulfilled")setFaultServices(toArr(r[5].value));
-      if(r[6].status==="fulfilled")setFaultVotes(toArr(r[6].value));
-      if(r[7].status==="fulfilled")setMaterials(toArr(r[7].value));
-      if(r[8].status==="fulfilled")setStockMovements(toArr(r[8].value));
+      const r1=await criticalP;
+      const profs=toArr(r1[0].status==="fulfilled"?r1[0].value:null);
+      setProfilesState(profs);
+      setOvertimesState(toArr(r1[1].status==="fulfilled"?r1[1].value:null));
+      setLeavesState(toArr(r1[2].status==="fulfilled"?r1[2].value:null));
+      const blds=toArr(r1[3].status==="fulfilled"?r1[3].value:null);
+      setBuildings(blds);
       const fp=profs.find(p=>p.id===uid);setProfile(fp||null);
       if(fp&&blds.length>0&&!selBuilding){setSelBuilding(fp.building_id||blds[0]?.id||null);}
       if(!fp&&!window.__RETRIED){
-        window.__RETRIED=true;
-        loadingRef.current=false;
-        setTimeout(async()=>{
-          try{await supabase.auth.refreshSession();}catch(e){}
-          setTimeout(()=>{loadData(uid);},500);
-        },1500);
+        window.__RETRIED=true;loadingRef.current=false;
+        setTimeout(async()=>{try{await supabase.auth.refreshSession();}catch(e){}setTimeout(()=>{loadData(uid);},500);},1500);
       }
     }catch(err){setLoadError("Bağlantı hatası");}finally{clearTimeout(safetyTimer);setLoading(false);loadingRef.current=false;}
+    // Secondary already running - just await results (no loading screen)
+    try{
+      const r2=await secondaryP;
+      if(r2[0].status==="fulfilled")setFaults(toArr(r2[0].value));
+      if(r2[1].status==="fulfilled")setFaultServices(toArr(r2[1].value));
+      if(r2[2].status==="fulfilled")setFaultVotes(toArr(r2[2].value));
+      if(r2[3].status==="fulfilled")setMaterials(toArr(r2[3].value));
+      if(r2[4].status==="fulfilled")setStockMovements(toArr(r2[4].value));
+    }catch(e){}
   },[]);
 
   useEffect(()=>{
@@ -613,7 +617,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.0</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.1</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -649,7 +653,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.0</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.1</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -739,18 +743,39 @@ function AppInner(){
   async function submitVote(faultId,vote){
     setSubmitting(true);
     try{
-      const{data:existing,error:findErr}=await supabase.from('fault_votes').select('id').eq('fault_id',faultId).eq('personnel_id',profile.id).eq('vote_week',currentWeek).maybeSingle();
-      if(findErr)console.error("Vote find err:",findErr);
+      // Check if vote already exists
+      const{data:existing}=await supabase.from('fault_votes').select('id').eq('fault_id',faultId).eq('personnel_id',profile.id).eq('vote_week',currentWeek).maybeSingle();
+      
+      let success=false;
       if(existing){
-        if(isPerso){setToast("🔒 Oyunuz zaten kaydedildi, değiştirilemez");setSubmitting(false);return;}
-        const{error:upErr}=await supabase.from('fault_votes').update({vote}).eq('id',existing.id);
-        if(upErr)throw upErr;
+        if(isPerso){setToast("🔒 Oyunuz zaten kaydedildi");setSubmitting(false);return;}
+        const{error}=await supabase.from('fault_votes').update({vote}).eq('id',existing.id);
+        if(error){setToast("⚠ Güncelleme hatası: "+error.message);setSubmitting(false);return;}
+        success=true;
       } else {
-        const{error:insErr}=await supabase.from('fault_votes').insert({fault_id:faultId,personnel_id:profile.id,vote,vote_week:currentWeek});
-        if(insErr)throw insErr;
+        const{data:inserted,error}=await supabase.from('fault_votes').insert({fault_id:faultId,personnel_id:profile.id,vote,vote_week:currentWeek}).select();
+        if(error){
+          setToast("⚠ Oy hatası: "+error.message+"\n(RLS politikası eksik olabilir)");
+          setSubmitting(false);return;
+        }
+        if(!inserted||inserted.length===0){
+          setToast("⚠ Oy kaydedilemedi (RLS engeli olabilir)");
+          setSubmitting(false);return;
+        }
+        success=true;
       }
-      await fetchFaultVotes();setToast(vote==="continues"?"🔴 Arıza devam ediyor olarak kaydedildi":"🟢 Arıza giderildi olarak kaydedildi");
-    }catch(e){console.error("Vote error:",e);setToast("⚠ Oy kaydedilemedi: "+(e?.message||String(e)));}
+      
+      if(success){
+        // Optimistic update - add vote to local state immediately
+        setFaultVotes(prev=>{
+          const filtered=prev.filter(v=>!(v.fault_id===faultId&&v.personnel_id===profile.id&&v.vote_week===currentWeek));
+          return[...filtered,{fault_id:faultId,personnel_id:profile.id,vote,vote_week:currentWeek,id:existing?.id||"temp-"+Date.now()}];
+        });
+        setToast(vote==="continues"?"🔴 Oy kaydedildi":"🟢 Oy kaydedildi");
+        // Background refresh
+        try{await fetchFaultVotes();}catch(e){}
+      }
+    }catch(e){setToast("⚠ Hata: "+(e?.message||String(e)));}
     setSubmitting(false);
   }
 
