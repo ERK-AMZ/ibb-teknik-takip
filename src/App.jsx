@@ -16,7 +16,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v4.4</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v4.5</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -644,7 +644,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.4</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.5</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -680,7 +680,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.4</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.5</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -704,17 +704,36 @@ function AppInner(){
           <div style={S.st(rH<0?C.redD:"rgba(255,255,255,0.08)")}><div style={{fontSize:16,fontWeight:800,color:rH<0?C.red:C.text}}>{rH}s</div><div style={{fontSize:9,color:C.dim}}>{rH<0?"BORÇ":"Kalan"}</div></div>
         </div>
         {debt>0&&<div style={{marginTop:8,background:C.redD,borderRadius:8,padding:"6px 10px",textAlign:"center"}}><span style={{fontSize:12,color:C.red,fontWeight:700}}>⚠ {debt} gun mesai borcu var</span></div>}
-        <div style={{marginTop:10,background:"rgba(20,184,166,0.08)",borderRadius:8,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div style={{fontSize:12,fontWeight:600,color:C.teal}}>🌴 Yıllık İzin</div>
-          <div style={{fontSize:13,fontWeight:800,color:annualRemaining(p.id)>0?C.teal:C.red}}>{annualUsed(p.id)}/{annualDays(p.id)}g kullanıldı — {annualRemaining(p.id)}g kalan</div>
+        <div style={{marginTop:10,background:"rgba(20,184,166,0.08)",borderRadius:10,padding:12}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div style={{fontSize:13,fontWeight:700,color:C.teal}}>🌴 Yıllık İzin</div>
+            <div style={{fontSize:15,fontWeight:800,color:annualRemaining(p.id)>0?C.teal:C.red}}>{annualRemaining(p.id)}g kalan</div>
+          </div>
+          <div style={{display:"flex",gap:8,marginBottom:6}}>
+            <div style={{flex:1,background:C.tealD,borderRadius:6,padding:"6px 8px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:800,color:C.teal}}>{annualDays(p.id)}</div><div style={{fontSize:9,color:C.dim}}>Toplam</div></div>
+            <div style={{flex:1,background:C.greenD,borderRadius:6,padding:"6px 8px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:800,color:C.green}}>{annualUsed(p.id)}</div><div style={{fontSize:9,color:C.dim}}>Kullanılan</div></div>
+            <div style={{flex:1,background:annualRemaining(p.id)<=2?C.redD:"rgba(255,255,255,0.06)",borderRadius:6,padding:"6px 8px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:800,color:annualRemaining(p.id)<=2?C.red:C.text}}>{annualRemaining(p.id)}</div><div style={{fontSize:9,color:C.dim}}>Kalan</div></div>
+          </div>
+          <div style={{height:5,borderRadius:3,background:C.bg,overflow:"hidden"}}><div style={{height:"100%",borderRadius:3,width:Math.min(100,Math.round((annualUsed(p.id)/Math.max(annualDays(p.id),1))*100))+"%",background:annualRemaining(p.id)<=2?C.red:C.teal}}/></div>
+          {(()=>{
+            const annualLvs=leavesState.filter(l=>l.personnel_id===p.id&&isAnnualLeave(l)&&l.status!=="rejected");
+            if(annualLvs.length===0)return <div style={{fontSize:11,color:C.dim,marginTop:8}}>Henüz yıllık izin kullanılmamış</div>;
+            return(<div style={{marginTop:8}}>{annualLvs.sort((a,b)=>{const da=(Array.isArray(a.dates)?a.dates:["-"])[0];const db=(Array.isArray(b.dates)?b.dates:["-"])[0];return db.localeCompare(da);}).map(l=>{const dates=Array.isArray(l.dates)?l.dates:[];return(<div key={l.id} style={{background:C.bg,borderRadius:8,padding:"8px 10px",marginTop:6,border:"1px solid "+C.border,cursor:"pointer"}} onClick={()=>setSelLV(l)}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{display:"flex",flexWrap:"wrap",gap:4}}>{dates.map(d=><span key={d} style={{...S.tag(l.status==="approved"?C.tealD:C.orangeD,l.status==="approved"?C.teal:C.orange),fontSize:10}}>{fDS(d)}</span>)}</div>
+                <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:13,fontWeight:700}}>{dates.length}g</span><span style={S.tag(sColor(l.status)+"22",sColor(l.status))}>{sIcon(l.status)}</span></div>
+              </div>
+              {l.reason&&<div style={{fontSize:10,color:C.dim,marginTop:4}}>{l.reason.replace("[Yıllık İzin] ","")}</div>}
+            </div>);})}</div>);
+          })()}
         </div>
       </div>
       <div style={{...S.sec,marginTop:16}}><span>⏱</span> Mesai ({pOTs.length})</div>
       {pOTs.length===0&&<div style={{...S.emp,padding:20}}>Kayit yok</div>}
       {pOTs.map(o=>(<div key={o.id} style={S.crd} onClick={()=>setSelOT(o)}><div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:13,fontWeight:600}}>{fD(o.work_date)}</div><div style={{fontSize:11,color:C.dim}}>{o.start_time?.slice(0,5)}→{o.end_time?.slice(0,5)}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:800,color:C.accent}}>{o.hours}s<span style={{color:C.purple,fontSize:12}}> →{o.leave_hours}s</span></div><div style={S.tag(sColor(o.status)+"22",sColor(o.status))}>{sIcon(o.status)} {sText(o.status)}</div></div></div>{o.description&&<div style={{fontSize:12,color:C.dim,marginTop:6,borderTop:`1px solid ${C.border}`,paddingTop:6}}>{o.description}</div>}</div>))}
-      <div style={{...S.sec,marginTop:16}}><span>🏖</span> Izin ({pLVs.length})</div>
-      {pLVs.length===0&&<div style={{...S.emp,padding:20}}>Talep yok</div>}
-      {pLVs.map(l=>{const isHourly=l.leave_type==="hourly";return(<div key={l.id} style={S.crd} onClick={()=>setSelLV(l)}><div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}><div>{isHourly?<div><div style={{...S.tag(C.blueD,C.blue),marginBottom:4}}>🕐 Saatlik</div><div style={{fontSize:12}}>{fDS(l.dates?.[0])} {l.leave_start_time?.slice(0,5)}-{l.leave_end_time?.slice(0,5)}</div></div>:<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{(Array.isArray(l.dates)?l.dates:[]).map(d=><span key={d} style={S.tag(l.status==="approved"?C.greenD:C.orangeD,l.status==="approved"?C.green:C.orange)}>{fDS(d)}</span>)}</div>}</div><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:700}}>{isHourly?l.total_hours+"s":(Array.isArray(l.dates)?l.dates.length:0)+"g"}</div><div style={S.tag(sColor(l.status)+"22",sColor(l.status))}>{sIcon(l.status)}</div>{l.leave_doc_url&&<div style={{fontSize:10,color:C.green,marginTop:2}}>📄</div>}</div></div>{l.reason&&<div style={{fontSize:11,color:l.reason.includes("borc")?"#ef4444":C.dim,marginTop:4}}>{l.reason}</div>}</div>);})}
+      <div style={{...S.sec,marginTop:16}}><span>🏖</span> Mesai İzni ({pLVs.filter(l=>isOTLeave(l)).length})</div>
+      {pLVs.filter(l=>isOTLeave(l)).length===0&&<div style={{...S.emp,padding:20}}>Talep yok</div>}
+      {pLVs.filter(l=>isOTLeave(l)).map(l=>{const isHourly=l.leave_type==="hourly";return(<div key={l.id} style={S.crd} onClick={()=>setSelLV(l)}><div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}><div>{isHourly?<div><div style={{...S.tag(C.blueD,C.blue),marginBottom:4}}>🕐 Saatlik</div><div style={{fontSize:12}}>{fDS(l.dates?.[0])} {l.leave_start_time?.slice(0,5)}-{l.leave_end_time?.slice(0,5)}</div></div>:<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{(Array.isArray(l.dates)?l.dates:[]).map(d=><span key={d} style={S.tag(l.status==="approved"?C.greenD:C.orangeD,l.status==="approved"?C.green:C.orange)}>{fDS(d)}</span>)}</div>}</div><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:700}}>{isHourly?l.total_hours+"s":(Array.isArray(l.dates)?l.dates.length:0)+"g"}</div><div style={S.tag(sColor(l.status)+"22",sColor(l.status))}>{sIcon(l.status)}</div>{l.leave_doc_url&&<div style={{fontSize:10,color:C.green,marginTop:2}}>📄</div>}</div></div>{l.reason&&<div style={{fontSize:11,color:l.reason.includes("borc")?"#ef4444":C.dim,marginTop:4}}>{l.reason}</div>}</div>);})}
     </div>);
   };
 
@@ -1506,7 +1525,7 @@ function AppInner(){
         </div>
       </div>}
       <div style={S.sec}><span>👥</span> Personel ({list.length})</div>
-      {list.map((p,i)=>{const rD=remDays(p.id),debt=debtDays(p.id),pend=pendCount(p.id);return(<div key={p.id} style={S.crd} onClick={()=>{setSelPerson(p.id);setPage("person");}}><div style={S.row}><div style={S.av(getAv(i))}>{ini(p.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14,fontWeight:600}}>{p.full_name}</div><div style={{fontSize:11,color:C.dim}}>{p.role}{p.night_shift?" 🌙":""}</div></div><div style={{textAlign:"right"}}>{pend>0&&<div style={{...S.tag(C.orangeD,C.orange),marginBottom:4}}>⏳ {pend}</div>}{debt>0?<><div style={{fontSize:18,fontWeight:800,color:C.red}}>-{debt}</div><div style={{fontSize:10,color:C.red}}>borc</div></>:<><div style={{fontSize:18,fontWeight:800,color:rD>0?C.green:C.muted}}>{rD}</div><div style={{fontSize:10,color:C.dim}}>gun</div></>}</div></div></div>);})}
+      {list.map((p,i)=>{const rD=remDays(p.id),debt=debtDays(p.id),pend=pendCount(p.id),aR=annualRemaining(p.id),aT=annualDays(p.id);return(<div key={p.id} style={S.crd} onClick={()=>{setSelPerson(p.id);setPage("person");}}><div style={S.row}><div style={S.av(getAv(i))}>{ini(p.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14,fontWeight:600}}>{p.full_name}</div><div style={{fontSize:11,color:C.dim}}>{p.role}{p.night_shift?" 🌙":""}</div>{pend>0&&<div style={{...S.tag(C.orangeD,C.orange),marginTop:4,display:"inline-block"}}>⏳ {pend}</div>}</div><div style={{textAlign:"right"}}>{debt>0?<div style={{fontSize:16,fontWeight:800,color:C.red}}>-{debt}g <span style={{fontSize:10,fontWeight:600}}>borç</span></div>:<div style={{fontSize:16,fontWeight:800,color:rD>0?C.green:C.muted}}>{rD}g <span style={{fontSize:10,fontWeight:600,color:C.dim}}>mesai</span></div>}<div style={{fontSize:12,fontWeight:700,color:aR>3?C.teal:aR>0?C.orange:C.red,marginTop:2}}>🌴 {aR}/{aT}g</div></div></div></div>);})}
     </div>);
   };
 
