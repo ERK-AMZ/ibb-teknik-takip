@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, Component } from 'react';
-import { supabase, signIn, signOut, getProfiles, createOvertime, updateOvertime, createLeave, updateLeave, uploadPhoto, subscribeToChanges } from './lib/supabase';
+import { supabase, signIn, signOut, getProfiles, createOvertime, updateOvertime, createLeave, updateLeave, subscribeToChanges } from './lib/supabase';
 
 // Safe array extractor - handles {data:[...]} objects AND raw arrays
 const toArr=(v)=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'&&Array.isArray(v.data))return v.data;return[];};
@@ -16,7 +16,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v3.5</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v3.6</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -41,7 +41,6 @@ class ErrorBoundary extends Component {
 const OT_MULT=1.5,WORK_END=17;
 function calcOT(st,et,type){if(!st||!et)return 0;const[sh,sm]=st.split(":").map(Number),[eh,em]=et.split(":").map(Number);let s=sh*60+sm,e=eh*60+em;if(e<=s)e+=1440;if(type==="daytime"){return Math.round(((e-s)/60)*10)/10;}const eff=Math.max(s,WORK_END*60);return eff>=e?0:Math.round(((e-eff)/60)*10)/10;}
 function calcLH(h){return Math.round(h*OT_MULT*10)/10;}
-function compressImg(file,maxW=1200,q=0.7){return new Promise((res)=>{const img=new Image();img.onload=()=>{let w=img.width,h=img.height;if(w>maxW){h=Math.round(h*(maxW/w));w=maxW;}if(h>maxW){w=Math.round(w*(maxW/h));h=maxW;}const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);c.toBlob(b=>{if(b)res(new File([b],file.name.replace(/\.\w+$/,'.jpg'),{type:'image/jpeg'}));else res(file);}, 'image/jpeg',q);};img.onerror=()=>res(file);img.src=URL.createObjectURL(file);});}
 function fD(d){if(!d)return"";try{return new Date(d+'T00:00:00').toLocaleDateString("tr-TR",{day:"numeric",month:"long",year:"numeric"});}catch{return d;}}
 function fDS(d){if(!d)return"";try{return new Date(d+'T00:00:00').toLocaleDateString("tr-TR",{day:"numeric",month:"short"});}catch{return d;}}
 function sColor(s){return s==="approved"?"#22c55e":s==="pending_chef"?"#f59e0b":s==="pending_manager"?"#3b82f6":s==="rejected"?"#ef4444":"#94a3b8";}
@@ -213,10 +212,10 @@ function AppInner(){
   const[modEditUser,setModEditUser]=useState(null);
   const[toast,setToast]=useState(null);
   const[submitting,setSubmitting]=useState(false);
-  const[otForm,setOtForm]=useState({date:"",startTime:"17:00",endTime:"",otType:"evening",desc:"",photoBefore:null,photoAfter:null,fileB:null,fileA:null});
+  const[otForm,setOtForm]=useState({date:"",startTime:"17:00",endTime:"",otType:"evening",desc:""});
   const[otErrors,setOtErrors]=useState([]);
   const[nUser,setNUser]=useState({name:"",email:"",password:"",role:"",night:false,userRole:"personnel",buildingId:""});
-  const beforeRef=useRef(null),afterRef=useRef(null),descRef=useRef(null);
+  const descRef=useRef(null);
   const[showDatePicker,setShowDatePicker]=useState(false);
   const[showStartTP,setShowStartTP]=useState(false);
   const[showEndTP,setShowEndTP]=useState(false);
@@ -237,7 +236,6 @@ function AppInner(){
   const[inlineSvcIdx,setInlineSvcIdx]=useState(-1);
   const[showInlineSvcDatePicker,setShowInlineSvcDatePicker]=useState(false);
   const[faultTab,setFaultTab]=useState("active");
-  const faultPhotoRef=useRef(null);
   // Stock/Inventory
   const[materials,setMaterials]=useState([]);
   const[stockMovements,setStockMovements]=useState([]);
@@ -269,12 +267,6 @@ function AppInner(){
   const[showHourlyStartTP,setShowHourlyStartTP]=useState(false);
   const[showHourlyEndTP,setShowHourlyEndTP]=useState(false);
   // Leave document photo
-  const leaveDocRef=useRef(null);
-  const[leaveDoc,setLeaveDoc]=useState(null);
-  const[leaveDocFile,setLeaveDocFile]=useState(null);
-  const hourlyLeaveDocRef=useRef(null);
-  const[hourlyLeaveDoc,setHourlyLeaveDoc]=useState(null);
-  const[hourlyLeaveDocFile,setHourlyLeaveDocFile]=useState(null);
   const now=new Date();
   const[calY,setCalY]=useState(now.getFullYear());
   const[calM,setCalM]=useState(now.getMonth());
@@ -468,12 +460,6 @@ function AppInner(){
     setSubmitting(false);
   }
 
-  async function handlePhoto(e,type){
-    const file=e.target.files?.[0];if(!file)return;
-    try{const compressed=await compressImg(file);const reader=new FileReader();reader.onload=(ev)=>{setOtForm(prev=>({...prev,[type==="before"?"photoBefore":"photoAfter"]:ev.target.result,[type==="before"?"fileB":"fileA"]:compressed}));};reader.onerror=()=>{setToast("Fotoğraf okunamadı");};reader.readAsDataURL(compressed);}catch(e){setToast("Foto yüklenemedi");}
-    if(e.target)e.target.value="";
-  }
-
   async function submitOT(){
     const currentDesc=descRef.current?descRef.current.value:otForm.desc;
     const errors=[];
@@ -481,18 +467,13 @@ function AppInner(){
     if(!otForm.startTime||!otForm.endTime)errors.push("Saat bilgisi eksik");
     const hours=calcOT(otForm.startTime,otForm.endTime,otForm.otType);
     if(hours<=0)errors.push(otForm.otType==="daytime"?"Geçerli saat aralığı girin":"Mesai 17:00 sonrası olmalı");
-    if(!otForm.photoBefore)errors.push("Başlangıç fotografi zorunlu");
-    if(!otForm.photoAfter)errors.push("Bitiş fotografi zorunlu");
     if(!currentDesc||currentDesc.trim().length<20)errors.push("Açıklama zorunlu (min 20 karakter)");
     if(errors.length){setOtErrors(errors);return;}
     setSubmitting(true);
     try{
-      let pB=null,pA=null;
-      if(otForm.fileB){const r=await uploadPhoto(otForm.fileB,'before');pB=r?.url||null;}
-      if(otForm.fileA){const r=await uploadPhoto(otForm.fileA,'after');pA=r?.url||null;}
-      await supabase.from('overtimes').insert({personnel_id:profile.id,work_date:otForm.date,start_time:otForm.startTime,end_time:otForm.endTime,hours,leave_hours:calcLH(hours),overtime_type:otForm.otType||"evening",description:currentDesc.trim(),photo_before:pB,photo_after:pA,status:"pending_chef"}).throwOnError();
+      await supabase.from('overtimes').insert({personnel_id:profile.id,work_date:otForm.date,start_time:otForm.startTime,end_time:otForm.endTime,hours,leave_hours:calcLH(hours),overtime_type:otForm.otType||"evening",description:currentDesc.trim(),status:"pending_chef"}).throwOnError();
       await fetchOvertimes();
-      setOtForm({date:"",startTime:"17:00",endTime:"",otType:"evening",desc:"",photoBefore:null,photoAfter:null,fileB:null,fileA:null});
+      setOtForm({date:"",startTime:"17:00",endTime:"",otType:"evening",desc:""});
       setOtErrors([]);setModNewOT(false);
       setToast(`${hours}s mesai - ${calcLH(hours)}s izin hakkı onaya gönderildi`);
     }catch(e){setToast("Gönderim hatası: "+(e?.message||""));}
@@ -503,23 +484,15 @@ function AppInner(){
     if(calSel.length===0){setToast("⚠ Gün seçin");return;}
     const needH=calSel.length*8,rH=myRemHours(profile.id),willDebt=rH<needH;
     if(willDebt&&(!leaveReason||leaveReason.trim().length<10)){setToast("⚠ Borçlanma durumu var - izin sebebini yazın (min 10 karakter)");return;}
-    if(!leaveDoc){setToast("⚠ İzin belgesi fotoğrafı zorunlu");return;}
     setSubmitting(true);
     try{
       const reason=willDebt?`${leaveReason.trim()} (${Math.round((needH-rH)/8*10)/10} gün borçlanma)`:(leaveReason.trim()||"Fazla mesai karşılığı izin");
       let docUrl=null;
-      if(leaveDocFile){const r=await uploadPhoto(leaveDocFile,'leave-doc');docUrl=r?.url||null;}
       await createLeave({personnel_id:profile.id,dates:calSel.sort(),total_hours:needH,reason,leave_type:"daily",leave_doc_url:docUrl,status:"pending_chef"});
-      await fetchLeaves();setCalSel([]);setCalMode("view");setLeaveReason("");setLeaveDoc(null);setLeaveDocFile(null);
+      await fetchLeaves();setCalSel([]);setCalMode("view");setLeaveReason("");
       setToast(willDebt?`${calSel.length} gun izin gönderildi (borclanma dahil)`:`${calSel.length} gunluk izin onaya gönderildi`);
     }catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
-  }
-
-  async function handleLeaveDoc(e,setDoc,setFile){
-    const file=e.target.files?.[0];if(!file)return;
-    try{const compressed=await compressImg(file);const reader=new FileReader();reader.onload=(ev)=>{setDoc(ev.target.result);setFile(compressed);};reader.onerror=()=>{setToast("Fotoğraf okunamadı");};reader.readAsDataURL(compressed);}catch(e){setToast("Fotoğraf yüklenemedi");}
-    if(e.target)e.target.value="";
   }
 
   async function submitHourlyLeave(){
@@ -528,7 +501,6 @@ function AppInner(){
     if(!hourlyForm.startTime)errors.push("Çıkış saati seçilmedi");
     if(!hourlyForm.endTime)errors.push("Dönüş saati seçilmedi");
     if(!hourlyForm.reason||hourlyForm.reason.trim().length<10)errors.push("Sebep zorunlu (min 10 karakter)");
-    if(!hourlyLeaveDoc)errors.push("İzin belgesi fotoğrafı zorunlu");
     // Calc hours
     const[sh,sm]=(hourlyForm.startTime||"0:0").split(":").map(Number);
     const[eh,em]=(hourlyForm.endTime||"0:0").split(":").map(Number);
@@ -539,7 +511,6 @@ function AppInner(){
     setSubmitting(true);
     try{
       let docUrl=null;
-      if(hourlyLeaveDocFile){const r=await uploadPhoto(hourlyLeaveDocFile,'leave-doc');docUrl=r?.url||null;}
       await createLeave({personnel_id:profile.id,dates:[hourlyForm.date],total_hours:totalH,reason:`[Saatlik İzin] ${hourlyForm.startTime}-${hourlyForm.endTime} (${totalH}s) - ${hourlyForm.reason.trim()}`,leave_type:"hourly",leave_start_time:hourlyForm.startTime,leave_end_time:hourlyForm.endTime,leave_doc_url:docUrl,status:"pending_chef"});
       await fetchLeaves();
       setHourlyForm({date:"",startTime:"",endTime:"",reason:""});
@@ -594,8 +565,7 @@ function AppInner(){
     stB:{display:"flex",gap:6,marginTop:10},
     st:(bg)=>({flex:1,background:bg,borderRadius:8,padding:"8px 6px",textAlign:"center"}),
     sec:{fontSize:15,fontWeight:700,marginBottom:12,display:"flex",alignItems:"center",gap:8},
-    pBox:(has)=>({width:"47%",paddingTop:"47%",borderRadius:12,border:`2px dashed ${has?C.green:C.border}`,background:has?"transparent":C.bg,position:"relative",cursor:"pointer",overflow:"hidden"}),
-    pBoxI:{position:"absolute",top:0,left:0,width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"},
+
     lawBox:{background:"linear-gradient(135deg,rgba(99,102,241,0.1),rgba(168,85,247,0.1))",border:`1px solid ${C.accent}44`,borderRadius:12,padding:14,marginBottom:12},
     errBox:{background:C.redD,border:`1px solid ${C.red}44`,borderRadius:10,padding:12,marginBottom:12},
     back:{display:"flex",alignItems:"center",gap:6,fontSize:13,color:C.accent,background:"none",border:"none",cursor:"pointer",padding:"0 0 12px",fontWeight:600},
@@ -635,7 +605,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.5</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.6</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -671,7 +641,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.5</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.6</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -716,10 +686,6 @@ function AppInner(){
     setSubmitting(true);
     try{
       let photoUrls=[...(faultForm.photos||[])];
-      for(const file of faultPhotoFiles){
-        const r=await uploadPhoto(file,'fault-photos');
-        if(r?.url)photoUrls.push(r.url);
-      }
       if(faultForm.editId){
         // Edit mode
         await supabase.from('faults').update({title:faultForm.title,location:faultForm.location,description:faultForm.description||"",photos:photoUrls,detected_date:faultForm.detected_date,fault_type:faultForm.fault_type,material_needed:faultForm.material_needed||""}).eq('id',faultForm.editId);
@@ -783,17 +749,6 @@ function AppInner(){
     setSubmitting(false);
   }
 
-  async function handleFaultPhoto(e){
-    const files=Array.from(e.target.files||[]);if(!files.length)return;
-    for(const file of files){
-      const compressed=await compressImg(file);
-      const reader=new FileReader();
-      reader.onload=(ev)=>{setFaultForm(p=>({...p,photos:[...p.photos,ev.target.result]}));setFaultPhotoFiles(p=>[...p,compressed]);};
-      reader.readAsDataURL(compressed);
-    }
-    if(e.target)e.target.value="";
-  }
-
   const renderFaults=()=>{
     const activeFaults=bFaults.filter(f=>f.status==="active");
     const resolvedFaults=bFaults.filter(f=>f.status==="resolved");
@@ -830,7 +785,7 @@ function AppInner(){
           <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
             {f.fault_type==="material"?<div style={S.tag("rgba(245,158,11,0.15)",C.orange)}>📦 Malzeme</div>:<div style={S.tag(C.blueD,C.blue)}>🔧 Servis</div>}
             {svcCount>0&&<div style={S.tag(C.blueD,C.blue)}>🔧 {svcCount} servis</div>}
-            {f.photos?.length>0&&<div style={S.tag(C.accentD,C.accent)}>📷 {f.photos.length}</div>}
+            
             {myVote&&<div style={S.tag(myVote.vote==="continues"?C.redD:C.greenD,myVote.vote==="continues"?C.red:C.green)}>{myVote.vote==="continues"?"🔴 Devam":"🟢 Giderildi"}</div>}
             {!myVote&&f.status==="active"&&<div style={S.tag(C.orangeD,C.orange)}>⏳ Oy bekleniyor</div>}
             {votedCount>0&&<div style={{fontSize:10,color:C.muted,alignSelf:"center"}}>{votedCount} oy</div>}
@@ -866,7 +821,7 @@ function AppInner(){
 
       {f.description&&<div style={{...S.lawBox,marginBottom:12}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4}}>Açıklama</div><div style={{fontSize:13}}>{f.description}</div></div>}
 
-      {f.photos?.length>0&&<div style={{marginBottom:12}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:6}}>📷 Fotoğraflar ({f.photos.length})</div><div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:8}}>{f.photos.map((p,i)=><img key={i} src={p} alt="" style={{width:200,height:150,objectFit:"cover",borderRadius:10,flexShrink:0}}/>)}</div></div>}
+      
 
       {services.length>0&&<div style={{marginBottom:12}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:6}}>🔧 Servis Geçmişi ({services.length})</div>{services.map(s=>{const sp=profiles.find(p=>p.id===s.created_by);const daysAfter=f.detected_date&&s.visit_date?daysSince(f.detected_date)-daysSince(s.visit_date):null;return(<div key={s.id} style={{background:C.bg,borderRadius:10,padding:10,marginBottom:6,border:`1px solid ${C.border}`}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}><div><div style={{fontSize:10,color:C.muted}}>Servis Veren Firma</div><div style={{fontWeight:700,fontSize:13}}>{s.service_name}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:12,color:C.dim}}>{fD(s.visit_date)}</div>{daysAfter!==null&&daysAfter>=0&&<div style={{fontSize:10,color:C.orange}}>tespitden {daysAfter} gün sonra</div>}</div></div>
@@ -994,13 +949,7 @@ function AppInner(){
         <div style={S.lbl}>İhtiyaç Duyulan Malzeme</div>
         <textarea style={S.ta} placeholder="Örn: 500 lt genleşme tankı, 1 adet..." value={faultForm.material_needed} onChange={e=>setFaultForm(p=>({...p,material_needed:e.target.value}))}/>
       </>}
-      <div style={S.lbl}>📷 Fotoğraflar</div>
-      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
-        {faultForm.photos.map((p,i)=><div key={i} style={{position:"relative"}}><img src={p} alt="" style={{width:80,height:80,objectFit:"cover",borderRadius:10}}/><button onClick={()=>{setFaultForm(prev=>({...prev,photos:prev.photos.filter((_,j)=>j!==i)}));setFaultPhotoFiles(prev=>prev.filter((_,j)=>j!==i));}} style={{position:"absolute",top:-6,right:-6,width:20,height:20,borderRadius:10,background:C.red,color:"#fff",border:"none",fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button></div>)}
-        <label style={{width:80,height:80,borderRadius:10,border:`2px dashed ${C.border}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:24,color:C.muted,position:"relative",overflow:"hidden"}}>+
-          <input ref={faultPhotoRef} type="file" accept="image/*" multiple style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",opacity:0,cursor:"pointer"}} onChange={handleFaultPhoto}/>
-        </label>
-      </div>
+
 
       {/* Inline Services - only for service type */}
       {faultForm.fault_type==="service"&&<div style={{marginBottom:12}}>
@@ -1414,7 +1363,7 @@ function AppInner(){
           </div>
           {debt>0&&<div style={{marginTop:8,background:C.redD,borderRadius:8,padding:"6px 10px",textAlign:"center"}}><span style={{fontSize:12,color:C.red,fontWeight:700}}>⚠ {debt} gun mesai borcu</span></div>}
         </div>
-        <button style={S.btn(C.accent)} onClick={()=>{setOtForm({date:todayStr(),startTime:"17:00",endTime:"",otType:"evening",desc:"",photoBefore:null,photoAfter:null,fileB:null,fileA:null});setOtErrors([]);setModNewOT(true);}}>+ Fazla Mesai Bildir</button>
+        <button style={S.btn(C.accent)} onClick={()=>{setOtForm({date:todayStr(),startTime:"17:00",endTime:"",otType:"evening",desc:""});setOtErrors([]);setModNewOT(true);}}>+ Fazla Mesai Bildir</button>
         {myPendingVotes.length>0&&<div style={{...S.crd,background:votePeriod.isUrgent?C.redD:votePeriod.isWarning?"rgba(245,158,11,0.12)":"rgba(99,102,241,0.1)",borderColor:votePeriod.isUrgent?`${C.red}66`:votePeriod.isWarning?`${C.orange}44`:`${C.accent}44`,cursor:"pointer",textAlign:"center"}} onClick={()=>setPage("faults")}>
           <div style={{fontSize:votePeriod.isUrgent?24:20,fontWeight:800,color:votePeriod.isUrgent?C.red:votePeriod.isWarning?C.orange:C.accent}}>🗳 {myPendingVotes.length}</div>
           <div style={{fontSize:12,fontWeight:600,color:votePeriod.isUrgent?C.red:votePeriod.isWarning?C.orange:C.text}}>Arıza için oy bekleniyor</div>
@@ -1441,7 +1390,7 @@ function AppInner(){
           <div style={S.st(C.greenD)}><div style={{fontSize:14,fontWeight:800,color:C.green}}>{myUH}s</div><div style={{fontSize:9,color:C.dim}}>Kullanılan</div></div>
           <div style={S.st(myRH<0?C.redD:"rgba(255,255,255,0.08)")}><div style={{fontSize:14,fontWeight:800,color:myRH<0?C.red:C.text}}>{myRH}s</div><div style={{fontSize:9,color:C.dim}}>{myRH<0?"BORÇ":"Kalan"}</div></div>
         </div>
-        <button style={{...S.btn(C.accent),marginTop:8}} onClick={()=>{setOtForm({date:todayStr(),startTime:"17:00",endTime:"",otType:"evening",desc:"",photoBefore:null,photoAfter:null,fileB:null,fileA:null});setOtErrors([]);setModNewOT(true);}}>+ Fazla Mesai Bildir</button>
+        <button style={{...S.btn(C.accent),marginTop:8}} onClick={()=>{setOtForm({date:todayStr(),startTime:"17:00",endTime:"",otType:"evening",desc:""});setOtErrors([]);setModNewOT(true);}}>+ Fazla Mesai Bildir</button>
       </div>
       <div style={{...S.crd,background:vPC>0?C.orangeD:C.card,cursor:vPC>0?"pointer":"default",textAlign:"center"}} onClick={()=>vPC>0&&setPage("approvals")}>
         <div style={{fontSize:28,fontWeight:800,color:vPC>0?C.orange:C.green}}>{vPC>0?vPC:"✓"}</div>
@@ -1476,7 +1425,7 @@ function AppInner(){
       {vOTs.map(o=>{const p=getU(o.personnel_id);const debt=debtDays(o.personnel_id);return(<div key={o.id} style={S.crd} onClick={()=>setSelOT(o)}>
         <div style={S.row}><div style={S.av(C.orangeD)}>{ini(p?.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14,fontWeight:600}}>{p?.full_name}</div><div style={{fontSize:11,color:C.dim}}>{fD(o.work_date)} {o.start_time?.slice(0,5)}→{o.end_time?.slice(0,5)}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:18,fontWeight:800,color:C.accent}}>{o.hours}s</div><div style={{fontSize:11,color:C.purple}}>→{o.leave_hours}s</div></div></div>
         <div style={{fontSize:12,color:C.dim,margin:"8px 0"}}>{o.description}</div>
-        {(o.photo_before||o.photo_after)&&<div style={{display:"flex",gap:8,marginBottom:8}}>{o.photo_before&&<img src={o.photo_before} alt="" style={{width:60,height:60,borderRadius:8,objectFit:"cover"}}/>}{o.photo_after&&<img src={o.photo_after} alt="" style={{width:60,height:60,borderRadius:8,objectFit:"cover"}}/>}</div>}
+        
         {debt>0&&<div style={{fontSize:11,color:C.red,fontWeight:600,marginBottom:8}}>⚠ {debt} gun mesai borcu var</div>}
         <div style={{fontSize:11,color:C.muted,marginBottom:4}}>{sText(o.status)}</div>
         {canApprove&&<div style={{display:"flex",gap:8}} onClick={e=>e.stopPropagation()}><button style={S.btnS(C.green)} onClick={()=>doApproveOT(o.id,isChef?"chef":"manager")}>✓ Onayla</button><button style={S.btnS(C.redD,C.red)} onClick={()=>doRejectOT(o.id)}>✗ Reddet</button></div>}
@@ -1487,7 +1436,7 @@ function AppInner(){
         <div style={S.row}><div style={S.av(C.blueD)}>{ini(p?.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14,fontWeight:600}}>{p?.full_name}</div>{l.leave_type==="hourly"?<div style={{fontSize:12,color:C.blue,fontWeight:600,marginTop:2}}>🕐 {l.leave_start_time?.slice(0,5)}-{l.leave_end_time?.slice(0,5)} ({l.total_hours}s)</div>:<div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:4}}>{(Array.isArray(l.dates)?l.dates:[]).map(d=><span key={d} style={S.tag(C.blueD,C.blue)}>{fDS(d)}</span>)}</div>}</div><div style={{fontSize:18,fontWeight:800}}>{l.leave_type==="hourly"?l.total_hours+"s":(Array.isArray(l.dates)?l.dates.length:0)+"g"}</div></div>
         {l.leave_type==="hourly"&&<div style={{...S.tag(C.blueD,C.blue),marginTop:6}}>🕐 Saatlik İzin - {fD(l.dates?.[0])}</div>}
         {l.reason&&<div style={{fontSize:12,color:C.dim,margin:"8px 0",background:C.bg,borderRadius:8,padding:"8px 10px",border:`1px solid ${C.border}`}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4}}>📝 Sebep:</div>{l.reason}</div>}
-        {l.leave_doc_url&&<div style={{marginBottom:8}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4}}>📄 İzin Belgesi:</div><img src={l.leave_doc_url} alt="" style={{width:"100%",maxHeight:200,objectFit:"cover",borderRadius:8}}/><a href={l.leave_doc_url} download target="_blank" rel="noopener" style={{display:"block",textAlign:"center",marginTop:6,fontSize:12,color:C.accent,textDecoration:"none",fontWeight:600}} onClick={e=>e.stopPropagation()}>⬇ Görseli İndir</a></div>}
+        
         {willDebt&&<div style={{fontSize:11,color:C.red,fontWeight:700,margin:"8px 0",background:C.redD,borderRadius:6,padding:"4px 8px"}}>⚠ Onaylanirsa {Math.round((l.total_hours-rH)/8*10)/10} gün borçlanacak</div>}
         {l.previous_dates&&<div style={{fontSize:11,color:C.orange,margin:"8px 0"}}>🔄 Eski: {(Array.isArray(l.previous_dates)?l.previous_dates:[]).map(d=>fDS(d)).join(", ")}</div>}
         <div style={{fontSize:11,color:C.muted,marginBottom:4}}>{sText(l.status)}</div>
@@ -1540,13 +1489,7 @@ function AppInner(){
         <div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:11,color:C.dim}}>Kullanılacak</div><div style={{fontSize:18,fontWeight:800,color:C.purple}}>{needH}s</div></div><div style={{textAlign:"right"}}><div style={{fontSize:11,color:C.dim}}>Kalan Hak</div><div style={{fontSize:18,fontWeight:800,color:avD>=0?C.green:C.red}}>{avD}g</div></div></div>
         {willDebt&&<><div style={{marginTop:8,background:C.redD,borderRadius:8,padding:"6px 10px",textAlign:"center"}}><span style={{fontSize:12,color:C.red,fontWeight:700}}>⚠ {debtAmt} gün borçlanma olacak</span></div><div style={{marginTop:10}}><div style={{...S.lbl,color:C.red}}>📝 Fazla izin sebebi (zorunlu)</div><textarea style={{...S.ta,borderColor:`${C.red}66`,minHeight:60}} placeholder="Neden fazla izin istiyorsunuz?" value={leaveReason} onChange={e=>setLeaveReason(e.target.value)}/></div></>}
         {!willDebt&&calMode==="select"&&<div style={{marginTop:10}}><div style={S.lbl}>📝 İzin sebebi (isteğe bağlı)</div><textarea style={{...S.ta,minHeight:50}} placeholder="İzin sebebiniz..." value={leaveReason} onChange={e=>setLeaveReason(e.target.value)}/></div>}
-        <div style={{marginTop:10}}><div style={{...S.lbl,color:C.orange}}>📄 İzin Belgesi Fotoğrafı (zorunlu)</div>
-          <label style={{...S.fInp,borderColor:leaveDoc?C.green+"88":C.orange+"88",background:leaveDoc?C.greenD:C.bg,position:"relative",overflow:"hidden"}}>
-            <span style={{color:leaveDoc?C.green:C.muted}}>{leaveDoc?"✓ Belge yüklendi":"Fotoğraf çekin veya seçin..."}</span><span style={{fontSize:18}}>📄</span>
-            <input ref={leaveDocRef} type="file" accept="image/*" style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",opacity:0,cursor:"pointer"}} onChange={e=>handleLeaveDoc(e,setLeaveDoc,setLeaveDocFile)}/>
-          </label>
-          {leaveDoc&&<img src={leaveDoc} alt="" style={{width:"100%",maxHeight:160,objectFit:"cover",borderRadius:10,marginBottom:8}}/>}
-        </div>
+
       </div>}
       {isSel&&<div>
         {calMode==="select"&&<button style={S.btn(willDebt?C.orange:C.teal)} onClick={submitLeaveReq} disabled={submitting}>{submitting?"Gönderiliyor...":willDebt?`⚠ Borçlanarak İzin Gönder (${calSel.length} gun)`:`📅 Onaya Gönder (${calSel.length} gun)`}</button>}
@@ -1554,8 +1497,8 @@ function AppInner(){
         <button style={S.btn(C.border,C.text)} onClick={()=>{setCalMode("view");setCalSel([]);setCalModId(null);setLeaveReason("");}}>İptal</button>
       </div>}
       {!isSel&&!hourlyMode&&<div style={{display:"flex",gap:8}}>
-        <button style={{...S.btn(C.teal),flex:1}} onClick={()=>{setCalMode("select");setCalSel([]);setLeaveReason("");setLeaveDoc(null);setLeaveDocFile(null);}}>📅 Günlük İzin</button>
-        <button style={{...S.btn(C.blueD,C.blue),flex:1}} onClick={()=>{setHourlyMode(true);setHourlyForm({date:todayStr(),startTime:"",endTime:"",reason:""});setHourlyLeaveDoc(null);setHourlyLeaveDocFile(null);}}>🕐 Saatlik İzin</button>
+        <button style={{...S.btn(C.teal),flex:1}} onClick={()=>{setCalMode("select");setCalSel([]);setLeaveReason("");}}>📅 Günlük İzin</button>
+        <button style={{...S.btn(C.blueD,C.blue),flex:1}} onClick={()=>{setHourlyMode(true);setHourlyForm({date:todayStr(),startTime:"",endTime:"",reason:""});}}>🕐 Saatlik İzin</button>
       </div>}
       {hourlyMode&&<div style={{...S.lawBox,marginTop:12}}>
         <div style={{fontSize:15,fontWeight:700,marginBottom:12,display:"flex",alignItems:"center",gap:8}}>🕐 Saatlik İzin Talebi</div>
@@ -1569,14 +1512,9 @@ function AppInner(){
         <div style={S.lbl}>📝 Sebep (zorunlu, min 10 karakter)</div>
         <textarea style={S.ta} placeholder="İzin sebebinizi yazın..." value={hourlyForm.reason} onChange={e=>setHourlyForm(p=>({...p,reason:e.target.value}))}/>
         <div style={{fontSize:11,color:hourlyForm.reason.length>=10?C.green:C.muted,marginTop:-6,marginBottom:10,textAlign:"right"}}>{hourlyForm.reason.length}/10</div>
-        <div style={{...S.lbl,color:C.orange}}>📄 İzin Belgesi Fotoğrafı (zorunlu)</div>
-        <label style={{...S.fInp,borderColor:hourlyLeaveDoc?C.green+"88":C.orange+"88",background:hourlyLeaveDoc?C.greenD:C.bg,position:"relative",overflow:"hidden"}}>
-          <span style={{color:hourlyLeaveDoc?C.green:C.muted}}>{hourlyLeaveDoc?"✓ Belge yüklendi":"Fotoğraf çekin veya seçin..."}</span><span style={{fontSize:18}}>📄</span>
-          <input ref={hourlyLeaveDocRef} type="file" accept="image/*" style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",opacity:0,cursor:"pointer"}} onChange={e=>handleLeaveDoc(e,setHourlyLeaveDoc,setHourlyLeaveDocFile)}/>
-        </label>
-        {hourlyLeaveDoc&&<img src={hourlyLeaveDoc} alt="" style={{width:"100%",maxHeight:160,objectFit:"cover",borderRadius:10,marginBottom:8}}/>}
+
         <button style={S.btn(C.blue)} onClick={submitHourlyLeave} disabled={submitting}>{submitting?"Gönderiliyor...":"🕐 Saatlik İzin Gönder"}</button>
-        <button style={S.btn(C.border,C.text)} onClick={()=>{setHourlyMode(false);setHourlyLeaveDoc(null);setHourlyLeaveDocFile(null);}}>İptal</button>
+        <button style={S.btn(C.border,C.text)} onClick={()=>{setHourlyMode(false);}}>İptal</button>
       </div>}
       {!isSel&&<div style={{marginTop:16}}>
         {(()=>{
@@ -1674,7 +1612,7 @@ function AppInner(){
       </div>
       <div style={{marginBottom:12}}><div style={S.lbl}>Durum</div><div style={S.tag(sColor(o.status)+"22",sColor(o.status))}>{sIcon(o.status)} {sText(o.status)}</div></div>
       <div style={{marginBottom:12}}><div style={S.lbl}>Açıklama</div><div style={{fontSize:13,color:C.text,background:C.bg,borderRadius:8,padding:10,border:`1px solid ${C.border}`}}>{o.description||"—"}</div></div>
-      {(o.photo_before||o.photo_after)&&<div><div style={S.lbl}>Fotoğraflar</div><div style={{display:"flex",gap:10}}>{o.photo_before&&<div style={{flex:1}}><div style={{fontSize:10,color:C.orange,fontWeight:700,marginBottom:4}}>ONCE</div><img src={o.photo_before} alt="" style={{width:"100%",borderRadius:10}}/></div>}{o.photo_after&&<div style={{flex:1}}><div style={{fontSize:10,color:C.green,fontWeight:700,marginBottom:4}}>SONRA</div><img src={o.photo_after} alt="" style={{width:"100%",borderRadius:10}}/></div>}</div></div>}
+      
       {isAdmin&&editOT&&editOT.id===o.id?<div style={{background:C.accentD,borderRadius:12,padding:14,marginTop:12}}>
         <div style={{fontSize:14,fontWeight:700,marginBottom:10,color:C.accent}}>✏️ Saatleri Düzelt</div>
         <div style={{display:"flex",gap:10}}>
@@ -1706,7 +1644,7 @@ function AppInner(){
       </>}
       <div style={S.tag(sColor(l.status)+"22",sColor(l.status))}>{sIcon(l.status)} {sText(l.status)}</div>
       {l.reason&&<div style={{marginTop:12,background:C.bg,borderRadius:8,padding:10,border:`1px solid ${C.border}`}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4}}>📝 Sebep</div><div style={{fontSize:13,color:l.reason.includes("borc")?C.red:C.text}}>{l.reason}</div></div>}
-      {l.leave_doc_url&&<div style={{marginTop:12}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4}}>📄 İzin Belgesi</div><img src={l.leave_doc_url} alt="" style={{width:"100%",maxHeight:300,objectFit:"cover",borderRadius:10}}/><a href={l.leave_doc_url} download target="_blank" rel="noopener" style={{display:"block",textAlign:"center",marginTop:8,padding:"10px",background:C.accentD,borderRadius:10,fontSize:13,color:C.accent,textDecoration:"none",fontWeight:700}}>⬇ Görseli İndir</a></div>}
+      
       {prevDates.length>0&&<div style={{fontSize:12,color:C.orange,marginTop:12}}>🔄 Önceki: {prevDates.map(d=>fD(d)).join(", ")}</div>}
       {canApprove&&l.status!=="approved"&&l.status!=="rejected"&&<><div style={S.dv}/><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.green),flex:1}} onClick={()=>{doApproveLV(l.id,isChef?"chef":"manager");setSelLV(null);}}>✓ Onayla</button><button style={{...S.btn(C.redD,C.red),flex:1}} onClick={()=>{doRejectLV(l.id);setSelLV(null);}}>✗ Reddet</button></div></>}
       {isAdmin&&<><div style={S.dv}/>{deleteConfirm===l.id?<div style={{background:C.redD,borderRadius:10,padding:14}}><div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:8,textAlign:"center"}}>⚠ Bu izin talebini silmek istediğinize emin misiniz?</div><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.red),flex:1}} onClick={()=>doDeleteLV(l.id)} disabled={submitting}>{submitting?"Siliniyor...":"🗑 Evet, Sil"}</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setDeleteConfirm(null)}>İptal</button></div></div>:<button style={S.btn(C.redD,C.red)} onClick={()=>setDeleteConfirm(l.id)}>🗑 Bu İzni Sil</button>}</>}
@@ -1730,10 +1668,10 @@ function AppInner(){
         <div style={{flex:1}}><div style={S.lbl}>Bitiş</div><div style={S.fInp} onClick={()=>setShowEndTP(true)}><span style={{color:otForm.endTime?C.text:C.muted}}>{otForm.endTime||"Saat"}</span><span>🕐</span></div></div>
       </div>
       {otForm.endTime&&<div style={S.lawBox}><div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:11,color:C.dim}}>Mesai</div><div style={{fontSize:24,fontWeight:800,color:liveOTH>0?C.accent:C.red}}>{liveOTH}s</div></div><div style={{fontSize:20,color:C.dim,display:"flex",alignItems:"center"}}>→</div><div style={{textAlign:"right"}}><div style={{fontSize:11,color:C.dim}}>Izin (x1.5)</div><div style={{fontSize:24,fontWeight:800,color:C.purple}}>{liveLH}s</div></div></div></div>}
-      <div style={S.lbl}>📷 Fotoğraflar (2 zorunlu)</div>
+
       <div style={{display:"flex",gap:10,marginBottom:12,justifyContent:"space-between"}}>
-        <div style={S.pBox(!!otForm.photoBefore)}><div style={S.pBoxI}>{otForm.photoBefore?<><img src={otForm.photoBefore} alt="" style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:10,position:"absolute",top:0,left:0}}/><div style={{position:"absolute",bottom:6,left:6,fontSize:10,background:"rgba(0,0,0,0.7)",padding:"2px 6px",borderRadius:4,color:C.orange,fontWeight:700,zIndex:1}}>ONCE ✓</div></>:<><div style={{fontSize:28}}>📷</div><div style={{fontSize:11,color:C.orange,fontWeight:600}}>BASLANGIC</div></>}</div><input ref={beforeRef} type="file" accept="image/*" style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",opacity:0,cursor:"pointer",zIndex:5}} onChange={e=>handlePhoto(e,"before")}/></div>
-        <div style={S.pBox(!!otForm.photoAfter)}><div style={S.pBoxI}>{otForm.photoAfter?<><img src={otForm.photoAfter} alt="" style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:10,position:"absolute",top:0,left:0}}/><div style={{position:"absolute",bottom:6,left:6,fontSize:10,background:"rgba(0,0,0,0.7)",padding:"2px 6px",borderRadius:4,color:C.green,fontWeight:700,zIndex:1}}>SONRA ✓</div></>:<><div style={{fontSize:28}}>📷</div><div style={{fontSize:11,color:C.green,fontWeight:600}}>BITIS</div></>}</div><input ref={afterRef} type="file" accept="image/*" style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",opacity:0,cursor:"pointer",zIndex:5}} onChange={e=>handlePhoto(e,"after")}/></div>
+
+
       </div>
       <div style={S.lbl}>Açıklama (min 20 karakter)</div>
       <textarea ref={descRef} style={S.ta} placeholder="Yapılan işi detaylı açıklayın..." defaultValue={otForm.desc} onChange={e=>setOtForm(prev=>({...prev,desc:e.target.value}))}/>
