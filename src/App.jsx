@@ -16,7 +16,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v4.2</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v4.3</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -272,6 +272,7 @@ function AppInner(){
   const[calM,setCalM]=useState(now.getMonth());
   const[calSel,setCalSel]=useState([]);
   const[calMode,setCalMode]=useState("view");
+  const[leaveSource,setLeaveSource]=useState("overtime"); // 'overtime' or 'annual'
   const[calModId,setCalModId]=useState(null);
   const[expandedPast,setExpandedPast]=useState(null);
 
@@ -421,20 +422,29 @@ function AppInner(){
 
   function getU(id){return profileMap.get(id);}
   // Building-scoped helpers (for dashboard/approvals - shows selected building's data)
+  const isOTLeave=(l)=>!l.leave_source||l.leave_source==="overtime";
+  const isAnnualLeave=(l)=>l.leave_source==="annual";
   function totLH(pid){return bOvertimes.filter(o=>o.personnel_id===pid&&o.status==="approved").reduce((s,o)=>s+Number(o.leave_hours||0),0);}
-  function totUsedLV(pid){return bLeaves.filter(l=>l.personnel_id===pid&&["approved","pending_chef","pending_manager"].includes(l.status)).reduce((s,l)=>s+(l.total_hours||0),0);}
+  function totUsedLV(pid){return bLeaves.filter(l=>l.personnel_id===pid&&isOTLeave(l)&&["approved","pending_chef","pending_manager"].includes(l.status)).reduce((s,l)=>s+(l.total_hours||0),0);}
   function remHours(pid){return Math.round((totLH(pid)-totUsedLV(pid))*10)/10;}
   function totOTH(pid){return bOvertimes.filter(o=>o.personnel_id===pid&&o.status==="approved").reduce((s,o)=>s+Number(o.hours||0),0);}
   function remDays(pid){return Math.round((remHours(pid)/8)*10)/10;}
   function debtDays(pid){const r=remDays(pid);return r<0?Math.abs(r):0;}
   function pendCount(pid){return bOvertimes.filter(o=>o.personnel_id===pid&&["pending_chef","pending_manager"].includes(o.status)).length+bLeaves.filter(l=>l.personnel_id===pid&&["pending_chef","pending_manager"].includes(l.status)).length;}
+  // Annual leave helpers
+  function annualDays(pid){const p=getU(pid);return p?.annual_leave_days||14;}
+  function annualUsed(pid){return bLeaves.filter(l=>l.personnel_id===pid&&isAnnualLeave(l)&&["approved","pending_chef","pending_manager"].includes(l.status)).reduce((s,l)=>{const d=Array.isArray(l.dates)?l.dates.length:0;return s+d;},0);}
+  function annualRemaining(pid){return annualDays(pid)-annualUsed(pid);}
   // Global helpers (for user's own summary - always shows own data regardless of building)
   function myTotLH(pid){return overtimes.filter(o=>o.personnel_id===pid&&o.status==="approved").reduce((s,o)=>s+Number(o.leave_hours||0),0);}
-  function myTotUsedLV(pid){return leavesState.filter(l=>l.personnel_id===pid&&["approved","pending_chef","pending_manager"].includes(l.status)).reduce((s,l)=>s+(l.total_hours||0),0);}
+  function myTotUsedLV(pid){return leavesState.filter(l=>l.personnel_id===pid&&isOTLeave(l)&&["approved","pending_chef","pending_manager"].includes(l.status)).reduce((s,l)=>s+(l.total_hours||0),0);}
   function myRemHours(pid){return Math.round((myTotLH(pid)-myTotUsedLV(pid))*10)/10;}
   function myTotOTH(pid){return overtimes.filter(o=>o.personnel_id===pid&&o.status==="approved").reduce((s,o)=>s+Number(o.hours||0),0);}
   function myRemDays(pid){return Math.round((myRemHours(pid)/8)*10)/10;}
   function myDebtDays(pid){const r=myRemDays(pid);return r<0?Math.abs(r):0;}
+  function myAnnualDays(){return profile?.annual_leave_days||14;}
+  function myAnnualUsed(){return leavesState.filter(l=>l.personnel_id===profile?.id&&isAnnualLeave(l)&&["approved","pending_chef","pending_manager"].includes(l.status)).reduce((s,l)=>{const d=Array.isArray(l.dates)?l.dates.length:0;return s+d;},0);}
+  function myAnnualRemaining(){return myAnnualDays()-myAnnualUsed();}
 
   async function doLogin(){setLoginErr("");try{const{error}=await signIn(login.email,login.password);if(error)setLoginErr("Giriş başarısız: "+error.message);}catch(e){setLoginErr("Bağlantı hatası");}}
   async function doLogout(){try{await signOut();}catch(e){}setProfile(null);setPage("dashboard");setSelPerson(null);}
@@ -494,13 +504,30 @@ function AppInner(){
 
   async function submitLeaveReq(){
     if(calSel.length===0){setToast("⚠ Gün seçin");return;}
+    
+    if(leaveSource==="annual"){
+      // Annual leave
+      const remaining=myAnnualRemaining();
+      if(calSel.length>remaining){setToast(`⚠ Yıllık izin hakkınız ${remaining} gün, ${calSel.length} gün seçtiniz`);return;}
+      if(!leaveReason||leaveReason.trim().length<5){setToast("⚠ İzin sebebi yazın (min 5 karakter)");return;}
+      setSubmitting(true);
+      try{
+        await createLeave({personnel_id:profile.id,dates:calSel.sort(),total_hours:calSel.length*8,reason:`[Yıllık İzin] ${leaveReason.trim()}`,leave_type:"daily",leave_source:"annual",status:"pending_chef"});
+        await fetchLeaves();setCalSel([]);setCalMode("view");setLeaveReason("");
+        setToast(`🌴 ${calSel.length} günlük yıllık izin onaya gönderildi`);
+      }catch(e){setToast("Hata: "+(e?.message||""));}
+      setSubmitting(false);
+      return;
+    }
+    
+    // Overtime leave (existing logic)
     const needH=calSel.length*8,rH=myRemHours(profile.id),willDebt=rH<needH;
     if(willDebt&&(!leaveReason||leaveReason.trim().length<10)){setToast("⚠ Borçlanma durumu var - izin sebebini yazın (min 10 karakter)");return;}
     setSubmitting(true);
     try{
       const reason=willDebt?`${leaveReason.trim()} (${Math.round((needH-rH)/8*10)/10} gün borçlanma)`:(leaveReason.trim()||"Fazla mesai karşılığı izin");
       let docUrl=null;
-      await createLeave({personnel_id:profile.id,dates:calSel.sort(),total_hours:needH,reason,leave_type:"daily",leave_doc_url:docUrl,status:"pending_chef"});
+      await createLeave({personnel_id:profile.id,dates:calSel.sort(),total_hours:needH,reason,leave_type:"daily",leave_source:"overtime",leave_doc_url:docUrl,status:"pending_chef"});
       await fetchLeaves();setCalSel([]);setCalMode("view");setLeaveReason("");
       setToast(willDebt?`${calSel.length} gun izin gönderildi (borclanma dahil)`:`${calSel.length} gunluk izin onaya gönderildi`);
     }catch(e){setToast("Hata: "+(e?.message||""));}
@@ -617,7 +644,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.2</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.3</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -653,7 +680,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.2</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.3</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -677,6 +704,10 @@ function AppInner(){
           <div style={S.st(rH<0?C.redD:"rgba(255,255,255,0.08)")}><div style={{fontSize:16,fontWeight:800,color:rH<0?C.red:C.text}}>{rH}s</div><div style={{fontSize:9,color:C.dim}}>{rH<0?"BORÇ":"Kalan"}</div></div>
         </div>
         {debt>0&&<div style={{marginTop:8,background:C.redD,borderRadius:8,padding:"6px 10px",textAlign:"center"}}><span style={{fontSize:12,color:C.red,fontWeight:700}}>⚠ {debt} gun mesai borcu var</span></div>}
+        <div style={{marginTop:10,background:"rgba(20,184,166,0.08)",borderRadius:8,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:12,fontWeight:600,color:C.teal}}>🌴 Yıllık İzin</div>
+          <div style={{fontSize:13,fontWeight:800,color:annualRemaining(p.id)>0?C.teal:C.red}}>{annualUsed(p.id)}/{annualDays(p.id)}g kullanıldı — {annualRemaining(p.id)}g kalan</div>
+        </div>
       </div>
       <div style={{...S.sec,marginTop:16}}><span>⏱</span> Mesai ({pOTs.length})</div>
       {pOTs.length===0&&<div style={{...S.emp,padding:20}}>Kayit yok</div>}
@@ -1451,6 +1482,10 @@ function AppInner(){
           <div style={S.st(myRH<0?C.redD:"rgba(255,255,255,0.08)")}><div style={{fontSize:14,fontWeight:800,color:myRH<0?C.red:C.text}}>{myRH}s</div><div style={{fontSize:9,color:C.dim}}>{myRH<0?"BORÇ":"Kalan"}</div></div>
         </div>
         <button style={{...S.btn(C.accent),marginTop:8}} onClick={()=>{setOtForm({date:todayStr(),startTime:"17:00",endTime:"",otType:"evening",desc:""});setOtErrors([]);setModNewOT(true);}}>+ Fazla Mesai Bildir</button>
+        <div style={{marginTop:8,background:"rgba(20,184,166,0.08)",borderRadius:8,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:12,fontWeight:600,color:C.teal}}>🌴 Yıllık İzin</div>
+          <div style={{fontSize:13,fontWeight:800,color:myAnnualRemaining()>0?C.teal:C.red}}>{myAnnualRemaining()}/{myAnnualDays()}g kalan</div>
+        </div>
       </div>
       <div style={{...S.crd,background:vPC>0?C.orangeD:C.card,cursor:vPC>0?"pointer":"default",textAlign:"center"}} onClick={()=>vPC>0&&setPage("approvals")}>
         <div style={{fontSize:28,fontWeight:800,color:vPC>0?C.orange:C.green}}>{vPC>0?vPC:"✓"}</div>
@@ -1535,6 +1570,32 @@ function AppInner(){
     const needH=calSel.length*8,currentRH=myRemHours(profile.id),willDebt=needH>0&&currentRH<needH,debtAmt=willDebt?Math.round((needH-currentRH)/8*10)/10:0;
     return(<div>
       <div style={S.sec}><span>📅</span> İzin Takvimi</div>
+      {/* Leave source toggle */}
+      <div style={{display:"flex",gap:6,marginBottom:12}}>
+        <button style={{flex:1,padding:"10px",borderRadius:10,border:"2px solid "+(leaveSource==="overtime"?C.accent:C.border),background:leaveSource==="overtime"?C.accentD:"transparent",color:leaveSource==="overtime"?C.accent:C.muted,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>{setLeaveSource("overtime");setCalMode("view");setCalSel([]);setHourlyMode(false);}}>⏱ Mesai İzni</button>
+        <button style={{flex:1,padding:"10px",borderRadius:10,border:"2px solid "+(leaveSource==="annual"?C.teal:C.border),background:leaveSource==="annual"?C.tealD:"transparent",color:leaveSource==="annual"?C.teal:C.muted,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>{setLeaveSource("annual");setCalMode("view");setCalSel([]);setHourlyMode(false);}}>🌴 Yıllık İzin</button>
+      </div>
+      {/* Balance display */}
+      {leaveSource==="overtime"?
+        <div style={{...S.lawBox,marginBottom:12,borderColor:C.accent+"44"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div><div style={{fontSize:12,fontWeight:700,color:C.accent}}>⏱ Mesai İzin Hakkı</div><div style={{fontSize:10,color:C.dim}}>Fazla mesaiden kazanılan</div></div>
+            <div style={{textAlign:"right"}}><div style={{fontSize:20,fontWeight:800,color:avD>=0?C.green:C.red}}>{avD}g</div><div style={{fontSize:9,color:C.dim}}>{myRemHours(profile.id)}s kalan</div></div>
+          </div>
+        </div>
+      :<div style={{...S.lawBox,marginBottom:12,borderColor:C.teal+"44"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div><div style={{fontSize:12,fontWeight:700,color:C.teal}}>🌴 Yıllık İzin Hakkı</div><div style={{fontSize:10,color:C.dim}}>Toplam: {myAnnualDays()} gün</div></div>
+            <div style={{textAlign:"right"}}>
+              <div style={{fontSize:20,fontWeight:800,color:myAnnualRemaining()>0?C.green:C.red}}>{myAnnualRemaining()}g</div>
+              <div style={{fontSize:9,color:C.dim}}>{myAnnualUsed()}g kullanıldı</div>
+            </div>
+          </div>
+          <div style={{height:6,borderRadius:3,background:C.bg,overflow:"hidden",marginTop:8}}>
+            <div style={{height:"100%",borderRadius:3,width:Math.min(100,Math.round((myAnnualUsed()/Math.max(myAnnualDays(),1))*100))+"%",background:myAnnualRemaining()<=2?C.red:myAnnualRemaining()<=5?C.orange:C.teal}}/>
+          </div>
+        </div>
+      }
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
         <button onClick={prev} style={{background:C.accentD,border:"none",color:C.accent,width:40,height:40,borderRadius:10,cursor:"pointer",fontSize:18,fontWeight:700,WebkitAppearance:"none"}}>&#8249;</button>
         <div style={{textAlign:"center"}}><div style={{fontSize:17,fontWeight:700}}>{MONTHS[calM]} {calY}</div>{isPerso&&<div style={{fontSize:11,color:avD>0?C.green:avD<0?C.red:C.muted,marginTop:2}}>{avD<0?`Borc: ${Math.abs(avD)} gun`:`Kalan: ${avD} gun`}</div>}</div>
@@ -1543,22 +1604,33 @@ function AppInner(){
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4,marginBottom:4}}>{DAYS_TR.map(d=><div key={d} style={{textAlign:"center",fontSize:11,color:C.muted,fontWeight:600,padding:"4px 0"}}>{d}</div>)}</div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>{cells}</div>
       {isSel&&calSel.length>0&&<div style={{...S.lawBox,marginTop:12}}>
-        <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>📅 Seçilen ({calSel.length} gun)</div>
-        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{calSel.sort().map(d=><div key={d} onClick={()=>setCalSel(p=>p.filter(x=>x!==d))} style={{...S.tag(C.accentD,C.accent),cursor:"pointer",padding:"4px 10px"}}>{fDS(d)} ✕</div>)}</div>
+        <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>{leaveSource==="annual"?"🌴":"📅"} Seçilen ({calSel.length} gun)</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{calSel.sort().map(d=><div key={d} onClick={()=>setCalSel(p=>p.filter(x=>x!==d))} style={{...S.tag(leaveSource==="annual"?C.tealD:C.accentD,leaveSource==="annual"?C.teal:C.accent),cursor:"pointer",padding:"4px 10px"}}>{fDS(d)} ✕</div>)}</div>
         <div style={S.dv}/>
-        <div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:11,color:C.dim}}>Kullanılacak</div><div style={{fontSize:18,fontWeight:800,color:C.purple}}>{needH}s</div></div><div style={{textAlign:"right"}}><div style={{fontSize:11,color:C.dim}}>Kalan Hak</div><div style={{fontSize:18,fontWeight:800,color:avD>=0?C.green:C.red}}>{avD}g</div></div></div>
-        {willDebt&&<><div style={{marginTop:8,background:C.redD,borderRadius:8,padding:"6px 10px",textAlign:"center"}}><span style={{fontSize:12,color:C.red,fontWeight:700}}>⚠ {debtAmt} gün borçlanma olacak</span></div><div style={{marginTop:10}}><div style={{...S.lbl,color:C.red}}>📝 Fazla izin sebebi (zorunlu)</div><textarea style={{...S.ta,borderColor:`${C.red}66`,minHeight:60}} placeholder="Neden fazla izin istiyorsunuz?" value={leaveReason} onChange={e=>setLeaveReason(e.target.value)}/></div></>}
-        {!willDebt&&calMode==="select"&&<div style={{marginTop:10}}><div style={S.lbl}>📝 İzin sebebi (isteğe bağlı)</div><textarea style={{...S.ta,minHeight:50}} placeholder="İzin sebebiniz..." value={leaveReason} onChange={e=>setLeaveReason(e.target.value)}/></div>}
+        {leaveSource==="annual"?
+          <div style={{display:"flex",justifyContent:"space-between"}}>
+            <div><div style={{fontSize:11,color:C.dim}}>Kullanılacak</div><div style={{fontSize:18,fontWeight:800,color:C.teal}}>{calSel.length}g</div></div>
+            <div style={{textAlign:"right"}}><div style={{fontSize:11,color:C.dim}}>Kalan Yıllık İzin</div><div style={{fontSize:18,fontWeight:800,color:myAnnualRemaining()-calSel.length>=0?C.green:C.red}}>{myAnnualRemaining()-calSel.length}g</div></div>
+          </div>
+        :<>
+          <div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:11,color:C.dim}}>Kullanılacak</div><div style={{fontSize:18,fontWeight:800,color:C.purple}}>{needH}s</div></div><div style={{textAlign:"right"}}><div style={{fontSize:11,color:C.dim}}>Kalan Hak</div><div style={{fontSize:18,fontWeight:800,color:avD>=0?C.green:C.red}}>{avD}g</div></div></div>
+          {willDebt&&<><div style={{marginTop:8,background:C.redD,borderRadius:8,padding:"6px 10px",textAlign:"center"}}><span style={{fontSize:12,color:C.red,fontWeight:700}}>⚠ {debtAmt} gün borçlanma olacak</span></div><div style={{marginTop:10}}><div style={{...S.lbl,color:C.red}}>📝 Fazla izin sebebi (zorunlu)</div><textarea style={{...S.ta,borderColor:`${C.red}66`,minHeight:60}} placeholder="Neden fazla izin istiyorsunuz?" value={leaveReason} onChange={e=>setLeaveReason(e.target.value)}/></div></>}
+        </>}
+        {!willDebt&&calMode==="select"&&<div style={{marginTop:10}}><div style={S.lbl}>📝 İzin sebebi {leaveSource==="annual"?"(zorunlu)":"(isteğe bağlı)"}</div><textarea style={{...S.ta,minHeight:50}} placeholder={leaveSource==="annual"?"Yıllık izin sebebiniz...":"İzin sebebiniz..."} value={leaveReason} onChange={e=>setLeaveReason(e.target.value)}/></div>}
 
       </div>}
       {isSel&&<div>
-        {calMode==="select"&&<button style={S.btn(willDebt?C.orange:C.teal)} onClick={submitLeaveReq} disabled={submitting}>{submitting?"Gönderiliyor...":willDebt?`⚠ Borçlanarak İzin Gönder (${calSel.length} gun)`:`📅 Onaya Gönder (${calSel.length} gun)`}</button>}
+        {calMode==="select"&&leaveSource==="annual"&&<button style={S.btn(C.teal)} onClick={submitLeaveReq} disabled={submitting}>{submitting?"Gönderiliyor...":`🌴 Yıllık İzin Gönder (${calSel.length} gün)`}</button>}
+        {calMode==="select"&&leaveSource==="overtime"&&<button style={S.btn(willDebt?C.orange:C.teal)} onClick={submitLeaveReq} disabled={submitting}>{submitting?"Gönderiliyor...":willDebt?`⚠ Borçlanarak İzin Gönder (${calSel.length} gun)`:`📅 Onaya Gönder (${calSel.length} gun)`}</button>}
         {calMode==="modify"&&<button style={S.btn(C.orange)} onClick={modifyLeave} disabled={submitting}>{submitting?"...":"📅 Tarihleri Değiştir"}</button>}
         <button style={S.btn(C.border,C.text)} onClick={()=>{setCalMode("view");setCalSel([]);setCalModId(null);setLeaveReason("");}}>İptal</button>
       </div>}
-      {!isSel&&!hourlyMode&&<div style={{display:"flex",gap:8}}>
+      {!isSel&&!hourlyMode&&leaveSource==="overtime"&&<div style={{display:"flex",gap:8}}>
         <button style={{...S.btn(C.teal),flex:1}} onClick={()=>{setCalMode("select");setCalSel([]);setLeaveReason("");}}>📅 Günlük İzin</button>
         <button style={{...S.btn(C.blueD,C.blue),flex:1}} onClick={()=>{setHourlyMode(true);setHourlyForm({date:todayStr(),startTime:"",endTime:"",reason:""});}}>🕐 Saatlik İzin</button>
+      </div>}
+      {!isSel&&!hourlyMode&&leaveSource==="annual"&&<div>
+        <button style={S.btn(C.teal)} onClick={()=>{setCalMode("select");setCalSel([]);setLeaveReason("");}}>🌴 Yıllık İzin Talep Et</button>
       </div>}
       {hourlyMode&&<div style={{...S.lawBox,marginTop:12}}>
         <div style={{fontSize:15,fontWeight:700,marginBottom:12,display:"flex",alignItems:"center",gap:8}}>🕐 Saatlik İzin Talebi</div>
@@ -1691,7 +1763,9 @@ function AppInner(){
   const renderLVDetail=()=>{
     if(!selLV)return null;const l=selLV,p=getU(l.personnel_id);const dates=Array.isArray(l.dates)?l.dates:[];const prevDates=Array.isArray(l.previous_dates)?l.previous_dates:[];
     return(<div style={S.mod} onClick={()=>setSelLV(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
-      <div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:12}}>Izin Detayı</div>
+      <div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:4}}>Izin Detayı</div>
+      {l.leave_source==="annual"&&<div style={{...S.tag(C.tealD,C.teal),marginBottom:8}}>🌴 Yıllık İzin</div>}
+      {(!l.leave_source||l.leave_source==="overtime")&&l.leave_type!=="hourly"&&<div style={{...S.tag(C.accentD,C.accent),marginBottom:8}}>⏱ Mesai İzni</div>}
       {p&&<div style={{fontSize:13,color:C.dim,marginBottom:12}}>{p.full_name}</div>}
       {l.leave_type==="hourly"?<div style={{marginBottom:12}}>
         <div style={{...S.tag(C.blueD,C.blue),marginBottom:8}}>🕐 Saatlik İzin</div>
@@ -1744,7 +1818,7 @@ function AppInner(){
 
   const renderAddUser=()=>{if(!modAddUser)return null;return(<div style={S.mod} onClick={()=>setModAddUser(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>+ Personel</div><div style={S.lbl}>Ad Soyad</div><input style={S.inp} value={nUser.name} onChange={e=>setNUser(p=>({...p,name:e.target.value}))}/><div style={S.lbl}>E-posta</div><input style={S.inp} type="email" inputMode="email" autoCapitalize="none" value={nUser.email} onChange={e=>setNUser(p=>({...p,email:e.target.value}))}/><div style={S.lbl}>Sifre</div><input style={S.inp} type="text" value={nUser.password} onChange={e=>setNUser(p=>({...p,password:e.target.value}))}/><div style={S.lbl}>Görev</div><input style={S.inp} value={nUser.role} onChange={e=>setNUser(p=>({...p,role:e.target.value}))}/><div style={S.lbl}>Bina</div><select style={S.sel} value={nUser.buildingId||selBuilding||""} onChange={e=>setNUser(p=>({...p,buildingId:e.target.value}))}>{buildings.map(b=><option key={b.id} value={b.id}>{b.short_name||b.name}</option>)}</select><div style={S.lbl}>Yetki</div><select style={S.sel} value={nUser.userRole} onChange={e=>setNUser(p=>({...p,userRole:e.target.value}))}><option value="personnel">Personel</option><option value="chef">Teknik Şef (Onay Yetkili)</option><option value="viewer">İzleyici (Tam Görüntüleme)</option></select><button style={S.btn(C.accent)} onClick={doAddUser} disabled={submitting}>{submitting?"...":"Ekle"}</button><button style={S.btn(C.border,C.text)} onClick={()=>setModAddUser(false)}>İptal</button></div></div>);};
 
-  const renderEditUser=()=>{if(!modEditUser)return null;const u=modEditUser;return(<div style={S.mod} onClick={()=>{setModEditUser(null);setDeleteConfirm(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>Düzenle: {u.full_name}</div><div style={S.lbl}>Görev</div><input style={S.inp} value={u.role||""} onChange={e=>setModEditUser({...u,role:e.target.value})}/><div style={S.lbl}>Bina</div><select style={S.sel} value={u.building_id||""} onChange={e=>setModEditUser({...u,building_id:e.target.value})}>{buildings.map(b=><option key={b.id} value={b.id}>{b.short_name||b.name}</option>)}</select><div style={S.lbl}>Yetki</div><select style={S.sel} value={u.user_role||"personnel"} onChange={e=>setModEditUser({...u,user_role:e.target.value})}><option value="personnel">Personel</option><option value="chef">Teknik Şef (Onay Yetkili)</option><option value="viewer">İzleyici (Tam Görüntüleme)</option></select><button style={S.btn(C.accent)} onClick={async()=>{try{await supabase.from('profiles').update({role:u.role,user_role:u.user_role,building_id:u.building_id}).eq('id',u.id);await fetchProfiles();setModEditUser(null);setToast("Kaydedildi");}catch(e){setToast("Hata: "+e?.message);}}}>Kaydet</button><div style={S.dv}/><button style={S.btn(C.orangeD,C.orange)} onClick={()=>doDeactivateU(u.id)}>🚫 Pasif Yap</button>{deleteConfirm===u.id?<div style={{background:C.redD,borderRadius:10,padding:14,marginTop:8}}><div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:8,textAlign:"center"}}>⚠ {u.full_name} silinecek. Mesai ve izin kayıtları arşivde kalır.</div><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.red),flex:1}} onClick={()=>doDeleteUser(u.id)}>🗑 Evet, Sil</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setDeleteConfirm(null)}>İptal</button></div></div>:<button style={S.btn(C.redD,C.red)} onClick={()=>setDeleteConfirm(u.id)}>🗑 Personeli Sil</button>}<button style={S.btn(C.border,C.text)} onClick={()=>{setModEditUser(null);setDeleteConfirm(null);}}>Kapat</button></div></div>);};
+  const renderEditUser=()=>{if(!modEditUser)return null;const u=modEditUser;return(<div style={S.mod} onClick={()=>{setModEditUser(null);setDeleteConfirm(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>Düzenle: {u.full_name}</div><div style={S.lbl}>Görev</div><input style={S.inp} value={u.role||""} onChange={e=>setModEditUser({...u,role:e.target.value})}/><div style={S.lbl}>Bina</div><select style={S.sel} value={u.building_id||""} onChange={e=>setModEditUser({...u,building_id:e.target.value})}>{buildings.map(b=><option key={b.id} value={b.id}>{b.short_name||b.name}</option>)}</select><div style={S.lbl}>Yetki</div><select style={S.sel} value={u.user_role||"personnel"} onChange={e=>setModEditUser({...u,user_role:e.target.value})}><option value="personnel">Personel</option><option value="chef">Teknik Şef (Onay Yetkili)</option><option value="viewer">İzleyici (Tam Görüntüleme)</option></select><div style={S.lbl}>🌴 Yıllık İzin Hakkı (gün)</div><input style={S.inp} type="number" min="0" max="30" value={u.annual_leave_days||14} onChange={e=>setModEditUser({...u,annual_leave_days:Number(e.target.value)||0})}/><div style={{fontSize:10,color:C.dim,marginTop:-8,marginBottom:12}}>Kullanılan: {annualUsed(u.id)}g / Kalan: {annualRemaining(u.id)}g</div><button style={S.btn(C.accent)} onClick={async()=>{try{await supabase.from('profiles').update({role:u.role,user_role:u.user_role,building_id:u.building_id,annual_leave_days:u.annual_leave_days||14}).eq('id',u.id);await fetchProfiles();setModEditUser(null);setToast("Kaydedildi");}catch(e){setToast("Hata: "+e?.message);}}}>Kaydet</button><div style={S.dv}/><button style={S.btn(C.orangeD,C.orange)} onClick={()=>doDeactivateU(u.id)}>🚫 Pasif Yap</button>{deleteConfirm===u.id?<div style={{background:C.redD,borderRadius:10,padding:14,marginTop:8}}><div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:8,textAlign:"center"}}>⚠ {u.full_name} silinecek. Mesai ve izin kayıtları arşivde kalır.</div><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.red),flex:1}} onClick={()=>doDeleteUser(u.id)}>🗑 Evet, Sil</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setDeleteConfirm(null)}>İptal</button></div></div>:<button style={S.btn(C.redD,C.red)} onClick={()=>setDeleteConfirm(u.id)}>🗑 Personeli Sil</button>}<button style={S.btn(C.border,C.text)} onClick={()=>{setModEditUser(null);setDeleteConfirm(null);}}>Kapat</button></div></div>);};
 
   const navItems=isAdmin?[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"depo",i:"📦",l:"Depo"},{k:"calendar",i:"📅",l:"Takvim"},{k:"approvals",i:"✅",l:"Onaylar"},{k:"admin",i:"⚙️",l:"Yönetim"}]:(isChef||isViewer)?[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"depo",i:"📦",l:"Depo"},{k:"calendar",i:"📅",l:"Takvim"},{k:"approvals",i:isViewer?"👁":"✅",l:isViewer?"Takip":"Onaylar"}]:[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"depo",i:"📦",l:"Depo"},{k:"calendar",i:"📅",l:"Takvim"}];
   const roleLabel=isAdmin?"👑 Yonetici":isChef?"🔧 Sef":isViewer?"👁 Izleyici":"👷 Personel";
