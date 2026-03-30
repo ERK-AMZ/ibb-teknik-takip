@@ -16,7 +16,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v4.1</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v4.2</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -617,7 +617,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.1</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.2</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -653,7 +653,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.1</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.2</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -742,41 +742,53 @@ function AppInner(){
 
   async function submitVote(faultId,vote){
     setSubmitting(true);
+    const dbg=[];
     try{
-      // Check if vote already exists
-      const{data:existing}=await supabase.from('fault_votes').select('id').eq('fault_id',faultId).eq('personnel_id',profile.id).eq('vote_week',currentWeek).maybeSingle();
+      dbg.push("1. profile.id="+String(profile.id).slice(0,8));
+      dbg.push("2. currentWeek="+currentWeek);
+      dbg.push("3. faultId="+String(faultId).slice(0,8));
       
-      let success=false;
+      // Step 1: Check existing
+      const{data:existing,error:findErr}=await supabase.from('fault_votes').select('*').eq('fault_id',faultId).eq('personnel_id',profile.id).eq('vote_week',currentWeek).maybeSingle();
+      dbg.push("4. findErr="+(findErr?.message||"yok"));
+      dbg.push("5. existing="+(existing?JSON.stringify(existing).slice(0,80):"null"));
+      
       if(existing){
-        if(isPerso){setToast("🔒 Oyunuz zaten kaydedildi");setSubmitting(false);return;}
-        const{error}=await supabase.from('fault_votes').update({vote}).eq('id',existing.id);
-        if(error){setToast("⚠ Güncelleme hatası: "+error.message);setSubmitting(false);return;}
-        success=true;
+        dbg.push("6. UPDATE mevcut oy");
+        const{error:upErr}=await supabase.from('fault_votes').update({vote}).eq('id',existing.id);
+        dbg.push("7. upErr="+(upErr?.message||"yok ✓"));
+        if(upErr){setToast("⚠ Güncelleme hatası: "+upErr.message);setSubmitting(false);return;}
       } else {
-        const{data:inserted,error}=await supabase.from('fault_votes').insert({fault_id:faultId,personnel_id:profile.id,vote,vote_week:currentWeek}).select();
-        if(error){
-          setToast("⚠ Oy hatası: "+error.message+"\n(RLS politikası eksik olabilir)");
-          setSubmitting(false);return;
-        }
-        if(!inserted||inserted.length===0){
-          setToast("⚠ Oy kaydedilemedi (RLS engeli olabilir)");
-          setSubmitting(false);return;
-        }
-        success=true;
+        dbg.push("6. INSERT yeni oy");
+        const insertData={fault_id:faultId,personnel_id:profile.id,vote,vote_week:currentWeek};
+        dbg.push("7. data="+JSON.stringify(insertData).slice(0,120));
+        const{data:ins,error:insErr}=await supabase.from('fault_votes').insert(insertData).select();
+        dbg.push("8. insErr="+(insErr?.message||"yok"));
+        dbg.push("9. inserted="+(ins?JSON.stringify(ins).slice(0,100):"null"));
+        if(insErr){setToast("⚠ INSERT hatası: "+insErr.message);setSubmitting(false);return;}
+        if(!ins||ins.length===0){setToast("⚠ Oy kaydedilemedi (veri dönmedi)");setSubmitting(false);return;}
       }
       
-      if(success){
-        // Optimistic update - add vote to local state immediately
-        setFaultVotes(prev=>{
-          const filtered=prev.filter(v=>!(v.fault_id===faultId&&v.personnel_id===profile.id&&v.vote_week===currentWeek));
-          return[...filtered,{fault_id:faultId,personnel_id:profile.id,vote,vote_week:currentWeek,id:existing?.id||"temp-"+Date.now()}];
-        });
-        setToast(vote==="continues"?"🔴 Oy kaydedildi":"🟢 Oy kaydedildi");
-        // Background refresh
-        try{await fetchFaultVotes();}catch(e){}
-      }
-    }catch(e){setToast("⚠ Hata: "+(e?.message||String(e)));}
+      // Optimistic update
+      setFaultVotes(prev=>{
+        const filtered=prev.filter(v=>!(v.fault_id===faultId&&v.personnel_id===profile.id&&v.vote_week===currentWeek));
+        return[...filtered,{fault_id:faultId,personnel_id:profile.id,vote,vote_week:currentWeek,id:existing?.id||"new-"+Date.now()}];
+      });
+      
+      dbg.push("10. ✓ Başarılı!");
+      setToast(vote==="continues"?"🔴 Oy kaydedildi ✓":"🟢 Oy kaydedildi ✓");
+      
+      // DON'T fetch immediately - optimistic update is enough
+      // fetchFaultVotes will happen via subscription or next page load
+      
+    }catch(e){
+      dbg.push("HATA: "+String(e?.message||e));
+      setToast("⚠ "+String(e?.message||e));
+    }
     setSubmitting(false);
+    // Store debug for viewing
+    window.__VOTE_DEBUG=dbg.join("\n");
+    console.log("VOTE DEBUG:\n"+dbg.join("\n"));
   }
 
   async function deleteFault(id){
@@ -900,6 +912,17 @@ function AppInner(){
             </div>);
           })}
         </div>}
+        {/* Debug: vote info */}
+        <details style={{marginTop:8}}>
+          <summary style={{fontSize:10,color:C.muted,cursor:"pointer"}}>🔍 Oy Debug</summary>
+          <pre style={{fontSize:9,color:C.dim,background:C.bg,padding:8,borderRadius:6,whiteSpace:"pre-wrap",marginTop:4}}>{
+            "week: "+currentWeek+"\nprofile.id: "+String(profile?.id).slice(0,12)+"\nfault.id: "+String(f.id).slice(0,12)+
+            "\nweekvotes: "+weekVotes.length+
+            "\nmyVote: "+(myVote?JSON.stringify(myVote).slice(0,100):"YOK")+
+            "\ntüm oylar (bu arıza): "+faultVotes.filter(v=>v.fault_id===f.id).length+
+            "\n\n"+(typeof window!=="undefined"&&window.__VOTE_DEBUG||"henüz oy kullanılmadı")
+          }</pre>
+        </details>
       </div>}
 
       {/* ÖNCEKİ DÖNEM SONUÇLARI */}
