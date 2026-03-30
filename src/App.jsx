@@ -16,7 +16,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v4.6</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v4.8</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -76,6 +76,9 @@ function getVotePeriodInfo(){
   const isWarning=daysLeft<=2; // Pazartesi-Salı
   return{start:wed,end:tue,daysLeft,isUrgent,isWarning};
 }
+// Flexible vote_week comparison (handles date format differences)
+function vwMatch(vw,target){return String(vw||"").slice(0,10)===String(target||"").slice(0,10);}
+function voteMinWeek(){return getVoteWeek(new Date(Date.now()-21*24*60*60*1000));}
 function isFriday(){return new Date().getDay()===5;}
 function sIcon(s){return s==="approved"?"\u2713":s==="rejected"?"\u2717":"\u23F3";}
 function ini(n){if(!n)return"?";try{return n.split(" ").map(x=>x[0]).slice(0,2).join("").toUpperCase();}catch{return"?";}}
@@ -283,7 +286,7 @@ function AppInner(){
   const fetchLeaves=useCallback(async()=>{try{const{data}=await supabase.from('leaves').select('*').order('created_at',{ascending:false});if(Array.isArray(data))setLeavesState(data);}catch(e){console.error(e);}},[]);
   const fetchFaults=useCallback(async()=>{try{const{data}=await supabase.from('faults').select('*').order('detected_date',{ascending:false});if(Array.isArray(data))setFaults(data);}catch(e){console.error(e);}},[]);
   const fetchFaultServices=useCallback(async()=>{try{const{data}=await supabase.from('fault_services').select('*').order('visit_date',{ascending:false});if(Array.isArray(data))setFaultServices(data);}catch(e){console.error(e);}},[]);
-  const fetchFaultVotes=useCallback(async()=>{try{const{data}=await supabase.from('fault_votes').select('*');if(Array.isArray(data)&&data.length>0)setFaultVotes(data);}catch(e){console.error(e);}},[]); 
+  const fetchFaultVotes=useCallback(async()=>{try{const{data}=await supabase.from('fault_votes').select('*').gte('vote_week',voteMinWeek());if(Array.isArray(data)&&data.length>0)setFaultVotes(data);}catch(e){console.error(e);}},[]); 
   const fetchMaterials=useCallback(async()=>{try{const{data}=await supabase.from('materials').select('*').order('name');if(Array.isArray(data))setMaterials(data);}catch(e){console.error(e);}},[]);
   const fetchStockMovements=useCallback(async()=>{try{const{data}=await supabase.from('stock_movements').select('*').order('movement_date',{ascending:false});if(Array.isArray(data))setStockMovements(data);}catch(e){console.error(e);}},[]);
   const fetchBuildings=useCallback(async()=>{try{const{data}=await supabase.from('buildings').select('*').order('name');if(Array.isArray(data))setBuildings(data);}catch(e){console.error(e);}},[]);
@@ -295,7 +298,7 @@ function AppInner(){
         supabase.from('profiles').select('*'),supabase.from('overtimes').select('*').order('work_date',{ascending:false}),
         supabase.from('leaves').select('*').order('created_at',{ascending:false}),supabase.from('buildings').select('*').order('name'),
         supabase.from('faults').select('*').order('detected_date',{ascending:false}),supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),
-        supabase.from('fault_votes').select('*'),supabase.from('materials').select('*').order('name'),
+        supabase.from('fault_votes').select('*').gte('vote_week',voteMinWeek()),supabase.from('materials').select('*').order('name'),
         supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}).limit(200)
       ]);
       const profs=toArr(r[0].status==="fulfilled"?r[0].value:null);
@@ -328,7 +331,7 @@ function AppInner(){
     const secondaryP=Promise.allSettled([
       supabase.from('faults').select('*').order('detected_date',{ascending:false}),
       supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),
-      supabase.from('fault_votes').select('*'),
+      supabase.from('fault_votes').select('*').gte('vote_week',voteMinWeek()),
       supabase.from('materials').select('*').order('name'),
       supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}).limit(200)
     ]);
@@ -358,7 +361,7 @@ function AppInner(){
       // Retry fault_votes if empty (egress limit might have blocked it)
       const votesLoaded=toArr(r2[2].status==="fulfilled"?r2[2].value:null);
       if(votesLoaded.length===0){
-        setTimeout(async()=>{try{const{data}=await supabase.from('fault_votes').select('*');if(Array.isArray(data)&&data.length>0)setFaultVotes(data);}catch(e){}},3000);
+        setTimeout(async()=>{try{const{data}=await supabase.from('fault_votes').select('*').gte('vote_week',voteMinWeek());if(Array.isArray(data)&&data.length>0)setFaultVotes(data);}catch(e){}},3000);
       }
     }catch(e){}
   },[]);
@@ -631,7 +634,7 @@ function AppInner(){
   const prevWeek=getPrevVoteWeek();
   const votePeriod=getVotePeriodInfo();
   const activeFaultsAll=useMemo(()=>bFaults.filter(f=>f.status==="active"),[bFaults]);
-  const myPendingVotes=useMemo(()=>{if(!profile)return[];return activeFaultsAll.filter(f=>!faultVotes.some(v=>v.fault_id===f.id&&v.personnel_id===profile.id&&v.vote_week===currentWeek));},[activeFaultsAll,faultVotes,profile,currentWeek]);
+  const myPendingVotes=useMemo(()=>{if(!profile)return[];return activeFaultsAll.filter(f=>!faultVotes.some(v=>v.fault_id===f.id&&v.personnel_id===profile.id&&vwMatch(v.vote_week,currentWeek)));},[activeFaultsAll,faultVotes,profile,currentWeek]);
 
   // Diagnostic: log state types so ErrorBoundary can display them
   useEffect(()=>{
@@ -649,7 +652,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.6</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.8</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -685,7 +688,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.6</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.8</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -826,7 +829,7 @@ function AppInner(){
       
       // Optimistic update
       setFaultVotes(prev=>{
-        const filtered=prev.filter(v=>!(v.fault_id===faultId&&v.personnel_id===profile.id&&v.vote_week===currentWeek));
+        const filtered=prev.filter(v=>!(v.fault_id===faultId&&v.personnel_id===profile.id&&vwMatch(v.vote_week,currentWeek)));
         return[...filtered,{fault_id:faultId,personnel_id:profile.id,vote,vote_week:currentWeek,id:existing?.id||"new-"+Date.now()}];
       });
       
@@ -869,8 +872,8 @@ function AppInner(){
       {list.map(f=>{
         const days=daysSince(f.detected_date);
         const svcCount=faultServices.filter(s=>s.fault_id===f.id).length;
-        const weekVotes=faultVotes.filter(v=>v.fault_id===f.id&&v.vote_week===currentWeek);
-        const pvVotes=faultVotes.filter(v=>v.fault_id===f.id&&v.vote_week===prevWeek);
+        const weekVotes=faultVotes.filter(v=>v.fault_id===f.id&&vwMatch(v.vote_week,currentWeek));
+        const pvVotes=faultVotes.filter(v=>v.fault_id===f.id&&vwMatch(v.vote_week,prevWeek));
         const votedCount=weekVotes.length;
         const myVote=weekVotes.find(v=>v.personnel_id===profile.id);
         const pvCont=pvVotes.filter(v=>v.vote==="continues").length;
@@ -905,7 +908,7 @@ function AppInner(){
     const f=selFault;
     const days=daysSince(f.detected_date);
     const services=faultServices.filter(s=>s.fault_id===f.id).sort((a,b)=>(b.visit_date||"").localeCompare(a.visit_date||""));
-    const weekVotes=faultVotes.filter(v=>v.fault_id===f.id&&v.vote_week===currentWeek);
+    const weekVotes=faultVotes.filter(v=>v.fault_id===f.id&&vwMatch(v.vote_week,currentWeek));
     const myVote=weekVotes.find(v=>v.personnel_id===profile.id);
     const allActiveProfiles=bProfiles.filter(p=>p.active);
     const creator=profiles.find(p=>p.id===f.created_by);
@@ -971,10 +974,15 @@ function AppInner(){
         <details style={{marginTop:8}}>
           <summary style={{fontSize:10,color:C.muted,cursor:"pointer"}}>🔍 Oy Debug</summary>
           <pre style={{fontSize:9,color:C.dim,background:C.bg,padding:8,borderRadius:6,whiteSpace:"pre-wrap",marginTop:4}}>{
-            "week: "+currentWeek+"\nprofile.id: "+String(profile?.id).slice(0,12)+"\nfault.id: "+String(f.id).slice(0,12)+
+            "currentWeek: '"+currentWeek+"'"+
+            "\nprofile.id: "+String(profile?.id).slice(0,12)+
+            "\nfault.id: "+String(f.id).slice(0,12)+
             "\nweekvotes: "+weekVotes.length+
-            "\nmyVote: "+(myVote?JSON.stringify(myVote).slice(0,100):"YOK")+
-            "\ntüm oylar (bu arıza): "+faultVotes.filter(v=>v.fault_id===f.id).length+
+            "\nmyVote: "+(myVote?JSON.stringify(myVote).slice(0,120):"YOK")+
+            "\ntoplam faultVotes state: "+faultVotes.length+
+            "\nbu arıza tüm oylar: "+faultVotes.filter(v=>v.fault_id===f.id).length+
+            "\n\n--- vote_week formatları (bu arıza) ---\n"+
+            faultVotes.filter(v=>v.fault_id===f.id).slice(0,5).map(v=>"id:"+String(v.id).slice(0,8)+" week:'"+v.vote_week+"' type:"+typeof v.vote_week+" match:"+vwMatch(v.vote_week,currentWeek)+" pid:"+String(v.personnel_id).slice(0,8)).join("\n")+
             "\n\n"+(typeof window!=="undefined"&&window.__VOTE_DEBUG||"henüz oy kullanılmadı")
           }</pre>
         </details>
@@ -983,13 +991,13 @@ function AppInner(){
       {/* ÖNCEKİ DÖNEM SONUÇLARI */}
       {f.status==="active"&&(()=>{
         // Collect ALL past vote weeks for this fault
-        const allVotesForFault=faultVotes.filter(v=>v.fault_id===f.id&&v.vote_week!==currentWeek);
+        const allVotesForFault=faultVotes.filter(v=>v.fault_id===f.id&&!vwMatch(v.vote_week,currentWeek));
         const pastWeeks=[...new Set(allVotesForFault.map(v=>v.vote_week))].sort((a,b)=>b.localeCompare(a));
         if(pastWeeks.length===0)return null;
         return(<div style={{...S.lawBox,marginBottom:12,borderColor:`${C.purple}44`,background:"rgba(168,85,247,0.04)"}}>
           <div style={{fontSize:13,fontWeight:700,color:C.purple,marginBottom:10}}>📋 Önceki Dönem Sonuçları</div>
           {pastWeeks.map((wk,wi)=>{
-            const wkVotes=allVotesForFault.filter(v=>v.vote_week===wk);
+            const wkVotes=allVotesForFault.filter(v=>vwMatch(v.vote_week,wk));
             const wkRange=getVoteWeekRange(wk);
             const contCount=wkVotes.filter(v=>v.vote==="continues").length;
             const resCount=wkVotes.filter(v=>v.vote==="resolved").length;
