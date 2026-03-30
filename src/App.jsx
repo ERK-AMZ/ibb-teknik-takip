@@ -16,7 +16,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v3.7</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v3.8</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -290,41 +290,56 @@ function AppInner(){
   // Silent refresh (no loading screen) for TOKEN_REFRESHED events
   const silentRefresh=useCallback(async(uid)=>{
     try{
-      const r1=await Promise.allSettled([supabase.from('profiles').select('*'),supabase.from('overtimes').select('*').order('work_date',{ascending:false}),supabase.from('leaves').select('*').order('created_at',{ascending:false}),supabase.from('buildings').select('*').order('name')]);
-      const profs=toArr(r1[0].status==="fulfilled"?r1[0].value:null);
-      const ots=toArr(r1[1].status==="fulfilled"?r1[1].value:null);
-      const lvs=toArr(r1[2].status==="fulfilled"?r1[2].value:null);
-      const blds=toArr(r1[3].status==="fulfilled"?r1[3].value:null);
-      if(profs.length>0){setProfilesState(profs);setOvertimesState(ots);setLeavesState(lvs);setBuildings(blds);const fp=profs.find(p=>p.id===uid);if(fp){setProfile(fp);if(blds.length>0&&!selBuilding)setSelBuilding(fp.building_id||blds[0]?.id||null);}}
-      const r2=await Promise.allSettled([supabase.from('faults').select('*').order('detected_date',{ascending:false}),supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),supabase.from('fault_votes').select('*'),supabase.from('materials').select('*').order('name'),supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}).limit(200)]);
-      if(r2[0].status==="fulfilled")setFaults(toArr(r2[0].value));
-      if(r2[1].status==="fulfilled")setFaultServices(toArr(r2[1].value));
-      if(r2[2].status==="fulfilled")setFaultVotes(toArr(r2[2].value));
-      if(r2[3].status==="fulfilled")setMaterials(toArr(r2[3].value));
-      if(r2[4].status==="fulfilled")setStockMovements(toArr(r2[4].value));
+      const r=await Promise.allSettled([
+        supabase.from('profiles').select('*'),supabase.from('overtimes').select('*').order('work_date',{ascending:false}),
+        supabase.from('leaves').select('*').order('created_at',{ascending:false}),supabase.from('buildings').select('*').order('name'),
+        supabase.from('faults').select('*').order('detected_date',{ascending:false}),supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),
+        supabase.from('fault_votes').select('*'),supabase.from('materials').select('*').order('name'),
+        supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}).limit(200)
+      ]);
+      const profs=toArr(r[0].status==="fulfilled"?r[0].value:null);
+      if(profs.length>0){
+        setProfilesState(profs);setOvertimesState(toArr(r[1].status==="fulfilled"?r[1].value:null));
+        setLeavesState(toArr(r[2].status==="fulfilled"?r[2].value:null));setBuildings(toArr(r[3].status==="fulfilled"?r[3].value:null));
+        const fp=profs.find(p=>p.id===uid);if(fp){setProfile(fp);}
+      }
+      if(r[4].status==="fulfilled")setFaults(toArr(r[4].value));
+      if(r[5].status==="fulfilled")setFaultServices(toArr(r[5].value));
+      if(r[6].status==="fulfilled")setFaultVotes(toArr(r[6].value));
+      if(r[7].status==="fulfilled")setMaterials(toArr(r[7].value));
+      if(r[8].status==="fulfilled")setStockMovements(toArr(r[8].value));
     }catch(e){console.error("silentRefresh err:",e);}
   },[]);
 
   const loadData=useCallback(async(uid)=>{
     setLoading(true);setLoadError(null);
-    const safetyTimer=setTimeout(()=>{setLoading(false);},20000);
+    const safetyTimer=setTimeout(()=>{setLoading(false);},15000);
     try{
-      // Phase 1: ALL direct supabase queries
-      const r1=await Promise.allSettled([supabase.from('profiles').select('*'),supabase.from('overtimes').select('*').order('work_date',{ascending:false}),supabase.from('leaves').select('*').order('created_at',{ascending:false}),supabase.from('buildings').select('*').order('name')]);
-      // Debug: store raw responses
-      const raw0=r1[0].status==="fulfilled"?r1[0].value:{err:r1[0].reason?.message||"rejected"};
-      window.__LOAD_DEBUG=JSON.stringify({uid:uid?.slice(0,8),r0_status:r1[0].status,r0_hasData:!!raw0?.data,r0_dataLen:Array.isArray(raw0?.data)?raw0.data.length:"not-array",r0_error:raw0?.error?.message||raw0?.err||"none",r0_type:typeof raw0},null,1);
-      const profs=toArr(raw0);
-      const ots=toArr(r1[1].status==="fulfilled"?r1[1].value:null);
-      const lvs=toArr(r1[2].status==="fulfilled"?r1[2].value:null);
-      const blds=toArr(r1[3].status==="fulfilled"?r1[3].value:null);
+      // ALL queries in parallel - single round trip
+      const r=await Promise.allSettled([
+        supabase.from('profiles').select('*'),
+        supabase.from('overtimes').select('*').order('work_date',{ascending:false}),
+        supabase.from('leaves').select('*').order('created_at',{ascending:false}),
+        supabase.from('buildings').select('*').order('name'),
+        supabase.from('faults').select('*').order('detected_date',{ascending:false}),
+        supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),
+        supabase.from('fault_votes').select('*'),
+        supabase.from('materials').select('*').order('name'),
+        supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}).limit(200)
+      ]);
+      const profs=toArr(r[0].status==="fulfilled"?r[0].value:null);
+      const ots=toArr(r[1].status==="fulfilled"?r[1].value:null);
+      const lvs=toArr(r[2].status==="fulfilled"?r[2].value:null);
+      const blds=toArr(r[3].status==="fulfilled"?r[3].value:null);
       setProfilesState(profs);setOvertimesState(ots);setLeavesState(lvs);setBuildings(blds);
+      if(r[4].status==="fulfilled")setFaults(toArr(r[4].value));
+      if(r[5].status==="fulfilled")setFaultServices(toArr(r[5].value));
+      if(r[6].status==="fulfilled")setFaultVotes(toArr(r[6].value));
+      if(r[7].status==="fulfilled")setMaterials(toArr(r[7].value));
+      if(r[8].status==="fulfilled")setStockMovements(toArr(r[8].value));
       const fp=profs.find(p=>p.id===uid);setProfile(fp||null);
       if(fp&&blds.length>0&&!selBuilding){setSelBuilding(fp.building_id||blds[0]?.id||null);}
       if(!fp){
-        window.__LOAD_DEBUG+="\\nprofile NOT FOUND. uid="+uid+"\\nprofs.length="+profs.length;
-        if(profs.length>0)window.__LOAD_DEBUG+="\\nprof ids="+profs.map(p=>String(p.id).slice(0,8)).join(",");
-        // Auto-retry: refresh session first (token might be expired)
         if(!window.__RETRIED){
           window.__RETRIED=true;
           setTimeout(async()=>{
@@ -333,16 +348,7 @@ function AppInner(){
           },1500);
         }
       }
-    }catch(err){window.__LOAD_DEBUG="loadData catch: "+String(err);setLoadError("Bağlantı hatası");}finally{clearTimeout(safetyTimer);setLoading(false);}
-    // Phase 2: Secondary data
-    try{
-      const r2=await Promise.allSettled([supabase.from('faults').select('*').order('detected_date',{ascending:false}),supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),supabase.from('fault_votes').select('*'),supabase.from('materials').select('*').order('name'),supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}).limit(200)]);
-      if(r2[0].status==="fulfilled")setFaults(toArr(r2[0].value));
-      if(r2[1].status==="fulfilled")setFaultServices(toArr(r2[1].value));
-      if(r2[2].status==="fulfilled")setFaultVotes(toArr(r2[2].value));
-      if(r2[3].status==="fulfilled")setMaterials(toArr(r2[3].value));
-      if(r2[4].status==="fulfilled")setStockMovements(toArr(r2[4].value));
-    }catch(e){}
+    }catch(err){setLoadError("Bağlantı hatası");}finally{clearTimeout(safetyTimer);setLoading(false);}
   },[]);
 
   useEffect(()=>{
@@ -605,7 +611,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.7</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.8</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -641,7 +647,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.7</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v3.8</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
