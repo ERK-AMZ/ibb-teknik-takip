@@ -16,7 +16,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v4.9</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.1</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -88,6 +88,15 @@ const avC=[C.accentD,C.greenD,C.orangeD,C.blueD,C.redD,C.purpleD,"rgba(236,72,15
 function getAv(i){return avC[i%avC.length];}
 const MONTHS=["Ocak","\u015Eubat","Mart","Nisan","May\u0131s","Haziran","Temmuz","A\u011Fustos","Eyl\u00FCl","Ekim","Kas\u0131m","Aral\u0131k"];
 const DAYS_TR=["Pzt","Sal","\u00C7ar","Per","Cum","Cmt","Paz"];
+// Türkiye resmi tatilleri 2026
+const HOLIDAYS_2026={
+  "2026-01-01":"Yılbaşı","2026-03-20":"Ramazan Bayramı","2026-03-21":"Ramazan Bayramı","2026-03-22":"Ramazan Bayramı",
+  "2026-04-23":"Ulusal Egemenlik","2026-05-01":"İşçi Bayramı","2026-05-19":"Gençlik Bayramı",
+  "2026-05-27":"Kurban Bayramı","2026-05-28":"Kurban Bayramı","2026-05-29":"Kurban Bayramı","2026-05-30":"Kurban Bayramı",
+  "2026-07-15":"Demokrasi Günü","2026-08-30":"Zafer Bayramı","2026-10-29":"Cumhuriyet Bayramı"
+};
+function isHoliday(d){return HOLIDAYS_2026[d]||null;}
+const YEARLY_OT_LIMIT=270; // Yıllık yasal mesai sınırı (saat)
 function daysInMonth(y,m){return new Date(y,m+1,0).getDate();}
 function firstDay(y,m){const d=new Date(y,m,1).getDay();return d===0?6:d-1;}
 function dateStr(y,m,d){return`${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;}
@@ -223,6 +232,7 @@ function AppInner(){
   const[showStartTP,setShowStartTP]=useState(false);
   const[showEndTP,setShowEndTP]=useState(false);
   const[showPWA,setShowPWA]=useState(false);
+  const[showNotifs,setShowNotifs]=useState(false);
   // Faults
   const[faults,setFaults]=useState([]);
   const[faultServices,setFaultServices]=useState([]);
@@ -448,6 +458,8 @@ function AppInner(){
   function myTotUsedLV(pid){return leavesState.filter(l=>l.personnel_id===pid&&isOTLeave(l)&&["approved","pending_chef","pending_manager"].includes(l.status)).reduce((s,l)=>s+(l.total_hours||0),0);}
   function myRemHours(pid){return Math.round((myTotLH(pid)-myTotUsedLV(pid))*10)/10;}
   function myTotOTH(pid){return overtimes.filter(o=>o.personnel_id===pid&&o.status==="approved").reduce((s,o)=>s+Number(o.hours||0),0);}
+  function yearlyOTH(pid){const yr=String(new Date().getFullYear());return overtimes.filter(o=>o.personnel_id===pid&&o.status==="approved"&&(o.work_date||"").startsWith(yr)).reduce((s,o)=>s+Number(o.hours||0),0);}
+  function yearlyOTPct(pid){return Math.round((yearlyOTH(pid)/YEARLY_OT_LIMIT)*100);}
   function myRemDays(pid){return Math.round((myRemHours(pid)/8)*10)/10;}
   function myDebtDays(pid){const r=myRemDays(pid);return r<0?Math.abs(r):0;}
   function myAnnualDays(){return profile?.annual_leave_days||14;}
@@ -636,6 +648,45 @@ function AppInner(){
   const activeFaultsAll=useMemo(()=>bFaults.filter(f=>f.status==="active"),[bFaults]);
   const myPendingVotes=useMemo(()=>{if(!profile)return[];return activeFaultsAll.filter(f=>!faultVotes.some(v=>v.fault_id===f.id&&v.personnel_id===profile.id&&vwMatch(v.vote_week,currentWeek)));},[activeFaultsAll,faultVotes,profile,currentWeek]);
 
+  // Notification system
+  const notifications=useMemo(()=>{
+    if(!profile)return[];
+    const notifs=[];
+    const now=Date.now();
+    const sevenDaysAgo=new Date(now-7*24*60*60*1000).toISOString();
+    // My recently approved/rejected leaves
+    leavesState.filter(l=>l.personnel_id===profile.id&&l.status==="approved"&&(l.updated_at||l.created_at)>sevenDaysAgo).forEach(l=>{
+      const isAnn=l.leave_source==="annual";
+      const days=Array.isArray(l.dates)?l.dates.length:0;
+      notifs.push({id:"la-"+l.id,type:"success",icon:"✅",text:`${isAnn?"Yıllık":"Mesai"} izniniz onaylandı (${days}g)`,time:l.updated_at||l.created_at});
+    });
+    leavesState.filter(l=>l.personnel_id===profile.id&&l.status==="rejected"&&(l.updated_at||l.created_at)>sevenDaysAgo).forEach(l=>{
+      notifs.push({id:"lr-"+l.id,type:"error",icon:"❌",text:"İzin talebiniz reddedildi",time:l.updated_at||l.created_at});
+    });
+    // My recently approved/rejected overtimes
+    overtimes.filter(o=>o.personnel_id===profile.id&&o.status==="approved"&&(o.updated_at||o.created_at)>sevenDaysAgo).forEach(o=>{
+      notifs.push({id:"oa-"+o.id,type:"success",icon:"✅",text:`Mesai onaylandı (${o.hours}s → ${o.leave_hours}s izin)`,time:o.updated_at||o.created_at});
+    });
+    overtimes.filter(o=>o.personnel_id===profile.id&&o.status==="rejected"&&(o.updated_at||o.created_at)>sevenDaysAgo).forEach(o=>{
+      notifs.push({id:"or-"+o.id,type:"error",icon:"❌",text:"Mesai talebiniz reddedildi",time:o.updated_at||o.created_at});
+    });
+    // Pending approvals (chef/admin)
+    if(isChef||isAdmin){
+      const pc=pendOTs.length+pendLVs.length;
+      if(pc>0)notifs.push({id:"pend",type:"warning",icon:"⏳",text:`${pc} onay bekleyen talep var`,time:new Date().toISOString()});
+    }
+    // Vote reminder
+    if(myPendingVotes.length>0)notifs.push({id:"vote",type:"warning",icon:"🗳",text:`${myPendingVotes.length} arıza için oy bekleniyor`,time:new Date().toISOString()});
+    // Low stock (chef/admin)
+    if((isChef||isAdmin)&&bMaterials.filter(m=>m.current_stock<=m.min_stock&&m.min_stock>0).length>0)notifs.push({id:"stock",type:"error",icon:"📦",text:`${bMaterials.filter(m=>m.current_stock<=m.min_stock&&m.min_stock>0).length} malzeme kritik seviyede`,time:new Date().toISOString()});
+    // Sort by time desc
+    return notifs.sort((a,b)=>(b.time||"").localeCompare(a.time||""));
+  },[profile,leavesState,overtimes,pendOTs,pendLVs,myPendingVotes,bMaterials,isChef,isAdmin]);
+
+  const unreadNotifs=useMemo(()=>{
+    try{const lastSeen=localStorage.getItem("notif_seen")||"";return notifications.filter(n=>n.time>lastSeen).length;}catch(e){return notifications.length;}
+  },[notifications]);
+
   // Diagnostic: log state types so ErrorBoundary can display them
   useEffect(()=>{
     try{
@@ -652,7 +703,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.9</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.1</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -688,7 +739,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v4.9</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.1</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -1518,6 +1569,14 @@ function AppInner(){
           <div style={{fontSize:12,fontWeight:600,color:C.teal}}>🌴 Yıllık İzin</div>
           <div style={{fontSize:13,fontWeight:800,color:myAnnualRemaining()>0?C.teal:C.red}}>{myAnnualRemaining()}/{myAnnualDays()}g kalan</div>
         </div>
+        {(()=>{const yOT=yearlyOTH(profile.id),pct=yearlyOTPct(profile.id);return yOT>0?<div style={{marginTop:8,background:pct>=90?"rgba(239,68,68,0.08)":pct>=70?"rgba(245,158,11,0.08)":"rgba(99,102,241,0.06)",borderRadius:8,padding:"8px 12px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{fontSize:11,fontWeight:600,color:pct>=90?C.red:pct>=70?C.orange:C.dim}}>⚖️ Yıllık Mesai ({new Date().getFullYear()})</div>
+            <div style={{fontSize:12,fontWeight:800,color:pct>=90?C.red:pct>=70?C.orange:C.text}}>{yOT}/{YEARLY_OT_LIMIT}s</div>
+          </div>
+          <div style={{height:4,borderRadius:2,background:C.bg,overflow:"hidden",marginTop:4}}><div style={{height:"100%",borderRadius:2,width:Math.min(100,pct)+"%",background:pct>=90?C.red:pct>=70?C.orange:C.accent}}/></div>
+          {pct>=90&&<div style={{fontSize:10,color:C.red,fontWeight:700,marginTop:4}}>⚠ Yasal mesai sınırına yaklaşıldı!</div>}
+        </div>:null;})()}
       </div>
       <div style={{...S.crd,background:vPC>0?C.orangeD:C.card,cursor:vPC>0?"pointer":"default",textAlign:"center"}} onClick={()=>vPC>0&&setPage("approvals")}>
         <div style={{fontSize:28,fontWeight:800,color:vPC>0?C.orange:C.green}}>{vPC>0?vPC:"✓"}</div>
@@ -1580,7 +1639,45 @@ function AppInner(){
       <button style={S.btn(C.accent)} onClick={()=>setModAddUser(true)}>+ Yeni Personel</button>
       <div style={{height:8}}/>
       <button style={S.btn(C.tealD,C.teal)} onClick={()=>setShowPWA(true)}>📲 Ana Ekrana Ekleme Rehberi</button>
+      <div style={{height:8}}/>
+      <button style={S.btn(C.purpleD,C.purple)} onClick={()=>{
+        const yr=new Date().getFullYear(),mo=new Date().getMonth();
+        const moName=MONTHS[mo]+" "+yr;
+        const rows=bProfiles.filter(p=>p.active).map(p=>{
+          const ot=overtimes.filter(o=>o.personnel_id===p.id&&o.status==="approved"&&(o.work_date||"").startsWith(yr+"-"+String(mo+1).padStart(2,"0"))).reduce((s,o)=>s+Number(o.hours||0),0);
+          const lh=Math.round(ot*1.5*10)/10;
+          const usedLv=leavesState.filter(l=>l.personnel_id===p.id&&isOTLeave(l)&&l.status==="approved"&&(Array.isArray(l.dates)?l.dates:[]).some(d=>d.startsWith(yr+"-"+String(mo+1).padStart(2,"0")))).reduce((s,l)=>{const ds=(Array.isArray(l.dates)?l.dates:[]).filter(d=>d.startsWith(yr+"-"+String(mo+1).padStart(2,"0")));return s+ds.length;},0);
+          const annUsed=leavesState.filter(l=>l.personnel_id===p.id&&isAnnualLeave(l)&&l.status==="approved"&&(Array.isArray(l.dates)?l.dates:[]).some(d=>d.startsWith(yr+"-"+String(mo+1).padStart(2,"0")))).reduce((s,l)=>{const ds=(Array.isArray(l.dates)?l.dates:[]).filter(d=>d.startsWith(yr+"-"+String(mo+1).padStart(2,"0")));return s+ds.length;},0);
+          const yOT=yearlyOTH(p.id);
+          return{name:p.full_name,role:p.role,ot,lh,usedLv,annUsed,annTotal:p.annual_leave_days||14,yOT};
+        });
+        const activeFaultCount=bFaults.filter(f=>f.status==="active").length;
+        const resolvedThisMonth=bFaults.filter(f=>f.status==="resolved"&&(f.resolved_date||"").startsWith(yr+"-"+String(mo+1).padStart(2,"0"))).length;
+        const w=window.open("","_blank");
+        w.document.write(`<html><head><title>Rapor - ${moName}</title><style>body{font-family:Arial;padding:20px;color:#222}table{width:100%;border-collapse:collapse;margin:16px 0}th,td{border:1px solid #ccc;padding:6px 10px;text-align:left;font-size:12px}th{background:#f0f0f0;font-weight:700}.warn{color:red;font-weight:700}h1{font-size:18px}h2{font-size:14px;margin-top:20px;border-bottom:1px solid #ccc;padding-bottom:4px}@media print{body{padding:10px}}</style></head><body>`);
+        w.document.write(`<h1>📊 ${curBuildingName} — ${moName} Raporu</h1><p>Oluşturma: ${new Date().toLocaleString("tr-TR")}</p>`);
+        w.document.write(`<h2>👥 Personel Mesai & İzin Özeti</h2><table><tr><th>Personel</th><th>Görev</th><th>Mesai (s)</th><th>İzin Hakkı (s)</th><th>Mesai İzni (g)</th><th>Yıllık İzin (g)</th><th>Yıllık Mesai</th></tr>`);
+        rows.forEach(r=>{w.document.write(`<tr><td>${r.name}</td><td>${r.role}</td><td>${r.ot}</td><td>${r.lh}</td><td>${r.usedLv}</td><td>${r.annUsed}/${r.annTotal}</td><td ${r.yOT>YEARLY_OT_LIMIT*0.9?"class=warn":""}>${r.yOT}/${YEARLY_OT_LIMIT}s</td></tr>`);});
+        w.document.write(`</table>`);
+        w.document.write(`<h2>🔧 Arıza Durumu</h2><p>Aktif: <strong>${activeFaultCount}</strong> | Bu ay çözülen: <strong>${resolvedThisMonth}</strong></p>`);
+        if(lowStockMats.length>0){w.document.write(`<h2>📦 Eksik Malzemeler (${lowStockMats.length})</h2><table><tr><th>Malzeme</th><th>Kategori</th><th>Mevcut</th><th>Minimum</th></tr>`);lowStockMats.forEach(m=>{w.document.write(`<tr><td>${m.name}</td><td>${m.category}</td><td>${m.current_stock} ${m.unit}</td><td>${m.min_stock}</td></tr>`);});w.document.write(`</table>`);}
+        w.document.write(`</body></html>`);w.document.close();setTimeout(()=>w.print(),500);
+      }}>📊 Aylık PDF Rapor</button>
       <div style={{height:16}}/>
+      <div style={{height:16}}/>
+      <div style={S.sec}><span>🔄</span> Vardiya Durumu</div>
+      <div style={{display:"flex",gap:8,marginBottom:12}}>
+        <div style={{flex:1,...S.lawBox,borderColor:C.accent+"44",textAlign:"center"}}>
+          <div style={{fontSize:11,color:C.accent,fontWeight:600}}>☀️ Gündüz</div>
+          <div style={{fontSize:20,fontWeight:800,color:C.accent}}>{activeAll.filter(u=>!u.night_shift).length}</div>
+          <div style={{marginTop:6}}>{activeAll.filter(u=>!u.night_shift).map(u=><div key={u.id} style={{fontSize:10,color:C.dim,padding:"1px 0"}}>{u.full_name}</div>)}</div>
+        </div>
+        <div style={{flex:1,...S.lawBox,borderColor:C.orange+"44",textAlign:"center"}}>
+          <div style={{fontSize:11,color:C.orange,fontWeight:600}}>🌙 Gece</div>
+          <div style={{fontSize:20,fontWeight:800,color:C.orange}}>{activeAll.filter(u=>u.night_shift).length}</div>
+          <div style={{marginTop:6}}>{activeAll.filter(u=>u.night_shift).map(u=><div key={u.id} style={{fontSize:10,color:C.dim,padding:"1px 0"}}>{u.full_name}</div>)}</div>
+        </div>
+      </div>
       <div style={S.sec}><span>👥</span> Aktif ({activeAll.length})</div>
       {activeAll.map((u,i)=>{const rl=u.user_role==="chef"?"Şef":u.user_role==="viewer"?"İzleyici":u.user_role==="admin"?"Yönetici":"Personel";const rc=u.user_role==="chef"?C.orange:u.user_role==="viewer"?C.blue:u.user_role==="admin"?C.purple:C.green;const rb=u.user_role==="chef"?C.orangeD:u.user_role==="viewer"?C.blueD:u.user_role==="admin"?C.purpleD:C.greenD;return(<div key={u.id} style={S.crd} onClick={()=>setModEditUser(u)}><div style={S.row}><div style={S.av(getAv(i))}>{ini(u.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14,fontWeight:600}}>{u.full_name}</div><div style={{fontSize:11,color:C.dim}}>{u.role}</div></div><div style={S.tag(rb,rc)}>{rl}</div></div></div>);})}
       {bProfiles.filter(u=>!u.active).length>0&&<><div style={{...S.sec,marginTop:20}}><span>🚫</span> Pasif</div>{bProfiles.filter(u=>!u.active).map(u=><div key={u.id} style={{...S.crd,opacity:0.6}}><div style={S.row}><div style={S.av("rgba(255,255,255,0.05)")}>{ini(u.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14}}>{u.full_name}</div></div><button style={S.btnS(C.greenD,C.green)} onClick={e=>{e.stopPropagation();doReactivateU(u.id);}}>Aktif Et</button></div></div>)}</>}
@@ -1598,7 +1695,7 @@ function AppInner(){
     function prev(){calM===0?(setCalY(calY-1),setCalM(11)):setCalM(calM-1);}
     function next(){calM===11?(setCalY(calY+1),setCalM(0)):setCalM(calM+1);}
     const cells=[];for(let i=0;i<fd;i++)cells.push(<div key={`e${i}`}/>);
-    for(let d=1;d<=dim;d++){const ds=dateStr(calY,calM,d),isSeld=calSel.includes(ds),lv=lvDates[ds],isToday=ds===today;let bg="transparent",clr=C.text,brd="2px solid transparent";if(isSeld){bg=C.accent;clr="#fff";brd=`2px solid ${C.accentL}`;}else if(lv){bg=lv.status==="approved"?C.greenD:C.orangeD;clr=lv.status==="approved"?C.green:C.orange;}else if(isToday)brd=`2px solid ${C.accent}`;cells.push(<div key={d} onClick={()=>tog(d)} style={{width:"100%",paddingTop:"100%",borderRadius:10,background:bg,border:brd,position:"relative",cursor:isSel?"pointer":"default"}}><div style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}><div style={{fontSize:14,fontWeight:isToday||isSeld?700:500,color:clr}}>{d}</div>{lv&&!isSeld&&<div style={{width:4,height:4,borderRadius:"50%",background:lv.status==="approved"?C.green:C.orange,marginTop:2}}/>}</div></div>);}
+    for(let d=1;d<=dim;d++){const ds=dateStr(calY,calM,d),isSeld=calSel.includes(ds),lv=lvDates[ds],isToday=ds===today,hol=isHoliday(ds);let bg="transparent",clr=C.text,brd="2px solid transparent";if(isSeld){bg=C.accent;clr="#fff";brd=`2px solid ${C.accentL}`;}else if(hol&&!lv){bg="rgba(239,68,68,0.08)";clr=C.red;}else if(lv){bg=lv.status==="approved"?C.greenD:C.orangeD;clr=lv.status==="approved"?C.green:C.orange;}else if(isToday)brd=`2px solid ${C.accent}`;cells.push(<div key={d} onClick={()=>tog(d)} style={{width:"100%",paddingTop:"100%",borderRadius:10,background:bg,border:brd,position:"relative",cursor:isSel?"pointer":"default"}}><div style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}><div style={{fontSize:14,fontWeight:isToday||isSeld?700:500,color:clr}}>{d}</div>{hol&&!isSeld?<div style={{width:5,height:5,borderRadius:"50%",background:C.red,marginTop:1}}/>:lv&&!isSeld?<div style={{width:4,height:4,borderRadius:"50%",background:lv.status==="approved"?C.green:C.orange,marginTop:2}}/>:null}</div></div>);}
     const needH=calSel.length*8,currentRH=myRemHours(profile.id),willDebt=needH>0&&currentRH<needH,debtAmt=willDebt?Math.round((needH-currentRH)/8*10)/10:0;
     return(<div>
       <div style={S.sec}><span>📅</span> İzin Takvimi</div>
@@ -1635,6 +1732,7 @@ function AppInner(){
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4,marginBottom:4}}>{DAYS_TR.map(d=><div key={d} style={{textAlign:"center",fontSize:11,color:C.muted,fontWeight:600,padding:"4px 0"}}>{d}</div>)}</div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>{cells}</div>
+      {(()=>{const monthHols=Object.entries(HOLIDAYS_2026).filter(([d])=>{const[y,m]=d.split("-");return Number(y)===calY&&Number(m)===calM+1;});return monthHols.length>0?<div style={{marginTop:10,padding:"8px 10px",background:"rgba(239,68,68,0.06)",borderRadius:8,border:`1px solid ${C.red}22`}}><div style={{fontSize:11,fontWeight:700,color:C.red,marginBottom:4}}>🔴 Resmi Tatiller</div>{monthHols.map(([d,name])=><div key={d} style={{fontSize:11,color:C.dim,padding:"2px 0"}}>{fDS(d)} — <span style={{color:C.red}}>{name}</span></div>)}</div>:null;})()}
       {isSel&&calSel.length>0&&<div style={{...S.lawBox,marginTop:12}}>
         <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>{leaveSource==="annual"?"🌴":"📅"} Seçilen ({calSel.length} gun)</div>
         <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{calSel.sort().map(d=><div key={d} onClick={()=>setCalSel(p=>p.filter(x=>x!==d))} style={{...S.tag(leaveSource==="annual"?C.tealD:C.accentD,leaveSource==="annual"?C.teal:C.accent),cursor:"pointer",padding:"4px 10px"}}>{fDS(d)} ✕</div>)}</div>
@@ -1860,7 +1958,7 @@ function AppInner(){
       <div style={S.hdr}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,minWidth:36,borderRadius:10,background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🔧</div><div><div style={{fontSize:17,fontWeight:700}}>İBB Teknik Takip</div><div style={{fontSize:11,color:C.dim}}>{curBuildingName||"Fazla Mesai & İzin"}</div></div></div>
-          <div style={{display:"flex",gap:6}}><button onClick={()=>setShowPWA(true)} style={{fontSize:14,padding:"6px 8px",borderRadius:20,background:C.accentD,color:C.accent,border:"none",cursor:"pointer"}}>📲</button><button onClick={doLogout} style={{fontSize:11,padding:"6px 12px",borderRadius:20,background:C.redD,color:C.red,border:"none",cursor:"pointer",fontWeight:600}}>Çıkış</button></div>
+          <div style={{display:"flex",gap:6}}><button onClick={()=>setShowPWA(true)} style={{fontSize:14,padding:"6px 8px",borderRadius:20,background:C.accentD,color:C.accent,border:"none",cursor:"pointer"}}>📲</button><button onClick={()=>{setShowNotifs(!showNotifs);try{localStorage.setItem("notif_seen",new Date().toISOString());}catch(e){}}} style={{fontSize:14,padding:"6px 8px",borderRadius:20,background:unreadNotifs>0?C.orangeD:C.accentD,color:unreadNotifs>0?C.orange:C.accent,border:"none",cursor:"pointer",position:"relative"}}>🔔{unreadNotifs>0&&<span style={{position:"absolute",top:-4,right:-4,width:18,height:18,borderRadius:9,background:C.red,color:"#fff",fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{unreadNotifs>9?"9+":unreadNotifs}</span>}</button><button onClick={doLogout} style={{fontSize:11,padding:"6px 12px",borderRadius:20,background:C.redD,color:C.red,border:"none",cursor:"pointer",fontWeight:600}}>Çıkış</button></div>
         </div>
         {/* Building Selector */}
         {canSwitchBuilding&&buildings.length>1&&<div style={{display:"flex",gap:6,marginBottom:8,overflowX:"auto",paddingBottom:2}}>
@@ -1894,6 +1992,31 @@ function AppInner(){
       {showStartTP&&<CustomTimePicker value={otForm.startTime||"17:00"} onChange={v=>setOtForm(p=>({...p,startTime:v}))} onClose={()=>setShowStartTP(false)} label="Başlangıç Saati"/>}
       {showEndTP&&<CustomTimePicker value={otForm.endTime||"18:00"} onChange={v=>setOtForm(p=>({...p,endTime:v}))} onClose={()=>setShowEndTP(false)} label="Bitiş Saati"/>}
       {showPWA&&<PWAInstallGuide onClose={()=>setShowPWA(false)}/>}
+      {showNotifs&&<div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:250}} onClick={()=>setShowNotifs(false)}>
+        <div style={{position:"absolute",top:60,right:8,width:"calc(100% - 16px)",maxWidth:360,maxHeight:"70vh",background:C.card,borderRadius:16,border:`1px solid ${C.border}`,overflow:"hidden",boxShadow:"0 20px 60px rgba(0,0,0,0.5)"}} onClick={e=>e.stopPropagation()}>
+          <div style={{padding:"14px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{fontSize:15,fontWeight:700}}>🔔 Bildirimler</div>
+            <button onClick={()=>setShowNotifs(false)} style={{background:"none",border:"none",color:C.dim,fontSize:18,cursor:"pointer"}}>✕</button>
+          </div>
+          <div style={{overflowY:"auto",maxHeight:"calc(70vh - 50px)",padding:8}}>
+            {notifications.length===0?<div style={{padding:30,textAlign:"center",color:C.dim,fontSize:13}}>Bildirim yok ✓</div>:
+            notifications.map(n=>(
+              <div key={n.id} style={{display:"flex",gap:10,padding:"10px 8px",borderBottom:`1px solid ${C.border}`,cursor:n.id==="vote"?"pointer":n.id==="stock"?"pointer":n.id==="pend"?"pointer":"default"}} onClick={()=>{
+                if(n.id==="vote"){setPage("faults");setShowNotifs(false);}
+                else if(n.id==="stock"){setPage("depo");setDepoTab("purchase");setShowNotifs(false);}
+                else if(n.id==="pend"){setPage("approvals");setShowNotifs(false);}
+              }}>
+                <div style={{fontSize:20,flexShrink:0}}>{n.icon}</div>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13,fontWeight:600,color:n.type==="error"?C.red:n.type==="warning"?C.orange:C.green}}>{n.text}</div>
+                  {n.time&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>{(()=>{try{const d=new Date(n.time);const diff=Math.round((Date.now()-d.getTime())/60000);if(diff<60)return diff+" dk önce";if(diff<1440)return Math.round(diff/60)+" saat önce";return Math.round(diff/1440)+" gün önce";}catch(e){return"";}})()}</div>}
+                </div>
+                {(n.id==="vote"||n.id==="stock"||n.id==="pend")&&<div style={{color:C.accent,fontSize:16,alignSelf:"center"}}>›</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>}
       {showHourlyDatePicker&&<CustomDatePicker value={hourlyForm.date||todayStr()} onChange={v=>setHourlyForm(p=>({...p,date:v}))} onClose={()=>setShowHourlyDatePicker(false)}/>}
       {showHourlyStartTP&&<CustomTimePicker value={hourlyForm.startTime||"08:00"} onChange={v=>setHourlyForm(p=>({...p,startTime:v}))} onClose={()=>setShowHourlyStartTP(false)} label="Çıkış Saati"/>}
       {showHourlyEndTP&&<CustomTimePicker value={hourlyForm.endTime||"17:00"} onChange={v=>setHourlyForm(p=>({...p,endTime:v}))} onClose={()=>setShowHourlyEndTP(false)} label="Dönüş Saati"/>}
