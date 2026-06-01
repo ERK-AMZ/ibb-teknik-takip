@@ -219,6 +219,8 @@ function AppInner(){
   const[selPerson,setSelPerson]=useState(null);
   const[selOT,setSelOT]=useState(null);
   const[selLV,setSelLV]=useState(null);
+  const[nobetState,setNobetState]=useState([]); // nöbet devir kayıtları
+  const[selDay,setSelDay]=useState(null); // gün detay modalı (kim izinde/nöbette)
   const[modNewOT,setModNewOT]=useState(false);
   const[modAddUser,setModAddUser]=useState(false);
   const[modEditUser,setModEditUser]=useState(null);
@@ -343,7 +345,8 @@ function AppInner(){
       supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),
       supabase.from('fault_votes').select('*').gte('vote_week',voteMinWeek()),
       supabase.from('materials').select('*').order('name'),
-      supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}).limit(200)
+      supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}).limit(200),
+      supabase.from('nobet_devir').select('*')
     ]);
     try{
       const r1=await criticalP;
@@ -368,6 +371,7 @@ function AppInner(){
       if(r2[2].status==="fulfilled"){const d=toArr(r2[2].value);if(d.length>0)setFaultVotes(d);}
       if(r2[3].status==="fulfilled"){const d=toArr(r2[3].value);if(d.length>0)setMaterials(d);}
       if(r2[4].status==="fulfilled"){const d=toArr(r2[4].value);if(d.length>0)setStockMovements(d);}
+      if(r2[5].status==="fulfilled"){const d=toArr(r2[5].value);if(d.length>0)setNobetState(d);}
       // Retry fault_votes if empty (egress limit might have blocked it)
       const votesLoaded=toArr(r2[2].status==="fulfilled"?r2[2].value:null);
       if(votesLoaded.length===0){
@@ -1683,18 +1687,51 @@ function AppInner(){
     </div>);
   };
 
+  const renderDayDetail=()=>{
+    if(!selDay||page!=="calendar")return null;
+    const ds=selDay,hol=isHoliday(ds);
+    const lvs=leavesState.filter(l=>l.status!=="rejected"&&(Array.isArray(l.dates)?l.dates:[]).includes(ds)&&(!selBuilding||profileMap.get(l.personnel_id)?.building_id===selBuilding));
+    const nbs=nobetState.filter(n=>(n.nobet_date||"").slice(0,10)===ds);
+    return(<div style={S.mod} onClick={()=>setSelDay(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+      <div style={S.modH}/>
+      <div style={{fontSize:17,fontWeight:700,marginBottom:2}}>{fDS(ds)}</div>
+      <div style={{fontSize:12,color:C.dim,marginBottom:12}}>{DAYS_TR[(new Date(ds+"T00:00:00").getDay()+6)%7]}</div>
+      {hol&&<div style={{...S.tag(C.redD,C.red),marginBottom:12}}>🔴 {hol}</div>}
+      <div style={{fontSize:13,fontWeight:700,color:C.teal,marginBottom:6}}>🌴 İzinde ({lvs.length})</div>
+      {lvs.length===0?<div style={{fontSize:12,color:C.dim,marginBottom:12}}>İzinli personel yok</div>
+        :<div style={{marginBottom:12}}>{lvs.map(l=>{const pp=getU(l.personnel_id);const ann=l.leave_source==="annual";return(<div key={l.id} onClick={()=>{setSelLV(l);setSelDay(null);}} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:C.bg,borderRadius:8,padding:"8px 10px",marginTop:6,border:"1px solid "+C.border,cursor:"pointer"}}><div style={{fontSize:13,fontWeight:600}}>{pp?.full_name||"—"}</div><div style={S.tag(ann?C.tealD:C.accentD,ann?C.teal:C.accent)}>{ann?"🌴 Yıllık":"⏱ Mesai"}</div></div>);})}</div>}
+      <div style={{fontSize:13,fontWeight:700,color:C.blue,marginBottom:6}}>🔵 Nöbetçi ({nbs.length})</div>
+      {nbs.length===0?<div style={{fontSize:12,color:C.dim}}>Nöbet kaydı yok</div>
+        :<div>{nbs.map(n=>{const dv=getU(n.devralan_id),asl=getU(n.asil_id);return(<div key={n.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:C.bg,borderRadius:8,padding:"8px 10px",marginTop:6,border:"1px solid "+C.border}}><div style={{fontSize:13,fontWeight:600,color:C.blue}}>{dv?.full_name||"—"}</div>{asl&&<div style={{fontSize:10,color:C.dim}}>{asl.full_name} yerine</div>}</div>);})}</div>}
+      <div style={{height:12}}/>
+      <button style={S.btn(C.border,C.text)} onClick={()=>setSelDay(null)}>Kapat</button>
+    </div></div>);
+  };
+
   const renderCalendar=()=>{
     const dim=daysInMonth(calY,calM),fd=firstDay(calY,calM),isSel=calMode!=="view";
     const myLvs=leavesState.filter(l=>l.personnel_id===profile.id&&l.status!=="rejected");
     const allLvs=isPerso?myLvs:bLeaves.filter(l=>l.status!=="rejected");
     const myLvDates={};myLvs.forEach(l=>(Array.isArray(l.dates)?l.dates:[]).forEach(d=>{myLvDates[d]={status:l.status,id:l.id};}));
     const lvDates={};allLvs.forEach(l=>(Array.isArray(l.dates)?l.dates:[]).forEach(d=>{lvDates[d]={status:l.status,id:l.id};}));
+    const dayLeaves={};allLvs.forEach(l=>(Array.isArray(l.dates)?l.dates:[]).forEach(d=>{(dayLeaves[d]=dayLeaves[d]||[]).push(l);}));
+    const dayNobet={};nobetState.forEach(n=>{const k=(n.nobet_date||"").slice(0,10);(dayNobet[k]=dayNobet[k]||[]).push(n);});
     const avD=myRemDays(profile.id),today=todayStr();
     function tog(d){if(!isSel)return;const ds=dateStr(calY,calM,d);if(myLvDates[ds]&&(!calModId||myLvDates[ds].id!==calModId)){setToast("Bu tarihte zaten izniniz var");return;}setCalSel(p=>p.includes(ds)?p.filter(x=>x!==ds):[...p,ds].sort());}
     function prev(){calM===0?(setCalY(calY-1),setCalM(11)):setCalM(calM-1);}
     function next(){calM===11?(setCalY(calY+1),setCalM(0)):setCalM(calM+1);}
     const cells=[];for(let i=0;i<fd;i++)cells.push(<div key={`e${i}`}/>);
-    for(let d=1;d<=dim;d++){const ds=dateStr(calY,calM,d),isSeld=calSel.includes(ds),lv=lvDates[ds],isToday=ds===today,hol=isHoliday(ds);let bg="transparent",clr=C.text,brd="2px solid transparent";if(isSeld){bg=C.accent;clr="#fff";brd=`2px solid ${C.accentL}`;}else if(hol&&!lv){bg="rgba(239,68,68,0.08)";clr=C.red;}else if(lv){bg=lv.status==="approved"?C.greenD:C.orangeD;clr=lv.status==="approved"?C.green:C.orange;}else if(isToday)brd=`2px solid ${C.accent}`;cells.push(<div key={d} onClick={()=>tog(d)} style={{width:"100%",paddingTop:"100%",borderRadius:10,background:bg,border:brd,position:"relative",cursor:isSel?"pointer":"default"}}><div style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}><div style={{fontSize:14,fontWeight:isToday||isSeld?700:500,color:clr}}>{d}</div>{hol&&!isSeld?<div style={{width:5,height:5,borderRadius:"50%",background:C.red,marginTop:1}}/>:lv&&!isSeld?<div style={{width:4,height:4,borderRadius:"50%",background:lv.status==="approved"?C.green:C.orange,marginTop:2}}/>:null}</div></div>);}
+    for(let d=1;d<=dim;d++){
+      const ds=dateStr(calY,calM,d),isSeld=calSel.includes(ds),lv=lvDates[ds],isToday=ds===today,hol=isHoliday(ds);
+      const cnt=(dayLeaves[ds]||[]).length,nbCnt=(dayNobet[ds]||[]).length;
+      let bg="transparent",clr=C.text,brd="2px solid transparent";
+      if(isSeld){bg=C.accent;clr="#fff";brd=`2px solid ${C.accentL}`;}
+      else if(hol&&!lv){bg="rgba(239,68,68,0.08)";clr=C.red;}
+      else if(lv){bg=lv.status==="approved"?C.greenD:C.orangeD;clr=lv.status==="approved"?C.green:C.orange;}
+      else if(isToday)brd=`2px solid ${C.accent}`;
+      const canOpen=!isPerso&&(cnt>0||nbCnt>0);
+      cells.push(<div key={d} onClick={()=>{if(isSel){tog(d);}else if(canOpen){setSelDay(ds);}}} style={{width:"100%",paddingTop:"100%",borderRadius:10,background:bg,border:brd,position:"relative",cursor:(isSel||canOpen)?"pointer":"default"}}><div style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}><div style={{fontSize:14,fontWeight:isToday||isSeld?700:500,color:clr}}>{d}</div>{!isPerso&&!isSeld&&cnt>0?<div style={{fontSize:9,fontWeight:800,color:C.teal,lineHeight:1,marginTop:1}}>🌴{cnt}</div>:hol&&!isSeld?<div style={{width:5,height:5,borderRadius:"50%",background:C.red,marginTop:1}}/>:lv&&!isSeld?<div style={{width:4,height:4,borderRadius:"50%",background:lv.status==="approved"?C.green:C.orange,marginTop:2}}/>:null}{!isPerso&&!isSeld&&nbCnt>0?<div style={{position:"absolute",top:2,right:3,fontSize:8,fontWeight:800,color:C.blue}}>N</div>:null}</div></div>);
+    }
     const needH=calSel.length*8,currentRH=myRemHours(profile.id),willDebt=needH>0&&currentRH<needH,debtAmt=willDebt?Math.round((needH-currentRH)/8*10)/10:0;
     return(<div>
       <div style={S.sec}><span>📅</span> İzin Takvimi</div>
@@ -1731,6 +1768,7 @@ function AppInner(){
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4,marginBottom:4}}>{DAYS_TR.map(d=><div key={d} style={{textAlign:"center",fontSize:11,color:C.muted,fontWeight:600,padding:"4px 0"}}>{d}</div>)}</div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>{cells}</div>
+      {!isPerso&&<div style={{fontSize:10,color:C.dim,marginTop:8,textAlign:"center"}}>🌴 sayı = o gün izinli · <span style={{color:C.blue,fontWeight:700}}>N</span> = nöbet · güne dokun → kim izinde/nöbette</div>}
       {(()=>{const monthHols=Object.entries(HOLIDAYS_2026).filter(([d])=>{const[y,m]=d.split("-");return Number(y)===calY&&Number(m)===calM+1;});return monthHols.length>0?<div style={{marginTop:10,padding:"8px 10px",background:"rgba(239,68,68,0.06)",borderRadius:8,border:`1px solid ${C.red}22`}}><div style={{fontSize:11,fontWeight:700,color:C.red,marginBottom:4}}>🔴 Resmi Tatiller</div>{monthHols.map(([d,name])=><div key={d} style={{fontSize:11,color:C.dim,padding:"2px 0"}}>{fDS(d)} — <span style={{color:C.red}}>{name}</span></div>)}</div>:null;})()}
       {isSel&&calSel.length>0&&<div style={{...S.lawBox,marginTop:12}}>
         <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>{leaveSource==="annual"?"🌴":"📅"} Seçilen ({calSel.length} gun)</div>
@@ -1987,6 +2025,7 @@ function AppInner(){
       {renderEditUser()}
       {renderOTDetail()}
       {renderLVDetail()}
+      {renderDayDetail()}
       {showDatePicker&&<CustomDatePicker value={otForm.date||todayStr()} onChange={v=>setOtForm(p=>({...p,date:v}))} onClose={()=>setShowDatePicker(false)}/>}
       {showStartTP&&<CustomTimePicker value={otForm.startTime||"17:00"} onChange={v=>setOtForm(p=>({...p,startTime:v}))} onClose={()=>setShowStartTP(false)} label="Başlangıç Saati"/>}
       {showEndTP&&<CustomTimePicker value={otForm.endTime||"18:00"} onChange={v=>setOtForm(p=>({...p,endTime:v}))} onClose={()=>setShowEndTP(false)} label="Bitiş Saati"/>}
