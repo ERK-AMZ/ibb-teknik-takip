@@ -533,10 +533,9 @@ function AppInner(){
       // Annual leave
       const remaining=myAnnualRemaining();
       if(calSel.length>remaining){setToast(`⚠ Yıllık izin hakkınız ${remaining} gün, ${calSel.length} gün seçtiniz`);return;}
-      if(!leaveReason||leaveReason.trim().length<5){setToast("⚠ İzin sebebi yazın (min 5 karakter)");return;}
       setSubmitting(true);
       try{
-        await createLeave({personnel_id:profile.id,dates:calSel.sort(),total_hours:calSel.length*8,reason:`[Yıllık İzin] ${leaveReason.trim()}`,leave_type:"daily",leave_source:"annual",status:"pending_chef"});
+        await createLeave({personnel_id:profile.id,dates:calSel.sort(),total_hours:calSel.length*8,reason:`[Yıllık İzin] ${leaveReason.trim()||"Yıllık izin"}`,leave_type:"daily",leave_source:"annual",status:"pending_chef"});
         await fetchLeaves();setCalSel([]);setCalMode("view");setLeaveReason("");
         setToast(`🌴 ${calSel.length} günlük yıllık izin onaya gönderildi`);
       }catch(e){setToast("Hata: "+(e?.message||""));}
@@ -1783,7 +1782,7 @@ function AppInner(){
           <div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:11,color:C.dim}}>Kullanılacak</div><div style={{fontSize:18,fontWeight:800,color:C.purple}}>{needH}s</div></div><div style={{textAlign:"right"}}><div style={{fontSize:11,color:C.dim}}>Kalan Hak</div><div style={{fontSize:18,fontWeight:800,color:avD>=0?C.green:C.red}}>{avD}g</div></div></div>
           {willDebt&&<><div style={{marginTop:8,background:C.redD,borderRadius:8,padding:"6px 10px",textAlign:"center"}}><span style={{fontSize:12,color:C.red,fontWeight:700}}>⚠ {debtAmt} gün borçlanma olacak</span></div><div style={{marginTop:10}}><div style={{...S.lbl,color:C.red}}>📝 Fazla izin sebebi (zorunlu)</div><textarea style={{...S.ta,borderColor:`${C.red}66`,minHeight:60}} placeholder="Neden fazla izin istiyorsunuz?" value={leaveReason} onChange={e=>setLeaveReason(e.target.value)}/></div></>}
         </>}
-        {!willDebt&&calMode==="select"&&<div style={{marginTop:10}}><div style={S.lbl}>📝 İzin sebebi {leaveSource==="annual"?"(zorunlu)":"(isteğe bağlı)"}</div><textarea style={{...S.ta,minHeight:50}} placeholder={leaveSource==="annual"?"Yıllık izin sebebiniz...":"İzin sebebiniz..."} value={leaveReason} onChange={e=>setLeaveReason(e.target.value)}/></div>}
+        {!willDebt&&calMode==="select"&&<div style={{marginTop:10}}><div style={S.lbl}>📝 İzin sebebi (isteğe bağlı)</div><textarea style={{...S.ta,minHeight:50}} placeholder={leaveSource==="annual"?"Yıllık izin sebebiniz...":"İzin sebebiniz..."} value={leaveReason} onChange={e=>setLeaveReason(e.target.value)}/></div>}
 
       </div>}
       {isSel&&<div>
