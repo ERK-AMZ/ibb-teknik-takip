@@ -3,6 +3,11 @@ import { supabase, signIn, signOut, getProfiles, createOvertime, updateOvertime,
 
 // Safe array extractor - handles {data:[...]} objects AND raw arrays
 const toArr=(v)=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'&&Array.isArray(v.data))return v.data;return[];};
+// === Önbellek (stale-while-revalidate): açılışta anında veri, arkada tazeleme ===
+const CACHE_KEY='ibb_cache_v1';
+const cacheGet=()=>{try{const r=localStorage.getItem(CACHE_KEY);if(!r)return null;const o=JSON.parse(r);return(o&&o.profiles)?o:null;}catch(e){return null;}};
+const cacheSave=(patch)=>{try{const cur=cacheGet()||{};const nx={...cur,...patch,ts:Date.now()};if(Array.isArray(nx.faults))nx.faults=nx.faults.map(f=>({...f,photos:[]}));localStorage.setItem(CACHE_KEY,JSON.stringify(nx));}catch(e){try{localStorage.removeItem(CACHE_KEY);}catch(_e){}}};
+const cacheClear=()=>{try{localStorage.removeItem(CACHE_KEY);}catch(e){}};
 
 class ErrorBoundary extends Component {
   constructor(props){super(props);this.state={hasError:false,error:null,info:null};}
@@ -296,7 +301,7 @@ function AppInner(){
   const fetchProfiles=useCallback(async()=>{try{const{data}=await supabase.from('profiles').select('*');if(Array.isArray(data))setProfilesState(data);}catch(e){console.error(e);}},[]);
   const fetchOvertimes=useCallback(async()=>{try{const{data}=await supabase.from('overtimes').select('*').order('work_date',{ascending:false});if(Array.isArray(data))setOvertimesState(data);}catch(e){console.error(e);}},[]);
   const fetchLeaves=useCallback(async()=>{try{const{data}=await supabase.from('leaves').select('*').order('created_at',{ascending:false});if(Array.isArray(data))setLeavesState(data);}catch(e){console.error(e);}},[]);
-  const fetchFaults=useCallback(async()=>{try{const{data}=await supabase.from('faults').select('*').order('detected_date',{ascending:false});if(Array.isArray(data))setFaults(data);}catch(e){console.error(e);}},[]);
+  const fetchFaults=useCallback(async()=>{try{const{data}=await supabase.from('faults').select('id,title,location,description,detected_date,fault_type,material_needed,status,building_id,created_by,resolved_date,created_at').order('detected_date',{ascending:false});if(Array.isArray(data))setFaults(data);}catch(e){console.error(e);}},[]);
   const fetchFaultServices=useCallback(async()=>{try{const{data}=await supabase.from('fault_services').select('*').order('visit_date',{ascending:false});if(Array.isArray(data))setFaultServices(data);}catch(e){console.error(e);}},[]);
   const fetchFaultVotes=useCallback(async()=>{try{const{data}=await supabase.from('fault_votes').select('*').gte('vote_week',voteMinWeek());if(Array.isArray(data)&&data.length>0)setFaultVotes(data);}catch(e){console.error(e);}},[]); 
   const fetchMaterials=useCallback(async()=>{try{const{data}=await supabase.from('materials').select('*').order('name');if(Array.isArray(data))setMaterials(data);}catch(e){console.error(e);}},[]);
@@ -309,7 +314,7 @@ function AppInner(){
       const r=await Promise.allSettled([
         supabase.from('profiles').select('*'),supabase.from('overtimes').select('*').order('work_date',{ascending:false}),
         supabase.from('leaves').select('*').order('created_at',{ascending:false}),supabase.from('buildings').select('*').order('name'),
-        supabase.from('faults').select('*').order('detected_date',{ascending:false}),supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),
+        supabase.from('faults').select('id,title,location,description,detected_date,fault_type,material_needed,status,building_id,created_by,resolved_date,created_at').order('detected_date',{ascending:false}),supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),
         supabase.from('fault_votes').select('*').gte('vote_week',voteMinWeek()),supabase.from('materials').select('*').order('name'),
         supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}).limit(200)
       ]);
@@ -332,6 +337,25 @@ function AppInner(){
     if(loadingRef.current)return;
     loadingRef.current=true;
     setLoading(true);setLoadError(null);
+    // Önbellek varsa ekranı ANINDA doldur (arıza/depo/onay sayaçları dahil), ağ arkada tazeler
+    const cc=cacheGet();
+    if(cc&&Array.isArray(cc.profiles)&&cc.profiles.length>0){
+      const cfp=cc.profiles.find(p=>p.id===uid);
+      if(cfp){
+        setProfilesState(cc.profiles);
+        if(Array.isArray(cc.overtimes))setOvertimesState(cc.overtimes);
+        if(Array.isArray(cc.leaves))setLeavesState(cc.leaves);
+        if(Array.isArray(cc.buildings))setBuildings(cc.buildings);
+        if(Array.isArray(cc.faults))setFaults(cc.faults);
+        if(Array.isArray(cc.faultServices))setFaultServices(cc.faultServices);
+        if(Array.isArray(cc.materials))setMaterials(cc.materials);
+        if(Array.isArray(cc.stockMovements))setStockMovements(cc.stockMovements);
+        if(Array.isArray(cc.nobet))setNobetState(cc.nobet);
+        setProfile(cfp);
+        if(!selBuilding)setSelBuilding(cfp.building_id||cc.buildings?.[0]?.id||null);
+        setLoading(false); // yükleme ekranı yok, taze veri arkada gelecek
+      }
+    }
     const safetyTimer=setTimeout(()=>{setLoading(false);loadingRef.current=false;},15000);
     // Start BOTH groups simultaneously (before try block for correct scoping)
     const criticalP=Promise.allSettled([
@@ -341,7 +365,7 @@ function AppInner(){
       supabase.from('buildings').select('*').order('name')
     ]);
     const secondaryP=Promise.allSettled([
-      supabase.from('faults').select('*').order('detected_date',{ascending:false}),
+      supabase.from('faults').select('id,title,location,description,detected_date,fault_type,material_needed,status,building_id,created_by,resolved_date,created_at').order('detected_date',{ascending:false}),
       supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),
       supabase.from('fault_votes').select('*').gte('vote_week',voteMinWeek()),
       supabase.from('materials').select('*').order('name'),
@@ -358,6 +382,7 @@ function AppInner(){
       setBuildings(blds);
       const fp=profs.find(p=>p.id===uid);setProfile(fp||null);
       if(fp&&blds.length>0&&!selBuilding){setSelBuilding(fp.building_id||blds[0]?.id||null);}
+      if(profs.length>0)cacheSave({profiles:profs,overtimes:toArr(r1[1].status==="fulfilled"?r1[1].value:null),leaves:toArr(r1[2].status==="fulfilled"?r1[2].value:null),buildings:blds});
       if(!fp&&!window.__RETRIED){
         window.__RETRIED=true;loadingRef.current=false;
         setTimeout(async()=>{try{await supabase.auth.refreshSession();}catch(e){}setTimeout(()=>{loadData(uid);},500);},1500);
@@ -372,6 +397,7 @@ function AppInner(){
       if(r2[3].status==="fulfilled"){const d=toArr(r2[3].value);if(d.length>0)setMaterials(d);}
       if(r2[4].status==="fulfilled"){const d=toArr(r2[4].value);if(d.length>0)setStockMovements(d);}
       if(r2[5].status==="fulfilled"){const d=toArr(r2[5].value);if(d.length>0)setNobetState(d);}
+      cacheSave({faults:toArr(r2[0].status==="fulfilled"?r2[0].value:null),faultServices:toArr(r2[1].status==="fulfilled"?r2[1].value:null),materials:toArr(r2[3].status==="fulfilled"?r2[3].value:null),stockMovements:toArr(r2[4].status==="fulfilled"?r2[4].value:null),nobet:toArr(r2[5].status==="fulfilled"?r2[5].value:null)});
       // Retry fault_votes if empty (egress limit might have blocked it)
       const votesLoaded=toArr(r2[2].status==="fulfilled"?r2[2].value:null);
       if(votesLoaded.length===0){
@@ -402,7 +428,7 @@ function AppInner(){
         setSession(s);
         if(event==='SIGNED_IN'&&s?.user?.id&&!initDone){loadData(s.user.id);}
         else if(event==='TOKEN_REFRESHED'&&s?.user?.id){silentRefresh(s.user.id);}
-        else if(event==='SIGNED_OUT'){setProfile(null);setLoading(false);}
+        else if(event==='SIGNED_OUT'){setProfile(null);setLoading(false);cacheClear();}
       });
       sub=data?.subscription;
     }catch(e){}
