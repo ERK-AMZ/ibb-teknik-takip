@@ -303,7 +303,7 @@ function AppInner(){
   const fetchLeaves=useCallback(async()=>{try{const{data}=await supabase.from('leaves').select('*').order('created_at',{ascending:false});if(Array.isArray(data))setLeavesState(data);}catch(e){console.error(e);}},[]);
   const fetchFaults=useCallback(async()=>{try{const{data}=await supabase.from('faults').select('id,title,location,description,detected_date,fault_type,material_needed,status,building_id,created_by,resolved_date,created_at').order('detected_date',{ascending:false});if(Array.isArray(data))setFaults(data);}catch(e){console.error(e);}},[]);
   const fetchFaultServices=useCallback(async()=>{try{const{data}=await supabase.from('fault_services').select('*').order('visit_date',{ascending:false});if(Array.isArray(data))setFaultServices(data);}catch(e){console.error(e);}},[]);
-  const fetchFaultVotes=useCallback(async()=>{try{const{data}=await supabase.from('fault_votes').select('*').gte('vote_week',voteMinWeek());if(Array.isArray(data)&&data.length>0)setFaultVotes(data);}catch(e){console.error(e);}},[]); 
+  const fetchFaultVotes=useCallback(async()=>{try{const{data,error}=await supabase.from('fault_votes').select('*').gte('vote_week',voteMinWeek());if(!error&&Array.isArray(data))setFaultVotes(data);}catch(e){console.error(e);}},[]); 
   const fetchMaterials=useCallback(async()=>{try{const{data}=await supabase.from('materials').select('*').order('name');if(Array.isArray(data))setMaterials(data);}catch(e){console.error(e);}},[]);
   const fetchStockMovements=useCallback(async()=>{try{const{data}=await supabase.from('stock_movements').select('*').order('movement_date',{ascending:false});if(Array.isArray(data))setStockMovements(data);}catch(e){console.error(e);}},[]);
   const fetchBuildings=useCallback(async()=>{try{const{data}=await supabase.from('buildings').select('*').order('name');if(Array.isArray(data))setBuildings(data);}catch(e){console.error(e);}},[]);
@@ -915,8 +915,8 @@ function AppInner(){
       dbg.push("10. ✓ Başarılı!");
       setToast(vote==="continues"?"🔴 Oy kaydedildi ✓":"🟢 Oy kaydedildi ✓");
       
-      // DON'T fetch immediately - optimistic update is enough
-      // fetchFaultVotes will happen via subscription or next page load
+      // DB'den yeniden senkronla: bayat state'ten gelen 'takili bekliyor' durumu kendini onarsin
+      try{await fetchFaultVotes();}catch(e){}
       
     }catch(e){
       dbg.push("HATA: "+String(e?.message||e));
