@@ -915,8 +915,15 @@ function AppInner(){
       dbg.push("10. ✓ Başarılı!");
       setToast(vote==="continues"?"🔴 Oy kaydedildi ✓":"🟢 Oy kaydedildi ✓");
       
-      // DB'den yeniden senkronla: bayat state'ten gelen 'takili bekliyor' durumu kendini onarsin
-      try{await fetchFaultVotes();}catch(e){}
+      // DB'den yeniden senkronla AMA bu oyu garanti koru (yenileme oyu getirmese/gecikse bile geri alma)
+      try{
+        const cw=getVoteWeek(),pw=getPrevVoteWeek();
+        const{data:rs,error:rsErr}=await supabase.from('fault_votes').select('*').in('vote_week',[cw,pw]).order('created_at',{ascending:false}).limit(1000);
+        if(!rsErr&&Array.isArray(rs)){
+          const mine=v=>v.fault_id===faultId&&v.personnel_id===profile.id&&vwMatch(v.vote_week,cw);
+          setFaultVotes(rs.some(mine)?rs:[...rs,{fault_id:faultId,personnel_id:profile.id,vote,vote_week:cw,id:existing?.id||'opt-'+Date.now()}]);
+        }
+      }catch(e){}
       
     }catch(e){
       dbg.push("HATA: "+String(e?.message||e));
