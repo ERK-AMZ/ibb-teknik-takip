@@ -455,7 +455,7 @@ function AppInner(){
   const isViewer=profile?.user_role==="viewer";
   const isPerso=profile?.user_role==="personnel";
   const canApprove=isAdmin||isChef;
-  const canSwitchBuilding=isAdmin||isChef;
+  const canSwitchBuilding=isAdmin||isChef||isViewer;
   // O(1) profile lookup map
   const profileMap=useMemo(()=>{const m=new Map();profiles.forEach(p=>m.set(p.id,p));return m;},[profiles]);
   // Building-scoped data (memoized)
