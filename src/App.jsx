@@ -303,7 +303,7 @@ function AppInner(){
   const fetchLeaves=useCallback(async()=>{try{const{data}=await supabase.from('leaves').select('*').order('created_at',{ascending:false});if(Array.isArray(data))setLeavesState(data);}catch(e){console.error(e);}},[]);
   const fetchFaults=useCallback(async()=>{try{const{data}=await supabase.from('faults').select('id,title,location,description,detected_date,fault_type,material_needed,status,building_id,created_by,resolved_date,created_at').order('detected_date',{ascending:false});if(Array.isArray(data))setFaults(data);}catch(e){console.error(e);}},[]);
   const fetchFaultServices=useCallback(async()=>{try{const{data}=await supabase.from('fault_services').select('*').order('visit_date',{ascending:false});if(Array.isArray(data))setFaultServices(data);}catch(e){console.error(e);}},[]);
-  const fetchFaultVotes=useCallback(async()=>{try{const{data,error}=await supabase.from('fault_votes').select('*').gte('vote_week',voteMinWeek());if(!error&&Array.isArray(data))setFaultVotes(data);}catch(e){console.error(e);}},[]); 
+  const fetchFaultVotes=useCallback(async()=>{try{const{data,error}=await supabase.from('fault_votes').select('*').in('vote_week',[getVoteWeek(),getPrevVoteWeek()]).order('created_at',{ascending:false}).limit(1000);if(!error&&Array.isArray(data))setFaultVotes(data);}catch(e){console.error(e);}},[]); 
   const fetchMaterials=useCallback(async()=>{try{const{data}=await supabase.from('materials').select('*').order('name');if(Array.isArray(data))setMaterials(data);}catch(e){console.error(e);}},[]);
   const fetchStockMovements=useCallback(async()=>{try{const{data}=await supabase.from('stock_movements').select('*').order('movement_date',{ascending:false});if(Array.isArray(data))setStockMovements(data);}catch(e){console.error(e);}},[]);
   const fetchBuildings=useCallback(async()=>{try{const{data}=await supabase.from('buildings').select('*').order('name');if(Array.isArray(data))setBuildings(data);}catch(e){console.error(e);}},[]);
@@ -315,7 +315,7 @@ function AppInner(){
         supabase.from('profiles').select('*'),supabase.from('overtimes').select('*').order('work_date',{ascending:false}),
         supabase.from('leaves').select('*').order('created_at',{ascending:false}),supabase.from('buildings').select('*').order('name'),
         supabase.from('faults').select('id,title,location,description,detected_date,fault_type,material_needed,status,building_id,created_by,resolved_date,created_at').order('detected_date',{ascending:false}),supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),
-        supabase.from('fault_votes').select('*').gte('vote_week',voteMinWeek()),supabase.from('materials').select('*').order('name'),
+        supabase.from('fault_votes').select('*').in('vote_week',[getVoteWeek(),getPrevVoteWeek()]).order('created_at',{ascending:false}).limit(1000),supabase.from('materials').select('*').order('name'),
         supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}).limit(200)
       ]);
       const profs=toArr(r[0].status==="fulfilled"?r[0].value:null);
@@ -367,7 +367,7 @@ function AppInner(){
     const secondaryP=Promise.allSettled([
       supabase.from('faults').select('id,title,location,description,detected_date,fault_type,material_needed,status,building_id,created_by,resolved_date,created_at').order('detected_date',{ascending:false}),
       supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),
-      supabase.from('fault_votes').select('*').gte('vote_week',voteMinWeek()),
+      supabase.from('fault_votes').select('*').in('vote_week',[getVoteWeek(),getPrevVoteWeek()]).order('created_at',{ascending:false}).limit(1000),
       supabase.from('materials').select('*').order('name'),
       supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}).limit(200),
       supabase.from('nobet_devir').select('*')
@@ -401,7 +401,7 @@ function AppInner(){
       // Retry fault_votes if empty (egress limit might have blocked it)
       const votesLoaded=toArr(r2[2].status==="fulfilled"?r2[2].value:null);
       if(votesLoaded.length===0){
-        setTimeout(async()=>{try{const{data}=await supabase.from('fault_votes').select('*').gte('vote_week',voteMinWeek());if(Array.isArray(data)&&data.length>0)setFaultVotes(data);}catch(e){}},3000);
+        setTimeout(async()=>{try{const{data,error}=await supabase.from('fault_votes').select('*').in('vote_week',[getVoteWeek(),getPrevVoteWeek()]).order('created_at',{ascending:false}).limit(1000);if(!error&&Array.isArray(data))setFaultVotes(data);}catch(e){}},3000);
       }
     }catch(e){}
   },[]);
