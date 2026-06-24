@@ -543,7 +543,7 @@ function AppInner(){
     if(errors.length){setOtErrors(errors);return;}
     setSubmitting(true);
     try{
-      await supabase.from('overtimes').insert({personnel_id:profile.id,work_date:otForm.date,start_time:otForm.startTime,end_time:otForm.endTime,hours,leave_hours:calcLH(hours),overtime_type:otForm.otType||"evening",description:currentDesc.trim(),status:"pending_chef"}).throwOnError();
+      await supabase.from('overtimes').insert({personnel_id:profile.id,work_date:otForm.date,start_time:otForm.startTime,end_time:otForm.endTime,hours,leave_hours:calcLH(hours),overtime_type:otForm.otType||"evening",description:currentDesc.trim(),status:isChef?"pending_manager":"pending_chef",approved_by_chef:isChef}).throwOnError();
       await fetchOvertimes();
       setOtForm({date:"",startTime:"17:00",endTime:"",otType:"evening",desc:""});
       setOtErrors([]);setModNewOT(false);
@@ -561,7 +561,7 @@ function AppInner(){
       if(calSel.length>remaining){setToast(`⚠ Yıllık izin hakkınız ${remaining} gün, ${calSel.length} gün seçtiniz`);return;}
       setSubmitting(true);
       try{
-        await createLeave({personnel_id:profile.id,dates:calSel.sort(),total_hours:calSel.length*8,reason:`[Yıllık İzin] ${leaveReason.trim()||"Yıllık izin"}`,leave_type:"daily",leave_source:"annual",status:"pending_chef"});
+        await createLeave({personnel_id:profile.id,dates:calSel.sort(),total_hours:calSel.length*8,reason:`[Yıllık İzin] ${leaveReason.trim()||"Yıllık izin"}`,leave_type:"daily",leave_source:"annual",status:isChef?"pending_manager":"pending_chef",approved_by_chef:isChef});
         await fetchLeaves();setCalSel([]);setCalMode("view");setLeaveReason("");
         setToast(`🌴 ${calSel.length} günlük yıllık izin onaya gönderildi`);
       }catch(e){setToast("Hata: "+(e?.message||""));}
@@ -576,7 +576,7 @@ function AppInner(){
     try{
       const reason=willDebt?`${leaveReason.trim()} (${Math.round((needH-rH)/8*10)/10} gün borçlanma)`:(leaveReason.trim()||"Fazla mesai karşılığı izin");
       let docUrl=null;
-      await createLeave({personnel_id:profile.id,dates:calSel.sort(),total_hours:needH,reason,leave_type:"daily",leave_source:"overtime",leave_doc_url:docUrl,status:"pending_chef"});
+      await createLeave({personnel_id:profile.id,dates:calSel.sort(),total_hours:needH,reason,leave_type:"daily",leave_source:"overtime",leave_doc_url:docUrl,status:isChef?"pending_manager":"pending_chef",approved_by_chef:isChef});
       await fetchLeaves();setCalSel([]);setCalMode("view");setLeaveReason("");
       setToast(willDebt?`${calSel.length} gun izin gönderildi (borclanma dahil)`:`${calSel.length} gunluk izin onaya gönderildi`);
     }catch(e){setToast("Hata: "+(e?.message||""));}
@@ -599,7 +599,7 @@ function AppInner(){
     setSubmitting(true);
     try{
       let docUrl=null;
-      await createLeave({personnel_id:profile.id,dates:[hourlyForm.date],total_hours:totalH,reason:`[Saatlik İzin] ${hourlyForm.startTime}-${hourlyForm.endTime} (${totalH}s) - ${hourlyForm.reason.trim()}`,leave_type:"hourly",leave_start_time:hourlyForm.startTime,leave_end_time:hourlyForm.endTime,leave_doc_url:docUrl,status:"pending_chef"});
+      await createLeave({personnel_id:profile.id,dates:[hourlyForm.date],total_hours:totalH,reason:`[Saatlik İzin] ${hourlyForm.startTime}-${hourlyForm.endTime} (${totalH}s) - ${hourlyForm.reason.trim()}`,leave_type:"hourly",leave_start_time:hourlyForm.startTime,leave_end_time:hourlyForm.endTime,leave_doc_url:docUrl,status:isChef?"pending_manager":"pending_chef",approved_by_chef:isChef});
       await fetchLeaves();
       setHourlyForm({date:"",startTime:"",endTime:"",reason:""});
       setHourlyMode(false);
@@ -612,7 +612,7 @@ function AppInner(){
     if(calSel.length===0){setToast("Yeni tarihleri seçin");return;}
     const lv=leavesState.find(l=>l.id===calModId);if(!lv)return;
     setSubmitting(true);
-    try{await updateLeave(calModId,{previous_dates:lv.dates,dates:calSel.sort(),total_hours:calSel.length*8,status:"pending_chef",approved_by_chef:false,approved_by_manager:false});await fetchLeaves();setCalSel([]);setCalMode("view");setCalModId(null);setToast("Tarihler değiştirildi");}catch(e){setToast("Hata: "+(e?.message||""));}
+    try{await updateLeave(calModId,{previous_dates:lv.dates,dates:calSel.sort(),total_hours:calSel.length*8,status:isChef?"pending_manager":"pending_chef",approved_by_chef:isChef,approved_by_manager:false});await fetchLeaves();setCalSel([]);setCalMode("view");setCalModId(null);setToast("Tarihler değiştirildi");}catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
   }
 
