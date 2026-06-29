@@ -21,7 +21,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.12</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.13</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -456,6 +456,7 @@ function AppInner(){
   const isChef=profile?.user_role==="chef";
   const isViewer=profile?.user_role==="viewer";
   const isPerso=profile?.user_role==="personnel";
+  const canSeeBothDepts=isAdmin||isViewer; // sef kendi departmanina kilitli; sadece admin/izleyici iki departmani gorur
   const deptOf=(pid)=>profiles.find(p=>p.id===pid)?.department||"mekanik";
   const canApprove=isAdmin||isChef;
   const canSwitchBuilding=isAdmin||isChef||isViewer;
@@ -734,7 +735,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.12</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.13</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -770,7 +771,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.12</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.13</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -1587,9 +1588,12 @@ function AppInner(){
         {myOTs.slice(0,10).map(o=>(<div key={o.id} style={S.crd} onClick={()=>setSelOT(o)}><div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:13,fontWeight:600}}>{fD(o.work_date)}</div><div style={{fontSize:11,color:C.dim}}>{o.start_time?.slice(0,5)}→{o.end_time?.slice(0,5)}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:800,color:C.accent}}>{o.hours}s<span style={{color:C.purple,fontSize:12}}> →{o.leave_hours}s</span></div><div style={S.tag(sColor(o.status)+"22",sColor(o.status))}>{sIcon(o.status)}</div></div></div>{o.description&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>{o.description.slice(0,60)}{o.description.length>60?"...":""}</div>}</div>))}
       </div>);
     }
+    const myDept=profile?.department||"mekanik";
     const allActive=bProfiles.filter(u=>u.active&&u.id!==profile?.id);
-    const list=allActive.filter(u=>(u.department||"mekanik")===sumDept);
-    const debtors=allActive.filter(u=>debtDays(u.id)>0);
+    const visibleActive=canSeeBothDepts?allActive:allActive.filter(u=>(u.department||"mekanik")===myDept);
+    const effDept=canSeeBothDepts?sumDept:myDept;
+    const list=visibleActive.filter(u=>(u.department||"mekanik")===effDept);
+    const debtors=visibleActive.filter(u=>debtDays(u.id)>0);
     const vPC=isViewer?allPendCount:totPend;
     const myOTs=overtimes.filter(o=>o.personnel_id===profile.id).sort((a,b)=>(b.work_date||"").localeCompare(a.work_date||""));
     const myTOT=myTotOTH(profile.id),myLH=myTotLH(profile.id),myUH=myTotUsedLV(profile.id),myRH=myRemHours(profile.id),myDB=myDebtDays(profile.id);
@@ -1635,8 +1639,8 @@ function AppInner(){
           <div style={{fontSize:24}}>📦</div>
         </div>
       </div>}
-      <div style={{display:"flex",gap:8,marginBottom:10}}>{[["mekanik","⚙️ Mekanik"],["elektrik","⚡ Elektrik"]].map(([k,lbl])=>(<button key={k} onClick={()=>setSumDept(k)} style={{flex:1,padding:"11px",borderRadius:10,border:"1px solid "+(sumDept===k?C.accent:C.border),background:sumDept===k?C.accent:"transparent",color:sumDept===k?"#fff":C.text,fontWeight:700,fontSize:13,cursor:"pointer"}}>{lbl}</button>))}</div>
-      <div style={S.sec}><span>👥</span> Personel ({list.length})</div>
+      {canSeeBothDepts&&<div style={{display:"flex",gap:8,marginBottom:10}}>{[["mekanik","⚙️ Mekanik"],["elektrik","⚡ Elektrik"]].map(([k,lbl])=>(<button key={k} onClick={()=>setSumDept(k)} style={{flex:1,padding:"11px",borderRadius:10,border:"1px solid "+(sumDept===k?C.accent:C.border),background:sumDept===k?C.accent:"transparent",color:sumDept===k?"#fff":C.text,fontWeight:700,fontSize:13,cursor:"pointer"}}>{lbl}</button>))}</div>}
+      <div style={S.sec}><span>👥</span> {canSeeBothDepts?"Personel":(myDept==="elektrik"?"⚡ Elektrik Ekibi":"⚙️ Mekanik Ekibi")} ({list.length})</div>
       {list.map((p,i)=>{const rD=remDays(p.id),debt=debtDays(p.id),pend=pendCount(p.id),aR=annualRemaining(p.id),aT=annualDays(p.id);return(<div key={p.id} style={S.crd} onClick={()=>{setSelPerson(p.id);setPage("person");}}><div style={S.row}><div style={S.av(getAv(i))}>{ini(p.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14,fontWeight:600}}>{p.full_name}</div><div style={{fontSize:11,color:C.dim}}>{p.role}{p.night_shift?" 🌙":""}</div>{pend>0&&<div style={{...S.tag(C.orangeD,C.orange),marginTop:4,display:"inline-block"}}>⏳ {pend}</div>}</div><div style={{textAlign:"right"}}>{debt>0?<div style={{fontSize:16,fontWeight:800,color:C.red}}>-{debt}g <span style={{fontSize:10,fontWeight:600}}>borç</span></div>:<div style={{fontSize:16,fontWeight:800,color:rD>0?C.green:C.muted}}>{rD}g <span style={{fontSize:10,fontWeight:600,color:C.dim}}>mesai</span></div>}<div style={{fontSize:12,fontWeight:700,color:aR>3?C.teal:aR>0?C.orange:C.red,marginTop:2}}>🌴 {aR}/{aT}g</div></div></div></div>);})}
     </div>);
   };
