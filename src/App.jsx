@@ -21,7 +21,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.19</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.20</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -94,13 +94,17 @@ function getAv(i){return avC[i%avC.length];}
 const MONTHS=["Ocak","\u015Eubat","Mart","Nisan","May\u0131s","Haziran","Temmuz","A\u011Fustos","Eyl\u00FCl","Ekim","Kas\u0131m","Aral\u0131k"];
 const DAYS_TR=["Pzt","Sal","\u00C7ar","Per","Cum","Cmt","Paz"];
 // Türkiye resmi tatilleri 2026
-const HOLIDAYS_2026={
+const HOLIDAYS={
   "2026-01-01":"Yılbaşı","2026-03-20":"Ramazan Bayramı","2026-03-21":"Ramazan Bayramı","2026-03-22":"Ramazan Bayramı",
   "2026-04-23":"Ulusal Egemenlik","2026-05-01":"İşçi Bayramı","2026-05-19":"Gençlik Bayramı",
   "2026-05-27":"Kurban Bayramı","2026-05-28":"Kurban Bayramı","2026-05-29":"Kurban Bayramı","2026-05-30":"Kurban Bayramı",
-  "2026-07-15":"Demokrasi Günü","2026-08-30":"Zafer Bayramı","2026-10-29":"Cumhuriyet Bayramı"
+  "2026-07-15":"Demokrasi Günü","2026-08-30":"Zafer Bayramı","2026-10-29":"Cumhuriyet Bayramı",
+  "2027-01-01":"Yılbaşı","2027-03-09":"Ramazan Bayramı","2027-03-10":"Ramazan Bayramı","2027-03-11":"Ramazan Bayramı",
+  "2027-04-23":"Ulusal Egemenlik","2027-05-01":"İşçi Bayramı","2027-05-16":"Kurban Bayramı","2027-05-17":"Kurban Bayramı",
+  "2027-05-18":"Kurban Bayramı","2027-05-19":"Kurban B. / Gençlik Bayramı","2027-07-15":"Demokrasi Günü",
+  "2027-08-30":"Zafer Bayramı","2027-10-29":"Cumhuriyet Bayramı"
 };
-function isHoliday(d){return HOLIDAYS_2026[d]||null;}
+function isHoliday(d){return HOLIDAYS[d]||null;}
 const YEARLY_OT_LIMIT=270; // Yıllık yasal mesai sınırı (saat)
 function daysInMonth(y,m){return new Date(y,m+1,0).getDate();}
 function firstDay(y,m){const d=new Date(y,m,1).getDay();return d===0?6:d-1;}
@@ -317,10 +321,10 @@ function AppInner(){
   const fetchMaterials=useCallback(async()=>{try{const{data}=await supabase.from('materials').select('*').order('name');if(Array.isArray(data))setMaterials(data);}catch(e){console.error(e);}},[]);
   const fetchStockMovements=useCallback(async()=>{try{const{data}=await supabase.from('stock_movements').select('*').order('movement_date',{ascending:false});if(Array.isArray(data))setStockMovements(data);}catch(e){console.error(e);}},[]);
   const fetchBuildings=useCallback(async()=>{try{const{data}=await supabase.from('buildings').select('*').order('name');if(Array.isArray(data))setBuildings(data);}catch(e){console.error(e);}},[]);
-  const fetchPendingJobs=useCallback(async()=>{try{const{data}=await supabase.from('pending_jobs').select('*').order('created_at',{ascending:false}).limit(300);if(Array.isArray(data))setPendingJobs(data);}catch(e){console.error(e);}},[]);
+  const fetchPendingJobs=useCallback(async()=>{try{const{data}=await supabase.from('pending_jobs').select('*').order('created_at',{ascending:false}).limit(300);if(Array.isArray(data)){setPendingJobs(data);cacheSave({pendingJobs:data});}}catch(e){console.error(e);}},[]);
   const fetchAttendance=useCallback(async()=>{try{const x=new Date();const ds=x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");const{data}=await supabase.from('attendance').select('*').eq('att_date',ds);if(Array.isArray(data))setAttendance(data);}catch(e){console.error(e);}},[]);
-  const fetchElevators=useCallback(async()=>{try{const{data}=await supabase.from('elevators').select('*').order('sort');if(Array.isArray(data))setElevators(data);}catch(e){console.error(e);}},[]);
-  const fetchElevatorFaults=useCallback(async()=>{try{const{data}=await supabase.from('elevator_faults').select('*').order('created_at',{ascending:false}).limit(200);if(Array.isArray(data))setElevatorFaults(data);}catch(e){console.error(e);}},[]);
+  const fetchElevators=useCallback(async()=>{try{const{data}=await supabase.from('elevators').select('*').order('sort');if(Array.isArray(data)){setElevators(data);cacheSave({elevators:data});}}catch(e){console.error(e);}},[]);
+  const fetchElevatorFaults=useCallback(async()=>{try{const{data}=await supabase.from('elevator_faults').select('*').order('created_at',{ascending:false}).limit(200);if(Array.isArray(data)){setElevatorFaults(data);cacheSave({elevatorFaults:data});}}catch(e){console.error(e);}},[]);
 
   // Silent refresh (no loading screen) for TOKEN_REFRESHED events
   const silentRefresh=useCallback(async(uid)=>{
@@ -365,6 +369,9 @@ function AppInner(){
         if(Array.isArray(cc.materials))setMaterials(cc.materials);
         if(Array.isArray(cc.stockMovements))setStockMovements(cc.stockMovements);
         if(Array.isArray(cc.nobet))setNobetState(cc.nobet);
+        if(Array.isArray(cc.pendingJobs))setPendingJobs(cc.pendingJobs);
+        if(Array.isArray(cc.elevators))setElevators(cc.elevators);
+        if(Array.isArray(cc.elevatorFaults))setElevatorFaults(cc.elevatorFaults);
         setProfile(cfp);
         if(!selBuilding)setSelBuilding(cfp.building_id||cc.buildings?.[0]?.id||null);
         setLoading(false); // yükleme ekranı yok, taze veri arkada gelecek
@@ -859,7 +866,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.19</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.20</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -895,7 +902,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.19</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.20</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -2074,7 +2081,7 @@ function AppInner(){
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4,marginBottom:4}}>{DAYS_TR.map(d=><div key={d} style={{textAlign:"center",fontSize:11,color:C.muted,fontWeight:600,padding:"4px 0"}}>{d}</div>)}</div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>{cells}</div>
       {!isPerso&&<div style={{fontSize:10,color:C.dim,marginTop:8,textAlign:"center"}}>🌴 sayı = o gün izinli · <span style={{color:C.blue,fontWeight:700}}>N</span> = nöbet · güne dokun → kim izinde/nöbette</div>}
-      {(()=>{const monthHols=Object.entries(HOLIDAYS_2026).filter(([d])=>{const[y,m]=d.split("-");return Number(y)===calY&&Number(m)===calM+1;});return monthHols.length>0?<div style={{marginTop:10,padding:"8px 10px",background:"rgba(239,68,68,0.06)",borderRadius:8,border:`1px solid ${C.red}22`}}><div style={{fontSize:11,fontWeight:700,color:C.red,marginBottom:4}}>🔴 Resmi Tatiller</div>{monthHols.map(([d,name])=><div key={d} style={{fontSize:11,color:C.dim,padding:"2px 0"}}>{fDS(d)} — <span style={{color:C.red}}>{name}</span></div>)}</div>:null;})()}
+      {(()=>{const monthHols=Object.entries(HOLIDAYS).filter(([d])=>{const[y,m]=d.split("-");return Number(y)===calY&&Number(m)===calM+1;});return monthHols.length>0?<div style={{marginTop:10,padding:"8px 10px",background:"rgba(239,68,68,0.06)",borderRadius:8,border:`1px solid ${C.red}22`}}><div style={{fontSize:11,fontWeight:700,color:C.red,marginBottom:4}}>🔴 Resmi Tatiller</div>{monthHols.map(([d,name])=><div key={d} style={{fontSize:11,color:C.dim,padding:"2px 0"}}>{fDS(d)} — <span style={{color:C.red}}>{name}</span></div>)}</div>:null;})()}
       {isSel&&calSel.length>0&&<div style={{...S.lawBox,marginTop:12}}>
         <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>{leaveSource==="annual"?"🌴":"📅"} Seçilen ({calSel.length} gun)</div>
         <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{calSel.sort().map(d=><div key={d} onClick={()=>setCalSel(p=>p.filter(x=>x!==d))} style={{...S.tag(leaveSource==="annual"?C.tealD:C.accentD,leaveSource==="annual"?C.teal:C.accent),cursor:"pointer",padding:"4px 10px"}}>{fDS(d)} ✕</div>)}</div>
