@@ -21,7 +21,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.16</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.17</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -302,6 +302,9 @@ function AppInner(){
   const[attendance,setAttendance]=useState([]);
   const[pjForm,setPjForm]=useState({title:"",desc:""});
   const[pjShowDone,setPjShowDone]=useState(false);
+  const[elevators,setElevators]=useState([]);
+  const[elevatorFaults,setElevatorFaults]=useState([]);
+  const[evForm,setEvForm]=useState({elevator_id:"",desc:"",reset:true});
 
   useEffect(()=>{if(toast){const t=setTimeout(()=>setToast(null),3500);return()=>clearTimeout(t);}},[toast]);
 
@@ -316,6 +319,8 @@ function AppInner(){
   const fetchBuildings=useCallback(async()=>{try{const{data}=await supabase.from('buildings').select('*').order('name');if(Array.isArray(data))setBuildings(data);}catch(e){console.error(e);}},[]);
   const fetchPendingJobs=useCallback(async()=>{try{const{data}=await supabase.from('pending_jobs').select('*').order('created_at',{ascending:false}).limit(300);if(Array.isArray(data))setPendingJobs(data);}catch(e){console.error(e);}},[]);
   const fetchAttendance=useCallback(async()=>{try{const x=new Date();const ds=x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");const{data}=await supabase.from('attendance').select('*').eq('att_date',ds);if(Array.isArray(data))setAttendance(data);}catch(e){console.error(e);}},[]);
+  const fetchElevators=useCallback(async()=>{try{const{data}=await supabase.from('elevators').select('*').order('sort');if(Array.isArray(data))setElevators(data);}catch(e){console.error(e);}},[]);
+  const fetchElevatorFaults=useCallback(async()=>{try{const{data}=await supabase.from('elevator_faults').select('*').order('created_at',{ascending:false}).limit(200);if(Array.isArray(data))setElevatorFaults(data);}catch(e){console.error(e);}},[]);
 
   // Silent refresh (no loading screen) for TOKEN_REFRESHED events
   const silentRefresh=useCallback(async(uid)=>{
@@ -458,10 +463,12 @@ function AppInner(){
       try{const c=await subscribeToChanges('stock_movements',()=>{if(m){fetchStockMovements();fetchMaterials();}});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('pending_jobs',()=>{if(m)fetchPendingJobs();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('attendance',()=>{if(m)fetchAttendance();});if(c)subs.push(c);}catch(e){}
+      try{const c=await subscribeToChanges('elevators',()=>{if(m)fetchElevators();});if(c)subs.push(c);}catch(e){}
+      try{const c=await subscribeToChanges('elevator_faults',()=>{if(m)fetchElevatorFaults();});if(c)subs.push(c);}catch(e){}
     };s();return()=>{m=false;subs.forEach(s=>{try{s?.unsubscribe();}catch(e){}});};
   },[session,fetchOvertimes,fetchLeaves,fetchProfiles,fetchFaults,fetchFaultServices,fetchFaultVotes,fetchMaterials,fetchStockMovements,fetchPendingJobs,fetchAttendance]);
 
-  useEffect(()=>{if(session){fetchPendingJobs();fetchAttendance();}},[session,fetchPendingJobs,fetchAttendance]);
+  useEffect(()=>{if(session){fetchPendingJobs();fetchAttendance();fetchElevators();fetchElevatorFaults();}},[session,fetchPendingJobs,fetchAttendance,fetchElevators,fetchElevatorFaults]);
 
   const isAdmin=profile?.user_role==="admin";
   const isChef=profile?.user_role==="chef";
@@ -480,6 +487,7 @@ function AppInner(){
   const bFaults=useMemo(()=>faults.filter(f=>!selBuilding||f.building_id===selBuilding),[faults,selBuilding]);
   const bPJobs=useMemo(()=>pendingJobs.filter(j=>!selBuilding||j.building_id===selBuilding),[pendingJobs,selBuilding]);
   const pjOverdue=useMemo(()=>bPJobs.filter(j=>j.status==="open"&&(Date.now()-new Date(j.created_at).getTime())>86400000),[bPJobs]);
+  const evOpen=useMemo(()=>elevatorFaults.filter(f=>f.status!=="resolved"),[elevatorFaults]);
   const bMaterials=useMemo(()=>materials.filter(m=>!selBuilding||m.building_id===selBuilding),[materials,selBuilding]);
   const materialMap=useMemo(()=>{const m=new Map();materials.forEach(mt=>m.set(mt.id,mt));return m;},[materials]);
   const bStockMovements=useMemo(()=>stockMovements.filter(mv=>{const mat=materialMap.get(mv.material_id);return !selBuilding||mat?.building_id===selBuilding;}),[stockMovements,materialMap,selBuilding]);
@@ -624,6 +632,44 @@ function AppInner(){
     try{
       await supabase.from("attendance").upsert({att_date:td,personnel_id:pid,status:st,building_id:selBuilding||profile.building_id,marked_by:profile.id,marked_at:new Date().toISOString()},{onConflict:"att_date,personnel_id"});
       await fetchAttendance();
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+  }
+
+  async function reportElevatorFault(){
+    if(!evForm.elevator_id){setToast("⚠ Asansör seçin");return;}
+    if(evForm.desc.trim().length<5){setToast("⚠ Arıza belirtisini yazın (min 5 karakter)");return;}
+    setSubmitting(true);
+    try{
+      await supabase.from("elevator_faults").insert({elevator_id:evForm.elevator_id,description:evForm.desc.trim(),reset_tried:evForm.reset,created_by:profile.id});
+      setEvForm({elevator_id:"",desc:"",reset:true});await fetchElevatorFaults();
+      setToast("🛗 Asansör arızası kaydedildi");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+  async function ev1234(f){
+    const no=window.prompt("1234 kayıt numarası (varsa, yoksa boş geç):","");
+    if(no===null)return;
+    try{
+      await supabase.from("elevator_faults").update({status:"kayit_1234",kayit_no:(no||"").trim(),kayit_at:new Date().toISOString()}).eq("id",f.id);
+      await fetchElevatorFaults();setToast("📞 1234 kaydı işlendi — servis bekleniyor");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+  }
+  async function evServis(f){
+    const sn=window.prompt("Yetkili firmanın arıza tanımı:",f.service_note||"");
+    if(sn===null)return;
+    if(sn.trim().length<3){setToast("⚠ Arıza tanımı gerekli");return;}
+    const pl=window.prompt("Planlanan işlem / tarih notu (örn: 05.07 parça takılacak):",f.planned_info||"");
+    if(pl===null)return;
+    try{
+      await supabase.from("elevator_faults").update({status:"servis_planlandi",service_note:sn.trim(),planned_info:(pl||"").trim()}).eq("id",f.id);
+      await fetchElevatorFaults();setToast("🔧 Servis bilgisi kaydedildi");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+  }
+  async function evResolve(f){
+    if(!window.confirm("Asansör çalışır duruma geçti mi?"))return;
+    try{
+      await supabase.from("elevator_faults").update({status:"resolved",resolved_by:profile.id,resolved_at:new Date().toISOString()}).eq("id",f.id);
+      await fetchElevatorFaults();setToast("✅ Asansör çalışır duruma alındı");
     }catch(e){setToast("Hata: "+(e?.message||""));}
   }
 
@@ -809,7 +855,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.16</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.17</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -845,7 +891,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.16</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.17</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -1024,7 +1070,7 @@ function AppInner(){
     const activeFaults=bFaults.filter(f=>f.status==="active");
     const resolvedFaults=bFaults.filter(f=>f.status==="resolved");
     const canSeeResolved=isAdmin||isViewer||isChef;
-    const list=faultTab==="jobs"?[]:(canSeeResolved?(faultTab==="active"?activeFaults:resolvedFaults):activeFaults);
+    const list=(faultTab==="jobs"||faultTab==="asansor")?[]:(canSeeResolved?(faultTab==="active"?activeFaults:resolvedFaults):activeFaults);
     const openJobs=bPJobs.filter(j=>j.status==="open");
     const doneJobs=bPJobs.filter(j=>j.status==="done").slice(0,15);
     return(<div>
@@ -1033,6 +1079,7 @@ function AppInner(){
         <button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="active"?C.red:C.border}`,background:faultTab==="active"?C.redD:"transparent",color:faultTab==="active"?C.red:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("active")}>🔴 Aktif ({activeFaults.length})</button>
         {canSeeResolved&&<button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="resolved"?C.green:C.border}`,background:faultTab==="resolved"?C.greenD:"transparent",color:faultTab==="resolved"?C.green:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("resolved")}>✅ Çözülen ({resolvedFaults.length})</button>}
         <button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="jobs"?(pjOverdue.length>0?C.red:C.orange):C.border}`,background:faultTab==="jobs"?(pjOverdue.length>0?C.redD:C.orangeD):"transparent",color:faultTab==="jobs"?(pjOverdue.length>0?C.red:C.orange):C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("jobs")}>⏳ İşler ({openJobs.length}){pjOverdue.length>0?" ⏰":""}</button>
+        <button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="asansor"?(evOpen.length>0?C.red:C.blue):C.border}`,background:faultTab==="asansor"?(evOpen.length>0?C.redD:C.blueD):"transparent",color:faultTab==="asansor"?(evOpen.length>0?C.red:C.blue):C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("asansor")}>🛗{evOpen.length>0?` ${evOpen.length}`:""}</button>
       </div>
       {faultTab==="jobs"&&(<div>
         <div style={S.crd}>
@@ -1076,8 +1123,52 @@ function AppInner(){
           </div>);})}
         </div>}
       </div>)}
-      {faultTab!=="jobs"&&canAddFault&&<button style={S.btn(C.accent)} onClick={()=>{setFaultForm({title:"",location:"",description:"",detected_date:todayStr(),photos:[],services:[],fault_type:"service",material_needed:""});setFaultPhotoFiles([]);setModNewFault(true);}}>+ Yeni Arıza Ekle</button>}
-      {faultTab!=="jobs"&&list.length===0&&<div style={S.emp}>{faultTab==="active"?"Aktif arıza yok ✓":"Çözülen arıza yok"}</div>}
+      {faultTab==="asansor"&&(()=>{
+        const faultByEv=id=>evOpen.find(f=>f.elevator_id===id);
+        const canEv=isAdmin||isChef||profile?.id==="042a97db-b8eb-4b65-ae92-df00301d78d0";
+        const stL={active:["🔴 Arızalı",C.red,C.redD],kayit_1234:["📞 1234 Kayıtlı",C.orange,C.orangeD],servis_planlandi:["🔧 Servis / Plan",C.blue,C.blueD]};
+        return(<div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
+            {elevators.map(ev=>{const f=faultByEv(ev.id);const cl=f?stL[f.status][1]:C.green;const bg=f?stL[f.status][2]:C.greenD;return(<div key={ev.id} style={{padding:"7px 10px",borderRadius:10,background:bg,color:cl,fontWeight:700,fontSize:12,border:`1px solid ${cl}44`}}>{ev.code} {f?stL[f.status][0].split(" ")[0]:"✅"}</div>);})}
+          </div>
+          {canEv&&(<div style={S.crd}>
+            <div style={{fontSize:13,fontWeight:700,marginBottom:6}}>🛗 Asansör Arızası Bildir</div>
+            <div style={{fontSize:11,color:C.dim,marginBottom:8}}>Akış: Reset dene → düzelmezse buraya kaydet → 1234'e kayıt bırak → servis gelince firmadan arıza + plan bilgisini gir.</div>
+            <select style={S.inp} value={evForm.elevator_id} onChange={e=>setEvForm({...evForm,elevator_id:e.target.value})}>
+              <option value="">Asansör seç...</option>
+              {elevators.filter(ev=>!faultByEv(ev.id)).map(ev=><option key={ev.id} value={ev.id}>{ev.code} — {ev.name}</option>)}
+            </select>
+            <textarea style={{...S.inp,minHeight:56}} placeholder="Arıza belirtisi (örn: 2. katta kapı açılmıyor)" value={evForm.desc} onChange={e=>setEvForm({...evForm,desc:e.target.value})}/>
+            <label style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:C.text,marginBottom:10,cursor:"pointer"}}><input type="checkbox" checked={evForm.reset} onChange={e=>setEvForm({...evForm,reset:e.target.checked})}/>🔁 Reset denendi, düzelmedi</label>
+            <button style={S.btn(C.red)} disabled={submitting} onClick={reportElevatorFault}>🛗 Arıza Kaydet</button>
+          </div>)}
+          {evOpen.length===0&&<div style={S.emp}>Tüm asansörler çalışıyor ✓ ({elevators.length}/{elevators.length})</div>}
+          {evOpen.map(f=>{
+            const ev=elevators.find(e=>e.id===f.elevator_id);
+            const[lbl,cl]=stL[f.status]||["?",C.dim];
+            const cb=getU(f.created_by);
+            return(<div key={f.id} style={{...S.crd,border:`1px solid ${cl}66`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"start",gap:8}}>
+                <div style={{fontSize:16,fontWeight:800}}>🛗 {ev?.code||"?"} <span style={{fontSize:11,fontWeight:400,color:C.dim}}>{ev?.name}</span></div>
+                <div style={S.tag(cl+"22",cl)}>{lbl}</div>
+              </div>
+              <div style={{fontSize:12,color:C.text,marginTop:6}}>{f.description}</div>
+              <div style={{fontSize:10,color:C.muted,marginTop:4}}>{f.reset_tried?"🔁 Reset denendi • ":""}{cb?.full_name||"—"} • {new Date(f.created_at).toLocaleString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</div>
+              {f.kayit_at&&<div style={{fontSize:11,color:C.orange,marginTop:6}}>📞 1234 kaydı: {new Date(f.kayit_at).toLocaleString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}{f.kayit_no?` • Kayıt No: ${f.kayit_no}`:""}</div>}
+              {f.service_note&&<div style={{fontSize:11,color:C.blue,marginTop:4}}>🔧 Firma arıza tanımı: {f.service_note}</div>}
+              {f.planned_info&&<div style={{fontSize:11,color:C.teal,marginTop:4}}>📅 Plan: {f.planned_info}</div>}
+              {canEv&&<div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
+                {f.status==="active"&&<button style={{...S.btnS(C.orangeD,C.orange),flex:1}} onClick={()=>ev1234(f)}>📞 1234'e Kayıt Bırakıldı</button>}
+                {f.status==="kayit_1234"&&<button style={{...S.btnS(C.blueD,C.blue),flex:1}} onClick={()=>evServis(f)}>🔧 Servis Geldi — Bilgi Gir</button>}
+                {f.status==="servis_planlandi"&&<button style={{...S.btnS(C.blueD,C.blue),flex:1}} onClick={()=>evServis(f)}>✏️ Bilgiyi Güncelle</button>}
+                <button style={{...S.btnS(C.greenD,C.green),flex:1}} onClick={()=>evResolve(f)}>✅ Düzeldi</button>
+              </div>}
+            </div>);
+          })}
+        </div>);
+      })()}
+      {(faultTab==="active"||faultTab==="resolved")&&canAddFault&&<button style={S.btn(C.accent)} onClick={()=>{setFaultForm({title:"",location:"",description:"",detected_date:todayStr(),photos:[],services:[],fault_type:"service",material_needed:""});setFaultPhotoFiles([]);setModNewFault(true);}}>+ Yeni Arıza Ekle</button>}
+      {(faultTab==="active"||faultTab==="resolved")&&list.length===0&&<div style={S.emp}>{faultTab==="active"?"Aktif arıza yok ✓":"Çözülen arıza yok"}</div>}
       {list.map(f=>{
         const days=daysSince(f.detected_date);
         const svcCount=faultServices.filter(s=>s.fault_id===f.id).length;
@@ -1758,6 +1849,7 @@ function AppInner(){
           <div style={{fontSize:24}}>📦</div>
         </div>
       </div>}
+      {evOpen.length>0&&<div onClick={()=>{setPage("faults");setFaultTab("asansor");}} style={{...S.crd,border:`2px solid ${C.red}`,marginBottom:12,cursor:"pointer"}}><div style={{fontSize:13,fontWeight:700,color:C.red}}>🛗 {evOpen.length} asansör arızalı ({elevators.length-evOpen.length}/{elevators.length} çalışıyor)</div><div style={{fontSize:11,color:C.dim,marginTop:4}}>{evOpen.map(f=>elevators.find(e=>e.id===f.elevator_id)?.code).filter(Boolean).join(", ")} — dokun → durum ve planları gör</div></div>}
       {(isChef||isAdmin)&&pjOverdue.length>0&&<div onClick={()=>{setPage("faults");setFaultTab("jobs");}} style={{...S.crd,border:`2px solid ${C.red}`,marginBottom:12,cursor:"pointer"}}><div style={{fontSize:13,fontWeight:700,color:C.red}}>⏰ {pjOverdue.length} bekleyen iş 24 saati aştı!</div><div style={{fontSize:11,color:C.dim,marginTop:4}}>Dokun → işleri ve yapılamama sebeplerini gör</div></div>}
       {canSeeBothDepts&&<div style={{display:"flex",gap:8,marginBottom:10}}>{[["mekanik","⚙️ Mekanik"],["elektrik","⚡ Elektrik"]].map(([k,lbl])=>(<button key={k} onClick={()=>setSumDept(k)} style={{flex:1,padding:"11px",borderRadius:10,border:"1px solid "+(sumDept===k?C.accent:C.border),background:sumDept===k?C.accent:"transparent",color:sumDept===k?"#fff":C.text,fontWeight:700,fontSize:13,cursor:"pointer"}}>{lbl}</button>))}</div>}
       {(isChef||isAdmin||isViewer)&&(()=>{
