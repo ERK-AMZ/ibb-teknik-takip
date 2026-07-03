@@ -21,7 +21,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.18</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.19</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -474,6 +474,8 @@ function AppInner(){
   const isChef=profile?.user_role==="chef";
   const isViewer=profile?.user_role==="viewer";
   const isPerso=profile?.user_role==="personnel";
+  const isAmir=profile?.user_role==="amir";
+  useEffect(()=>{if(isAmir&&page!=="faults")setPage("faults");},[isAmir,page]);
   const canSeeBothDepts=isAdmin||isViewer; // sef kendi departmanina kilitli; sadece admin/izleyici iki departmani gorur
   const deptOf=(pid)=>profiles.find(p=>p.id===pid)?.department||"mekanik";
   const canApprove=isAdmin||isChef;
@@ -857,7 +859,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.18</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.19</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -893,7 +895,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.18</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.19</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -952,7 +954,7 @@ function AppInner(){
 
   // ===== FAULT SYSTEM =====
   const canEditFault=isAdmin||isChef||isViewer;
-  const canAddFault=true; // herkes arıza ekleyebilir
+  const canAddFault=!isAmir; // amir salt-görür, diğer herkes arıza ekleyebilir
   const isOwnFault=(f)=>f?.created_by===profile?.id;
 
   async function submitFault(){
@@ -1071,7 +1073,7 @@ function AppInner(){
   const renderFaults=()=>{
     const activeFaults=bFaults.filter(f=>f.status==="active");
     const resolvedFaults=bFaults.filter(f=>f.status==="resolved");
-    const canSeeResolved=isAdmin||isViewer||isChef;
+    const canSeeResolved=isAdmin||isViewer||isChef||isAmir;
     const list=(faultTab==="jobs"||faultTab==="asansor")?[]:(canSeeResolved?(faultTab==="active"?activeFaults:resolvedFaults):activeFaults);
     const openJobs=bPJobs.filter(j=>j.status==="open");
     const doneJobs=bPJobs.filter(j=>j.status==="done").slice(0,15);
@@ -1080,7 +1082,7 @@ function AppInner(){
       <div style={{display:"flex",gap:8,marginBottom:12}}>
         <button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="active"?C.red:C.border}`,background:faultTab==="active"?C.redD:"transparent",color:faultTab==="active"?C.red:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("active")}>🔴 Aktif ({activeFaults.length})</button>
         {canSeeResolved&&<button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="resolved"?C.green:C.border}`,background:faultTab==="resolved"?C.greenD:"transparent",color:faultTab==="resolved"?C.green:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("resolved")}>✅ Çözülen ({resolvedFaults.length})</button>}
-        <button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="jobs"?(pjOverdue.length>0?C.red:C.orange):C.border}`,background:faultTab==="jobs"?(pjOverdue.length>0?C.redD:C.orangeD):"transparent",color:faultTab==="jobs"?(pjOverdue.length>0?C.red:C.orange):C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("jobs")}>⏳ İşler ({openJobs.length}){pjOverdue.length>0?" ⏰":""}</button>
+        {!isAmir&&<button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="jobs"?(pjOverdue.length>0?C.red:C.orange):C.border}`,background:faultTab==="jobs"?(pjOverdue.length>0?C.redD:C.orangeD):"transparent",color:faultTab==="jobs"?(pjOverdue.length>0?C.red:C.orange):C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("jobs")}>⏳ İşler ({openJobs.length}){pjOverdue.length>0?" ⏰":""}</button>}
         <button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="asansor"?(evOpen.length>0?C.red:C.blue):C.border}`,background:faultTab==="asansor"?(evOpen.length>0?C.redD:C.blueD):"transparent",color:faultTab==="asansor"?(evOpen.length>0?C.red:C.blue):C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("asansor")}>🛗{evOpen.length>0?` ${evOpen.length}`:""}</button>
       </div>
       {faultTab==="jobs"&&(<div>
@@ -1253,7 +1255,7 @@ function AppInner(){
       </div>}
 
       {/* OYLAMA */}
-      {f.status==="active"&&<div style={{...S.lawBox,marginBottom:12,borderColor:`${C.orange}44`}}>
+      {f.status==="active"&&!isAmir&&<div style={{...S.lawBox,marginBottom:12,borderColor:`${C.orange}44`}}>
         <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>📊 Haftalık Durum Oylaması <span style={{fontSize:10,color:votePeriod.isUrgent?C.red:C.muted,fontWeight:votePeriod.isUrgent?700:500}}>({fDS(votePeriod.start.toISOString().slice(0,10))} → {fDS(votePeriod.end.toISOString().slice(0,10))}{votePeriod.isUrgent?" ⏰ SON GÜN!":votePeriod.isWarning?" ⚠ "+votePeriod.daysLeft+" gün kaldı":""})</span></div>
         {!myVote?<div style={{display:"flex",gap:8}}>
           <button style={{flex:1,padding:12,borderRadius:10,background:C.redD,border:`2px solid ${C.red}44`,color:C.red,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>submitVote(f.id,"continues")} disabled={submitting}>🔴 Arıza Devam Ediyor</button>
@@ -2292,7 +2294,7 @@ function AppInner(){
 
   const renderEditUser=()=>{if(!modEditUser)return null;const u=modEditUser;return(<div style={S.mod} onClick={()=>{setModEditUser(null);setDeleteConfirm(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>Düzenle: {u.full_name}</div><div style={S.lbl}>Görev</div><input style={S.inp} value={u.role||""} onChange={e=>setModEditUser({...u,role:e.target.value})}/><div style={S.lbl}>Bina</div><select style={S.sel} value={u.building_id||""} onChange={e=>setModEditUser({...u,building_id:e.target.value})}>{buildings.map(b=><option key={b.id} value={b.id}>{b.short_name||b.name}</option>)}</select><div style={S.lbl}>Yetki</div><select style={S.sel} value={u.user_role||"personnel"} onChange={e=>setModEditUser({...u,user_role:e.target.value})}><option value="personnel">Personel</option><option value="chef">Teknik Şef (Onay Yetkili)</option><option value="viewer">İzleyici (Tam Görüntüleme)</option></select><div style={S.lbl}>Departman</div><select style={S.sel} value={u.department||"mekanik"} onChange={e=>setModEditUser({...u,department:e.target.value})}><option value="mekanik">⚙️ Mekanik</option><option value="elektrik">⚡ Elektrik</option></select><div style={S.lbl}>🌴 Yıllık İzin Hakkı (gün)</div><input style={S.inp} type="number" min="0" max="30" value={u.annual_leave_days||14} onChange={e=>setModEditUser({...u,annual_leave_days:Number(e.target.value)||0})}/><div style={{fontSize:10,color:C.dim,marginTop:-8,marginBottom:12}}>Kullanılan: {annualUsed(u.id)}g / Kalan: {annualRemaining(u.id)}g</div><button style={S.btn(C.accent)} onClick={async()=>{try{await supabase.from('profiles').update({role:u.role,user_role:u.user_role,building_id:u.building_id,annual_leave_days:u.annual_leave_days||14,department:u.department||"mekanik"}).eq('id',u.id);await fetchProfiles();setModEditUser(null);setToast("Kaydedildi");}catch(e){setToast("Hata: "+e?.message);}}}>Kaydet</button><div style={S.dv}/><button style={S.btn(C.orangeD,C.orange)} onClick={()=>doDeactivateU(u.id)}>🚫 Pasif Yap</button>{deleteConfirm===u.id?<div style={{background:C.redD,borderRadius:10,padding:14,marginTop:8}}><div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:8,textAlign:"center"}}>⚠ {u.full_name} silinecek. Mesai ve izin kayıtları arşivde kalır.</div><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.red),flex:1}} onClick={()=>doDeleteUser(u.id)}>🗑 Evet, Sil</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setDeleteConfirm(null)}>İptal</button></div></div>:<button style={S.btn(C.redD,C.red)} onClick={()=>setDeleteConfirm(u.id)}>🗑 Personeli Sil</button>}<button style={S.btn(C.border,C.text)} onClick={()=>{setModEditUser(null);setDeleteConfirm(null);}}>Kapat</button></div></div>);};
 
-  const navItems=isAdmin?[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"depo",i:"📦",l:"Depo"},{k:"calendar",i:"📅",l:"Takvim"},{k:"approvals",i:"✅",l:"Onaylar"},{k:"admin",i:"⚙️",l:"Yönetim"}]:(isChef||isViewer)?[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"depo",i:"📦",l:"Depo"},{k:"calendar",i:"📅",l:"Takvim"},{k:"approvals",i:isViewer?"👁":"✅",l:isViewer?"Takip":"Onaylar"}]:[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"depo",i:"📦",l:"Depo"},{k:"calendar",i:"📅",l:"Takvim"}];
+  const navItems=isAmir?[{k:"faults",i:"🔧",l:"Arızalar"}]:isAdmin?[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"depo",i:"📦",l:"Depo"},{k:"calendar",i:"📅",l:"Takvim"},{k:"approvals",i:"✅",l:"Onaylar"},{k:"admin",i:"⚙️",l:"Yönetim"}]:(isChef||isViewer)?[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"depo",i:"📦",l:"Depo"},{k:"calendar",i:"📅",l:"Takvim"},{k:"approvals",i:isViewer?"👁":"✅",l:isViewer?"Takip":"Onaylar"}]:[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"depo",i:"📦",l:"Depo"},{k:"calendar",i:"📅",l:"Takvim"}];
   const roleLabel=isAdmin?"👑 Yonetici":isChef?"🔧 Sef":isViewer?"👁 Izleyici":"👷 Personel";
 
   return(
