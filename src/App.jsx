@@ -21,7 +21,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.13</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.14</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -297,6 +297,11 @@ function AppInner(){
   const[leaveSource,setLeaveSource]=useState("overtime"); // 'overtime' or 'annual'
   const[calModId,setCalModId]=useState(null);
   const[expandedPast,setExpandedPast]=useState(null);
+  const[leaveDocFile,setLeaveDocFile]=useState(null);
+  const[pendingJobs,setPendingJobs]=useState([]);
+  const[attendance,setAttendance]=useState([]);
+  const[pjForm,setPjForm]=useState({title:"",desc:""});
+  const[pjShowDone,setPjShowDone]=useState(false);
 
   useEffect(()=>{if(toast){const t=setTimeout(()=>setToast(null),3500);return()=>clearTimeout(t);}},[toast]);
 
@@ -309,6 +314,8 @@ function AppInner(){
   const fetchMaterials=useCallback(async()=>{try{const{data}=await supabase.from('materials').select('*').order('name');if(Array.isArray(data))setMaterials(data);}catch(e){console.error(e);}},[]);
   const fetchStockMovements=useCallback(async()=>{try{const{data}=await supabase.from('stock_movements').select('*').order('movement_date',{ascending:false});if(Array.isArray(data))setStockMovements(data);}catch(e){console.error(e);}},[]);
   const fetchBuildings=useCallback(async()=>{try{const{data}=await supabase.from('buildings').select('*').order('name');if(Array.isArray(data))setBuildings(data);}catch(e){console.error(e);}},[]);
+  const fetchPendingJobs=useCallback(async()=>{try{const{data}=await supabase.from('pending_jobs').select('*').order('created_at',{ascending:false}).limit(300);if(Array.isArray(data))setPendingJobs(data);}catch(e){console.error(e);}},[]);
+  const fetchAttendance=useCallback(async()=>{try{const x=new Date();const ds=x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");const{data}=await supabase.from('attendance').select('*').eq('att_date',ds);if(Array.isArray(data))setAttendance(data);}catch(e){console.error(e);}},[]);
 
   // Silent refresh (no loading screen) for TOKEN_REFRESHED events
   const silentRefresh=useCallback(async(uid)=>{
@@ -449,8 +456,12 @@ function AppInner(){
       try{const c=await subscribeToChanges('fault_votes',()=>{if(m)fetchFaultVotes();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('materials',()=>{if(m)fetchMaterials();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('stock_movements',()=>{if(m){fetchStockMovements();fetchMaterials();}});if(c)subs.push(c);}catch(e){}
+      try{const c=await subscribeToChanges('pending_jobs',()=>{if(m)fetchPendingJobs();});if(c)subs.push(c);}catch(e){}
+      try{const c=await subscribeToChanges('attendance',()=>{if(m)fetchAttendance();});if(c)subs.push(c);}catch(e){}
     };s();return()=>{m=false;subs.forEach(s=>{try{s?.unsubscribe();}catch(e){}});};
-  },[session,fetchOvertimes,fetchLeaves,fetchProfiles,fetchFaults,fetchFaultServices,fetchFaultVotes,fetchMaterials,fetchStockMovements]);
+  },[session,fetchOvertimes,fetchLeaves,fetchProfiles,fetchFaults,fetchFaultServices,fetchFaultVotes,fetchMaterials,fetchStockMovements,fetchPendingJobs,fetchAttendance]);
+
+  useEffect(()=>{if(session){fetchPendingJobs();fetchAttendance();}},[session,fetchPendingJobs,fetchAttendance]);
 
   const isAdmin=profile?.user_role==="admin";
   const isChef=profile?.user_role==="chef";
@@ -467,6 +478,8 @@ function AppInner(){
   const bOvertimes=useMemo(()=>overtimes.filter(o=>{const p=profileMap.get(o.personnel_id);return !selBuilding||p?.building_id===selBuilding;}),[overtimes,profileMap,selBuilding]);
   const bLeaves=useMemo(()=>leavesState.filter(l=>{const p=profileMap.get(l.personnel_id);return !selBuilding||p?.building_id===selBuilding;}),[leavesState,profileMap,selBuilding]);
   const bFaults=useMemo(()=>faults.filter(f=>!selBuilding||f.building_id===selBuilding),[faults,selBuilding]);
+  const bPJobs=useMemo(()=>pendingJobs.filter(j=>!selBuilding||j.building_id===selBuilding),[pendingJobs,selBuilding]);
+  const pjOverdue=useMemo(()=>bPJobs.filter(j=>j.status==="open"&&(Date.now()-new Date(j.created_at).getTime())>86400000),[bPJobs]);
   const bMaterials=useMemo(()=>materials.filter(m=>!selBuilding||m.building_id===selBuilding),[materials,selBuilding]);
   const materialMap=useMemo(()=>{const m=new Map();materials.forEach(mt=>m.set(mt.id,mt));return m;},[materials]);
   const bStockMovements=useMemo(()=>stockMovements.filter(mv=>{const mat=materialMap.get(mv.material_id);return !selBuilding||mat?.building_id===selBuilding;}),[stockMovements,materialMap,selBuilding]);
@@ -556,8 +569,67 @@ function AppInner(){
     setSubmitting(false);
   }
 
+  async function uploadLeaveDoc(file){
+    const img=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=URL.createObjectURL(file);});
+    const max=1200,sc=Math.min(1,max/Math.max(img.width,img.height));
+    const cv=document.createElement("canvas");cv.width=Math.round(img.width*sc);cv.height=Math.round(img.height*sc);
+    cv.getContext("2d").drawImage(img,0,0,cv.width,cv.height);
+    const blob=await new Promise(r=>cv.toBlob(r,"image/jpeg",0.72));
+    const path=`${profile.id}/${Date.now()}.jpg`;
+    const{error}=await supabase.storage.from("leave-docs").upload(path,blob,{contentType:"image/jpeg"});
+    if(error)throw error;
+    return supabase.storage.from("leave-docs").getPublicUrl(path).data.publicUrl;
+  }
+  const docUploadRow=()=>(
+    <div style={{background:C.card,border:`1px dashed ${leaveDocFile?C.green:C.orange}`,borderRadius:10,padding:10,marginBottom:10}}>
+      <div style={{fontSize:12,fontWeight:700,color:leaveDocFile?C.green:C.orange,marginBottom:6}}>{leaveDocFile?"📄 İzin formu yüklendi ✓":"📄 İzin Formu (ZORUNLU)"}</div>
+      {!leaveDocFile&&<div style={{fontSize:11,color:C.dim,marginBottom:8}}>Kağıt izin formunu doldurup imzalayın, fotoğrafını çekip buraya yükleyin. Formsuz talep gönderilemez.</div>}
+      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+        <label style={{...S.btnS(C.blueD,C.blue),cursor:"pointer"}}>{leaveDocFile?"Değiştir":"📷 Fotoğraf Yükle / Çek"}<input type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)setLeaveDocFile(f);e.target.value="";}}/></label>
+        {leaveDocFile&&<span style={{fontSize:11,color:C.dim,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{leaveDocFile.name}</span>}
+        {leaveDocFile&&<button style={S.btnS(C.redD,C.red)} onClick={()=>setLeaveDocFile(null)}>✕</button>}
+      </div>
+    </div>);
+  async function addPendingJob(){
+    const t=pjForm.title.trim();
+    if(t.length<5){setToast("⚠ İş başlığı yazın (min 5 karakter)");return;}
+    setSubmitting(true);
+    try{
+      await supabase.from("pending_jobs").insert({building_id:selBuilding||profile.building_id,title:t,description:pjForm.desc.trim(),created_by:profile.id});
+      setPjForm({title:"",desc:""});await fetchPendingJobs();
+      setToast("⏳ Bekleyen iş eklendi — 24 saat sayacı başladı");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+  async function completePendingJob(j){
+    const note=window.prompt("Yapılan işlem / not (opsiyonel):","");
+    if(note===null)return;
+    try{
+      await supabase.from("pending_jobs").update({status:"done",completed_by:profile.id,completed_at:new Date().toISOString(),completed_note:(note||"").trim()}).eq("id",j.id);
+      await fetchPendingJobs();setToast("✅ İş tamamlandı");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+  }
+  async function addPjReason(j){
+    const r=window.prompt("Neden yapılamadı? (zorunlu, şef görecek)","");
+    if(r===null)return;
+    if(r.trim().length<5){setToast("⚠ Sebep en az 5 karakter olmalı");return;}
+    const arr=Array.isArray(j.reasons)?j.reasons:[];
+    try{
+      await supabase.from("pending_jobs").update({reasons:[...arr,{by:profile.full_name,at:new Date().toISOString(),text:r.trim()}]}).eq("id",j.id);
+      await fetchPendingJobs();setToast("📝 Sebep kaydedildi");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+  }
+  async function markAttendance(pid,st){
+    const x=new Date();const td=x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");
+    try{
+      await supabase.from("attendance").upsert({att_date:td,personnel_id:pid,status:st,building_id:selBuilding||profile.building_id,marked_by:profile.id,marked_at:new Date().toISOString()},{onConflict:"att_date,personnel_id"});
+      await fetchAttendance();
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+  }
+
   async function submitLeaveReq(){
     if(calSel.length===0){setToast("⚠ Gün seçin");return;}
+    if(!leaveDocFile){setToast("⚠ Önce izin formunu doldurup fotoğrafını yükleyin");return;}
     
     if(leaveSource==="annual"){
       // Annual leave
@@ -565,8 +637,9 @@ function AppInner(){
       if(calSel.length>remaining){setToast(`⚠ Yıllık izin hakkınız ${remaining} gün, ${calSel.length} gün seçtiniz`);return;}
       setSubmitting(true);
       try{
-        await createLeave({personnel_id:profile.id,dates:calSel.sort(),total_hours:calSel.length*8,reason:`[Yıllık İzin] ${leaveReason.trim()||"Yıllık izin"}`,leave_type:"daily",leave_source:"annual",status:isChef?"pending_manager":"pending_chef",approved_by_chef:isChef});
-        await fetchLeaves();setCalSel([]);setCalMode("view");setLeaveReason("");
+        const docUrl=await uploadLeaveDoc(leaveDocFile);
+        await createLeave({personnel_id:profile.id,dates:calSel.sort(),total_hours:calSel.length*8,reason:`[Yıllık İzin] ${leaveReason.trim()||"Yıllık izin"}`,leave_type:"daily",leave_source:"annual",leave_doc_url:docUrl,status:isChef?"pending_manager":"pending_chef",approved_by_chef:isChef});
+        await fetchLeaves();setCalSel([]);setCalMode("view");setLeaveReason("");setLeaveDocFile(null);
         setToast(`🌴 ${calSel.length} günlük yıllık izin onaya gönderildi`);
       }catch(e){setToast("Hata: "+(e?.message||""));}
       setSubmitting(false);
@@ -579,9 +652,9 @@ function AppInner(){
     setSubmitting(true);
     try{
       const reason=willDebt?`${leaveReason.trim()} (${Math.round((needH-rH)/8*10)/10} gün borçlanma)`:(leaveReason.trim()||"Fazla mesai karşılığı izin");
-      let docUrl=null;
+      const docUrl=await uploadLeaveDoc(leaveDocFile);
       await createLeave({personnel_id:profile.id,dates:calSel.sort(),total_hours:needH,reason,leave_type:"daily",leave_source:"overtime",leave_doc_url:docUrl,status:isChef?"pending_manager":"pending_chef",approved_by_chef:isChef});
-      await fetchLeaves();setCalSel([]);setCalMode("view");setLeaveReason("");
+      await fetchLeaves();setCalSel([]);setCalMode("view");setLeaveReason("");setLeaveDocFile(null);
       setToast(willDebt?`${calSel.length} gun izin gönderildi (borclanma dahil)`:`${calSel.length} gunluk izin onaya gönderildi`);
     }catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
@@ -593,6 +666,7 @@ function AppInner(){
     if(!hourlyForm.startTime)errors.push("Çıkış saati seçilmedi");
     if(!hourlyForm.endTime)errors.push("Dönüş saati seçilmedi");
     if(!hourlyForm.reason||hourlyForm.reason.trim().length<10)errors.push("Sebep zorunlu (min 10 karakter)");
+    if(!leaveDocFile)errors.push("İzin formu fotoğrafı zorunlu");
     // Calc hours
     const[sh,sm]=(hourlyForm.startTime||"0:0").split(":").map(Number);
     const[eh,em]=(hourlyForm.endTime||"0:0").split(":").map(Number);
@@ -602,10 +676,10 @@ function AppInner(){
     const totalH=Math.round(totalMin/60*10)/10;
     setSubmitting(true);
     try{
-      let docUrl=null;
+      const docUrl=await uploadLeaveDoc(leaveDocFile);
       await createLeave({personnel_id:profile.id,dates:[hourlyForm.date],total_hours:totalH,reason:`[Saatlik İzin] ${hourlyForm.startTime}-${hourlyForm.endTime} (${totalH}s) - ${hourlyForm.reason.trim()}`,leave_type:"hourly",leave_start_time:hourlyForm.startTime,leave_end_time:hourlyForm.endTime,leave_doc_url:docUrl,status:isChef?"pending_manager":"pending_chef",approved_by_chef:isChef});
       await fetchLeaves();
-      setHourlyForm({date:"",startTime:"",endTime:"",reason:""});
+      setHourlyForm({date:"",startTime:"",endTime:"",reason:""});setLeaveDocFile(null);
       setHourlyMode(false);
       setToast(`✓ ${totalH} saatlik izin talebi onaya gönderildi`);
     }catch(e){setToast("Hata: "+(e?.message||""));}
@@ -735,7 +809,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.13</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.14</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -771,7 +845,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.13</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.14</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -950,15 +1024,60 @@ function AppInner(){
     const activeFaults=bFaults.filter(f=>f.status==="active");
     const resolvedFaults=bFaults.filter(f=>f.status==="resolved");
     const canSeeResolved=isAdmin||isViewer||isChef;
-    const list=canSeeResolved?(faultTab==="active"?activeFaults:resolvedFaults):activeFaults;
+    const list=faultTab==="jobs"?[]:(canSeeResolved?(faultTab==="active"?activeFaults:resolvedFaults):activeFaults);
+    const openJobs=bPJobs.filter(j=>j.status==="open");
+    const doneJobs=bPJobs.filter(j=>j.status==="done").slice(0,15);
     return(<div>
       <div style={S.sec}><span>🔧</span> Arızalı Envanter</div>
-      {canSeeResolved?<div style={{display:"flex",gap:8,marginBottom:12}}>
-        <button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="active"?C.red:C.border}`,background:faultTab==="active"?C.redD:"transparent",color:faultTab==="active"?C.red:C.muted,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>setFaultTab("active")}>🔴 Aktif ({activeFaults.length})</button>
-        <button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="resolved"?C.green:C.border}`,background:faultTab==="resolved"?C.greenD:"transparent",color:faultTab==="resolved"?C.green:C.muted,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>setFaultTab("resolved")}>✅ Çözülen ({resolvedFaults.length})</button>
-      </div>:<div style={{fontSize:12,color:C.dim,marginBottom:12}}>🔴 {activeFaults.length} aktif arıza</div>}
-      {canAddFault&&<button style={S.btn(C.accent)} onClick={()=>{setFaultForm({title:"",location:"",description:"",detected_date:todayStr(),photos:[],services:[],fault_type:"service",material_needed:""});setFaultPhotoFiles([]);setModNewFault(true);}}>+ Yeni Arıza Ekle</button>}
-      {list.length===0&&<div style={S.emp}>{faultTab==="active"?"Aktif arıza yok ✓":"Çözülen arıza yok"}</div>}
+      <div style={{display:"flex",gap:8,marginBottom:12}}>
+        <button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="active"?C.red:C.border}`,background:faultTab==="active"?C.redD:"transparent",color:faultTab==="active"?C.red:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("active")}>🔴 Aktif ({activeFaults.length})</button>
+        {canSeeResolved&&<button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="resolved"?C.green:C.border}`,background:faultTab==="resolved"?C.greenD:"transparent",color:faultTab==="resolved"?C.green:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("resolved")}>✅ Çözülen ({resolvedFaults.length})</button>}
+        <button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="jobs"?(pjOverdue.length>0?C.red:C.orange):C.border}`,background:faultTab==="jobs"?(pjOverdue.length>0?C.redD:C.orangeD):"transparent",color:faultTab==="jobs"?(pjOverdue.length>0?C.red:C.orange):C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("jobs")}>⏳ İşler ({openJobs.length}){pjOverdue.length>0?" ⏰":""}</button>
+      </div>
+      {faultTab==="jobs"&&(<div>
+        <div style={S.crd}>
+          <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>➕ Bekleyen İş Ekle</div>
+          <div style={{fontSize:11,color:C.dim,marginBottom:8}}>Bugün müdahale edilemeyen işleri buraya yaz — gece nöbetçisi veya yarınki mesai yapar. 24 saat içinde yapılmazsa kırmızıya düşer ve şef sorgular.</div>
+          <input style={S.inp} placeholder="İş başlığı (örn: 3. kat klima su akıtıyor)" value={pjForm.title} onChange={e=>setPjForm({...pjForm,title:e.target.value})}/>
+          <textarea style={{...S.inp,minHeight:56}} placeholder="Detay / konum / not (opsiyonel)" value={pjForm.desc} onChange={e=>setPjForm({...pjForm,desc:e.target.value})}/>
+          <button style={S.btn(C.orange)} disabled={submitting} onClick={addPendingJob}>⏳ Ekle — 24 saat sayacı başlar</button>
+        </div>
+        {openJobs.length===0&&<div style={S.emp}>Bekleyen iş yok ✓</div>}
+        {openJobs.map(j=>{
+          const ageMs=Date.now()-new Date(j.created_at).getTime();
+          const over=ageMs>86400000;
+          const leftH=Math.max(0,Math.round((86400000-ageMs)/3600000));
+          const cb=getU(j.created_by);
+          const rs=Array.isArray(j.reasons)?j.reasons:[];
+          return(<div key={j.id} style={{...S.crd,border:over?`2px solid ${C.red}`:`1px solid ${C.border}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"start",gap:8}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:14,fontWeight:700}}>{j.title}</div>
+                {j.description&&<div style={{fontSize:12,color:C.dim,marginTop:2}}>{j.description}</div>}
+                <div style={{fontSize:10,color:C.muted,marginTop:4}}>{cb?.full_name||"—"} • {new Date(j.created_at).toLocaleString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</div>
+              </div>
+              <div style={S.tag(over?C.redD:C.orangeD,over?C.red:C.orange)}>{over?"⏰ 24 SAAT AŞILDI":`⏳ ${leftH} saat kaldı`}</div>
+            </div>
+            {rs.length>0&&<div style={{background:C.bg,borderRadius:8,padding:8,marginTop:8}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.orange,marginBottom:4}}>📝 YAPILAMAMA SEBEPLERİ</div>
+              {rs.map((r,i)=><div key={i} style={{fontSize:11,color:C.dim,marginTop:2}}>• <b style={{color:C.text}}>{r.by}</b> ({new Date(r.at).toLocaleString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}): {r.text}</div>)}
+            </div>}
+            <div style={{display:"flex",gap:8,marginTop:10}}>
+              <button style={{...S.btnS(C.greenD,C.green),flex:1}} onClick={()=>completePendingJob(j)}>✅ Tamamlandı</button>
+              <button style={{...S.btnS(C.orangeD,C.orange),flex:1}} onClick={()=>addPjReason(j)}>📝 Yapılamadı — Sebep</button>
+            </div>
+          </div>);
+        })}
+        {doneJobs.length>0&&<div style={{marginTop:8}}>
+          <button style={{...S.btnS(C.bg,C.dim),width:"100%"}} onClick={()=>setPjShowDone(!pjShowDone)}>{pjShowDone?"▲ Tamamlananları gizle":`▼ Tamamlananlar (${doneJobs.length})`}</button>
+          {pjShowDone&&doneJobs.map(j=>{const cp=getU(j.completed_by);return(<div key={j.id} style={{...S.crd,opacity:.75,marginTop:8}}>
+            <div style={{fontSize:13,fontWeight:600,textDecoration:"line-through",color:C.dim}}>{j.title}</div>
+            <div style={{fontSize:10,color:C.green,marginTop:4}}>✅ {cp?.full_name||"—"} • {j.completed_at?new Date(j.completed_at).toLocaleString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):""}{j.completed_note?` — ${j.completed_note}`:""}</div>
+          </div>);})}
+        </div>}
+      </div>)}
+      {faultTab!=="jobs"&&canAddFault&&<button style={S.btn(C.accent)} onClick={()=>{setFaultForm({title:"",location:"",description:"",detected_date:todayStr(),photos:[],services:[],fault_type:"service",material_needed:""});setFaultPhotoFiles([]);setModNewFault(true);}}>+ Yeni Arıza Ekle</button>}
+      {faultTab!=="jobs"&&list.length===0&&<div style={S.emp}>{faultTab==="active"?"Aktif arıza yok ✓":"Çözülen arıza yok"}</div>}
       {list.map(f=>{
         const days=daysSince(f.detected_date);
         const svcCount=faultServices.filter(s=>s.fault_id===f.id).length;
@@ -1639,7 +1758,34 @@ function AppInner(){
           <div style={{fontSize:24}}>📦</div>
         </div>
       </div>}
+      {(isChef||isAdmin)&&pjOverdue.length>0&&<div onClick={()=>{setPage("faults");setFaultTab("jobs");}} style={{...S.crd,border:`2px solid ${C.red}`,marginBottom:12,cursor:"pointer"}}><div style={{fontSize:13,fontWeight:700,color:C.red}}>⏰ {pjOverdue.length} bekleyen iş 24 saati aştı!</div><div style={{fontSize:11,color:C.dim,marginTop:4}}>Dokun → işleri ve yapılamama sebeplerini gör</div></div>}
       {canSeeBothDepts&&<div style={{display:"flex",gap:8,marginBottom:10}}>{[["mekanik","⚙️ Mekanik"],["elektrik","⚡ Elektrik"]].map(([k,lbl])=>(<button key={k} onClick={()=>setSumDept(k)} style={{flex:1,padding:"11px",borderRadius:10,border:"1px solid "+(sumDept===k?C.accent:C.border),background:sumDept===k?C.accent:"transparent",color:sumDept===k?"#fff":C.text,fontWeight:700,fontSize:13,cursor:"pointer"}}>{lbl}</button>))}</div>}
+      {(isChef||isAdmin||isViewer)&&(()=>{
+        const x=new Date();const td=x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");
+        const attList=bProfiles.filter(u=>u.active&&(u.department||"mekanik")===effDept);
+        const onLeave=new Set(leavesState.filter(l=>l.status==="approved"&&Array.isArray(l.dates)&&l.dates.includes(td)&&l.leave_type!=="hourly").map(l=>l.personnel_id));
+        const rec=id=>attendance.find(a=>a.personnel_id===id);
+        const marked=attList.filter(u=>rec(u.id)||onLeave.has(u.id)).length;
+        const canMark=isChef||isAdmin;
+        return(<div style={{...S.crd,marginBottom:12}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+            <div style={{fontSize:13,fontWeight:700}}>📋 Günlük Yoklama</div>
+            <div style={{fontSize:12,color:marked>=attList.length?C.green:C.orange,fontWeight:700}}>{marked}/{attList.length}</div>
+          </div>
+          {canMark&&<div style={{fontSize:10,color:C.dim,marginBottom:8}}>Kişiye dokun: ✅ mesaide ↔ ❌ yok. İzinliler (🌴) otomatik işaretlenir.</div>}
+          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+            {attList.map(u=>{
+              const lv=onLeave.has(u.id);const r=rec(u.id);
+              const st=lv?"leave":(r?r.status:"none");
+              const bg=st==="present"?C.greenD:st==="absent"?C.redD:st==="leave"?C.orangeD:C.bg;
+              const cl=st==="present"?C.green:st==="absent"?C.red:st==="leave"?C.orange:C.dim;
+              const ic=st==="present"?"✅":st==="absent"?"❌":st==="leave"?"🌴":"⬜";
+              return(<div key={u.id} onClick={()=>{if(!canMark||lv)return;markAttendance(u.id,st==="present"?"absent":"present");}} style={{padding:"6px 10px",borderRadius:16,background:bg,color:cl,fontSize:12,fontWeight:600,border:`1px solid ${cl}44`,cursor:canMark&&!lv?"pointer":"default"}}>{ic} {u.full_name}</div>);
+            })}
+          </div>
+          {isAdmin&&marked===0&&<div style={{fontSize:11,color:C.orange,marginTop:8}}>⚠ Bugün bu departmanda yoklama henüz alınmadı</div>}
+        </div>);
+      })()}
       <div style={S.sec}><span>👥</span> {canSeeBothDepts?"Personel":(myDept==="elektrik"?"⚡ Elektrik Ekibi":"⚙️ Mekanik Ekibi")} ({list.length})</div>
       {list.map((p,i)=>{const rD=remDays(p.id),debt=debtDays(p.id),pend=pendCount(p.id),aR=annualRemaining(p.id),aT=annualDays(p.id);return(<div key={p.id} style={S.crd} onClick={()=>{setSelPerson(p.id);setPage("person");}}><div style={S.row}><div style={S.av(getAv(i))}>{ini(p.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14,fontWeight:600}}>{p.full_name}</div><div style={{fontSize:11,color:C.dim}}>{p.role}{p.night_shift?" 🌙":""}</div>{pend>0&&<div style={{...S.tag(C.orangeD,C.orange),marginTop:4,display:"inline-block"}}>⏳ {pend}</div>}</div><div style={{textAlign:"right"}}>{debt>0?<div style={{fontSize:16,fontWeight:800,color:C.red}}>-{debt}g <span style={{fontSize:10,fontWeight:600}}>borç</span></div>:<div style={{fontSize:16,fontWeight:800,color:rD>0?C.green:C.muted}}>{rD}g <span style={{fontSize:10,fontWeight:600,color:C.dim}}>mesai</span></div>}<div style={{fontSize:12,fontWeight:700,color:aR>3?C.teal:aR>0?C.orange:C.red,marginTop:2}}>🌴 {aR}/{aT}g</div></div></div></div>);})}
     </div>);
@@ -1828,6 +1974,7 @@ function AppInner(){
 
       </div>}
       {isSel&&<div>
+        {calMode==="select"&&docUploadRow()}
         {calMode==="select"&&leaveSource==="annual"&&<button style={S.btn(C.teal)} onClick={submitLeaveReq} disabled={submitting}>{submitting?"Gönderiliyor...":`🌴 Yıllık İzin Gönder (${calSel.length} gün)`}</button>}
         {calMode==="select"&&leaveSource==="overtime"&&<button style={S.btn(willDebt?C.orange:C.teal)} onClick={submitLeaveReq} disabled={submitting}>{submitting?"Gönderiliyor...":willDebt?`⚠ Borçlanarak İzin Gönder (${calSel.length} gun)`:`📅 Onaya Gönder (${calSel.length} gun)`}</button>}
         {calMode==="modify"&&<button style={S.btn(C.orange)} onClick={modifyLeave} disabled={submitting}>{submitting?"...":"📅 Tarihleri Değiştir"}</button>}
@@ -1853,6 +2000,7 @@ function AppInner(){
         <textarea style={S.ta} placeholder="İzin sebebinizi yazın..." value={hourlyForm.reason} onChange={e=>setHourlyForm(p=>({...p,reason:e.target.value}))}/>
         <div style={{fontSize:11,color:hourlyForm.reason.length>=10?C.green:C.muted,marginTop:-6,marginBottom:10,textAlign:"right"}}>{hourlyForm.reason.length}/10</div>
 
+        {docUploadRow()}
         <button style={S.btn(C.blue)} onClick={submitHourlyLeave} disabled={submitting}>{submitting?"Gönderiliyor...":"🕐 Saatlik İzin Gönder"}</button>
         <button style={S.btn(C.border,C.text)} onClick={()=>{setHourlyMode(false);}}>İptal</button>
       </div>}
@@ -2053,7 +2201,7 @@ function AppInner(){
         {page==="approvals"&&renderApprovals()}
         {page==="admin"&&renderAdmin()}
       </div>
-      <div style={S.nav}>{navItems.map(n=>(<button key={n.k} style={S.navB(page===n.k||(n.k==="dashboard"&&page==="person"))} onClick={()=>{setPage(n.k);setSelPerson(null);if(n.k!=="calendar"){setCalMode("view");setCalSel([]);}}}><span style={{fontSize:18}}>{n.i}</span>{n.l}{n.k==="approvals"&&((canApprove&&totPend>0)||(isViewer&&allPendCount>0))&&<div style={S.dot}/>}{n.k==="depo"&&criticalCount>0&&<div style={S.dot}/>}</button>))}</div>
+      <div style={S.nav}>{navItems.map(n=>(<button key={n.k} style={S.navB(page===n.k||(n.k==="dashboard"&&page==="person"))} onClick={()=>{setPage(n.k);setSelPerson(null);if(n.k!=="calendar"){setCalMode("view");setCalSel([]);}}}><span style={{fontSize:18}}>{n.i}</span>{n.l}{n.k==="approvals"&&((canApprove&&totPend>0)||(isViewer&&allPendCount>0))&&<div style={S.dot}/>}{n.k==="faults"&&pjOverdue.length>0&&<div style={S.dot}/>}{n.k==="depo"&&criticalCount>0&&<div style={S.dot}/>}</button>))}</div>
       {renderNewOT()}
       {renderNewFault()}
       {renderFaultDetail()}
