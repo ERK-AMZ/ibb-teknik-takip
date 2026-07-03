@@ -5,6 +5,8 @@ import { supabase, signIn, signOut, getProfiles, createOvertime, updateOvertime,
 const toArr=(v)=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'&&Array.isArray(v.data))return v.data;return[];};
 // === Önbellek (stale-while-revalidate): açılışta anında veri, arkada tazeleme ===
 const CACHE_KEY='ibb_cache_v1';
+const VAPID_PUB='BN2YP7MOPhouxNjYjzbuOJznU5xocT3gQW3JeHUnHn3hvRCDdlIvRUDifICb_S0rc_-DqUtWRim0ehxn7UdaV3M';
+const b64ToU8=(b)=>{const p='='.repeat((4-b.length%4)%4);const r=(b+p).replace(/-/g,'+').replace(/_/g,'/');const d=atob(r);return Uint8Array.from([...d].map(c=>c.charCodeAt(0)));};
 const cacheGet=()=>{try{const r=localStorage.getItem(CACHE_KEY);if(!r)return null;const o=JSON.parse(r);return(o&&o.profiles)?o:null;}catch(e){return null;}};
 const cacheSave=(patch)=>{try{const cur=cacheGet()||{};const nx={...cur,...patch,ts:Date.now()};if(Array.isArray(nx.faults))nx.faults=nx.faults.map(f=>({...f,photos:[]}));localStorage.setItem(CACHE_KEY,JSON.stringify(nx));}catch(e){try{localStorage.removeItem(CACHE_KEY);}catch(_e){}}};
 const cacheClear=()=>{try{localStorage.removeItem(CACHE_KEY);}catch(e){}};
@@ -21,7 +23,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.20</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.21</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -644,6 +646,18 @@ function AppInner(){
     }catch(e){setToast("Hata: "+(e?.message||""));}
   }
 
+  const[pushReady,setPushReady]=useState(typeof Notification!=="undefined"&&Notification.permission==="granted");
+  async function enablePush(){
+    try{
+      if(!("serviceWorker" in navigator)||!("PushManager" in window)){setToast("Bu cihaz bildirim desteklemiyor");return;}
+      const perm=await Notification.requestPermission();
+      if(perm!=="granted"){setToast("Bildirim izni verilmedi");return;}
+      const reg=await navigator.serviceWorker.ready;
+      const sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64ToU8(VAPID_PUB)});
+      await supabase.from("push_subscriptions").upsert({personnel_id:profile.id,subscription:sub.toJSON()},{onConflict:"personnel_id"});
+      setPushReady(true);setToast("🔔 Bildirimler açıldı");
+    }catch(e){setToast("Bildirim hatası: "+(e?.message||""));}
+  }
   async function reportElevatorFault(){
     if(!evForm.elevator_id){setToast("⚠ Asansör seçin");return;}
     if(evForm.desc.trim().length<5){setToast("⚠ Arıza belirtisini yazın (min 5 karakter)");return;}
@@ -866,7 +880,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.20</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.21</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -902,7 +916,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.20</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.21</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -2318,6 +2332,7 @@ function AppInner(){
         <div style={{display:"flex",alignItems:"center",gap:8,background:"rgba(255,255,255,0.05)",borderRadius:8,padding:"8px 12px"}}><div style={S.av(C.accentD,28)}>{ini(profile.full_name)}</div><div><div style={{fontSize:13,fontWeight:600}}>{profile.full_name}</div><div style={{fontSize:10,color:C.dim}}>{roleLabel}</div></div></div>
       </div>
       <div style={S.cnt}>
+        {!pushReady&&profile&&<div style={{display:"flex",alignItems:"center",gap:8,background:C.accentD,border:`1px solid ${C.accent}44`,borderRadius:10,padding:"8px 12px",marginBottom:12}}><span style={{fontSize:12,color:C.text,flex:1}}>🔔 Onay, arıza ve iş uyarıları telefona düşsün</span><button onClick={enablePush} style={{...S.btnS(C.accent+"33",C.accent),whiteSpace:"nowrap"}}>Bildirimleri Aç</button></div>}
         {page==="dashboard"&&renderDashboard()}
         {page==="person"&&renderPersonDetail()}
         {page==="faults"&&renderFaults()}
