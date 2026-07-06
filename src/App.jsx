@@ -23,7 +23,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.21</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.22</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -645,6 +645,13 @@ function AppInner(){
       await fetchAttendance();
     }catch(e){setToast("Hata: "+(e?.message||""));}
   }
+  async function toggleShift(pid,newShift){
+    const x=new Date();const td=x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");
+    try{
+      await supabase.from("attendance").upsert({att_date:td,personnel_id:pid,shift:newShift,building_id:selBuilding||profile.building_id,marked_by:profile.id,marked_at:new Date().toISOString()},{onConflict:"att_date,personnel_id"});
+      await fetchAttendance();
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+  }
 
   const[pushReady,setPushReady]=useState(typeof Notification!=="undefined"&&Notification.permission==="granted");
   async function enablePush(){
@@ -880,7 +887,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.21</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.22</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -916,7 +923,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.21</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.22</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -1881,48 +1888,54 @@ function AppInner(){
       {canSeeBothDepts&&<div style={{display:"flex",gap:8,marginBottom:10}}>{[["mekanik","⚙️ Mekanik"],["elektrik","⚡ Elektrik"]].map(([k,lbl])=>(<button key={k} onClick={()=>setSumDept(k)} style={{flex:1,padding:"11px",borderRadius:10,border:"1px solid "+(sumDept===k?C.accent:C.border),background:sumDept===k?C.accent:"transparent",color:sumDept===k?"#fff":C.text,fontWeight:700,fontSize:13,cursor:"pointer"}}>{lbl}</button>))}</div>}
       {(isChef||isAdmin||isViewer)&&(()=>{
         const x=new Date();const td=x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");
-        const attList=bProfiles.filter(u=>u.active&&(u.department||"mekanik")===effDept);
+        const attList=bProfiles.filter(u=>u.active&&(u.department||"mekanik")===effDept&&(u.user_role==="personnel"||u.user_role==="viewer"));
         const onLeave=new Set(leavesState.filter(l=>l.status==="approved"&&Array.isArray(l.dates)&&l.dates.includes(td)&&l.leave_type!=="hourly").map(l=>l.personnel_id));
         const rec=id=>attendance.find(a=>a.personnel_id===id);
-        const pres=attList.filter(u=>rec(u.id)?.status==="present").length;
-        const abs=attList.filter(u=>rec(u.id)?.status==="absent").length;
-        const lvC=attList.filter(u=>onLeave.has(u.id)).length;
-        const unm=attList.length-pres-abs-lvC;
-        const marked=pres+abs+lvC;
+        const shiftOf=id=>rec(id)?.shift||"day";
+        const working=attList.filter(u=>!onLeave.has(u.id));
+        const dayL=working.filter(u=>shiftOf(u.id)==="day");
+        const nightL=working.filter(u=>shiftOf(u.id)==="night");
+        const leaveL=attList.filter(u=>onLeave.has(u.id));
+        const pres=working.filter(u=>rec(u.id)?.status==="present").length;
+        const abs=working.filter(u=>rec(u.id)?.status==="absent").length;
+        const unm=working.length-pres-abs;
+        const dPres=dayL.filter(u=>rec(u.id)?.status==="present").length;
+        const nPres=nightL.filter(u=>rec(u.id)?.status==="present").length;
         const YOKLAMA_YETKILI={
           mekanik:["5372cbf9-823a-47fd-8bf5-a78565c31ce3","ba25a89a-060a-4b8d-afdc-7d7c401a316d"], // Eyub + Fatih Sufraci
           elektrik:["47f4e76b-3a89-4805-816f-b2e1f6e260a1","d0b43af5-cdbe-4ebe-a1f7-6cc6692e8391"]  // Arif + Muhammed
         };
         const canMark=(YOKLAMA_YETKILI[effDept]||[]).includes(profile?.id);
-        const dayL=attList.filter(u=>!u.night_shift);
-        const nightL=attList.filter(u=>u.night_shift);
-        const dPres=dayL.filter(u=>rec(u.id)?.status==="present").length;
-        const nPres=nightL.filter(u=>rec(u.id)?.status==="present").length;
         const chip=u=>{
-          const lv=onLeave.has(u.id);const r=rec(u.id);
-          const st=lv?"leave":(r?r.status:"none");
-          const bg=st==="present"?C.greenD:st==="absent"?C.redD:st==="leave"?C.orangeD:C.bg;
-          const cl=st==="present"?C.green:st==="absent"?C.red:st==="leave"?C.orange:C.dim;
-          const ic=st==="present"?"✅":st==="absent"?"❌":st==="leave"?"🌴":"⬜";
-          return(<div key={u.id} onClick={()=>{if(!canMark||lv)return;markAttendance(u.id,st==="present"?"absent":"present");}} style={{padding:"6px 10px",borderRadius:16,background:bg,color:cl,fontSize:12,fontWeight:600,border:`1px solid ${cl}44`,cursor:canMark&&!lv?"pointer":"default"}}>{ic} {u.full_name}</div>);
+          const r=rec(u.id);const st=r?r.status:null;const isN=shiftOf(u.id)==="night";
+          const bg=st==="present"?C.greenD:st==="absent"?C.redD:C.bg;
+          const cl=st==="present"?C.green:st==="absent"?C.red:C.dim;
+          const ic=st==="present"?"✅":st==="absent"?"❌":"⬜";
+          return(<div key={u.id} style={{display:"flex",alignItems:"center",gap:0,borderRadius:16,overflow:"hidden",border:`1px solid ${cl}44`}}>
+            {canMark&&<span onClick={(e)=>{e.stopPropagation();toggleShift(u.id,isN?"day":"night");}} title="Gündüz/Gece" style={{padding:"6px 8px",background:isN?C.blueD:C.orangeD,color:isN?C.blue:C.orange,fontSize:13,cursor:"pointer",borderRight:`1px solid ${cl}44`}}>{isN?"🌙":"☀️"}</span>}
+            <span onClick={()=>{if(!canMark)return;markAttendance(u.id,st==="present"?"absent":"present");}} style={{padding:"6px 10px",background:bg,color:cl,fontSize:12,fontWeight:600,cursor:canMark?"pointer":"default"}}>{ic} {u.full_name}</span>
+          </div>);
         };
         return(<div style={{...S.crd,marginBottom:12}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
             <div style={{fontSize:13,fontWeight:700}}>📋 Günlük Yoklama</div>
-            <div style={{fontSize:12,fontWeight:700}}><span style={{color:C.green}}>✅{pres}</span> <span style={{color:C.red}}>❌{abs}</span> <span style={{color:C.orange}}>🌴{lvC}</span>{unm>0&&<span style={{color:C.dim}}> ⬜{unm}</span>}</div>
+            <div style={{fontSize:12,fontWeight:700}}><span style={{color:C.green}}>✅{pres}</span> <span style={{color:C.red}}>❌{abs}</span> <span style={{color:C.orange}}>🌴{leaveL.length}</span>{unm>0&&<span style={{color:C.dim}}> ⬜{unm}</span>}</div>
           </div>
-          {canMark&&<div style={{fontSize:10,color:C.dim,marginBottom:8}}>Kişiye dokun: ✅ mesaide ↔ ❌ yok. İzinliler (🌴) otomatik işaretlenir.</div>}
+          {canMark&&<div style={{fontSize:10,color:C.dim,marginBottom:8}}>☀️/🌙 ile gündüz-gece ata, isme dokun: ✅ mesaide ↔ ❌ yok. İzinliler otomatik.</div>}
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
             <span style={{fontSize:11,fontWeight:700,color:C.orange}}>☀️ Gündüz</span>
             <span style={{fontSize:10,color:C.dim}}>{dayL.length} kişi · {dPres} mesaide</span>
           </div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{dayL.map(chip)}</div>
-          {nightL.length>0&&<div style={{borderTop:`1px solid ${C.border}`,marginTop:10,paddingTop:8,display:"flex",alignItems:"center",flexWrap:"wrap",gap:6}}>
-            <span style={{fontSize:11,fontWeight:700,color:C.blue}}>🌙 Gece</span>
-            {nightL.map(chip)}
-            <span style={{fontSize:10,color:C.dim}}>{nPres}/{nightL.length} geldi</span>
-          </div>}
-          {isAdmin&&marked===0&&<div style={{fontSize:11,color:C.orange,marginTop:8}}>⚠ Bugün bu departmanda yoklama henüz alınmadı</div>}
+          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{dayL.length>0?dayL.map(chip):<span style={{fontSize:11,color:C.muted}}>—</span>}</div>
+          <div style={{borderTop:`1px solid ${C.border}`,marginTop:10,paddingTop:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+              <span style={{fontSize:11,fontWeight:700,color:C.blue}}>🌙 Gece</span>
+              <span style={{fontSize:10,color:C.dim}}>{nightL.length>0?`${nPres}/${nightL.length} geldi`:(canMark?"☀️'e basıp gece ata":"atanmadı")}</span>
+            </div>
+            {nightL.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6}}>{nightL.map(chip)}</div>}
+          </div>
+          {leaveL.length>0&&<div style={{fontSize:11,color:C.orange,marginTop:10,borderTop:`1px solid ${C.border}`,paddingTop:8}}>🌴 İzinli ({leaveL.length}): {leaveL.map(u=>u.full_name).join(", ")}</div>}
+          {isAdmin&&pres+abs===0&&<div style={{fontSize:11,color:C.orange,marginTop:8}}>⚠ Bugün bu departmanda yoklama henüz alınmadı</div>}
         </div>);
       })()}
       <div style={S.sec}><span>👥</span> {canSeeBothDepts?"Personel":(myDept==="elektrik"?"⚡ Elektrik Ekibi":"⚙️ Mekanik Ekibi")} ({list.length})</div>
