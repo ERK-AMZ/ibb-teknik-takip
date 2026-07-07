@@ -5,6 +5,7 @@ import { supabase, signIn, signOut, getProfiles, createOvertime, updateOvertime,
 const toArr=(v)=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'&&Array.isArray(v.data))return v.data;return[];};
 // === Önbellek (stale-while-revalidate): açılışta anında veri, arkada tazeleme ===
 const CACHE_KEY='ibb_cache_v1';
+const APP_VERSION='5.24';
 const VAPID_PUB='BN2YP7MOPhouxNjYjzbuOJznU5xocT3gQW3JeHUnHn3hvRCDdlIvRUDifICb_S0rc_-DqUtWRim0ehxn7UdaV3M';
 const b64ToU8=(b)=>{const p='='.repeat((4-b.length%4)%4);const r=(b+p).replace(/-/g,'+').replace(/_/g,'/');const d=atob(r);return Uint8Array.from([...d].map(c=>c.charCodeAt(0)));};
 const cacheGet=()=>{try{const r=localStorage.getItem(CACHE_KEY);if(!r)return null;const o=JSON.parse(r);return(o&&o.profiles)?o:null;}catch(e){return null;}};
@@ -673,6 +674,21 @@ function AppInner(){
   }
 
   const[pushReady,setPushReady]=useState(typeof Notification!=="undefined"&&Notification.permission==="granted");
+  const[updateAvailable,setUpdateAvailable]=useState(false);
+  useEffect(()=>{
+    let live=true;
+    const check=async()=>{try{const{data}=await supabase.from("app_meta").select("value").eq("key","app_version").maybeSingle();if(live&&data&&data.value&&data.value!==APP_VERSION)setUpdateAvailable(true);}catch(e){}};
+    check();
+    const id=setInterval(check,120000);
+    return()=>{live=false;clearInterval(id);};
+  },[]);
+  async function forceUpdate(){
+    try{
+      if("serviceWorker" in navigator){const rs=await navigator.serviceWorker.getRegistrations();await Promise.all(rs.map(r=>r.unregister()));}
+      if(window.caches){const ks=await caches.keys();await Promise.all(ks.map(k=>caches.delete(k)));}
+    }catch(e){}
+    location.reload();
+  }
   async function enablePush(){
     try{
       if(!("serviceWorker" in navigator)||!("PushManager" in window)){setToast("Bu cihaz bildirim desteklemiyor");return;}
@@ -906,7 +922,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.23</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.24</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -942,7 +958,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.23</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.24</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -2364,6 +2380,7 @@ function AppInner(){
         <div style={{display:"flex",alignItems:"center",gap:8,background:"rgba(255,255,255,0.05)",borderRadius:8,padding:"8px 12px"}}><div style={S.av(C.accentD,28)}>{ini(profile.full_name)}</div><div><div style={{fontSize:13,fontWeight:600}}>{profile.full_name}</div><div style={{fontSize:10,color:C.dim}}>{roleLabel}</div></div></div>
       </div>
       <div style={S.cnt}>
+        {updateAvailable&&<div style={{display:"flex",alignItems:"center",gap:8,background:C.greenD,border:`1px solid ${C.green}66`,borderRadius:10,padding:"10px 12px",marginBottom:12}}><span style={{fontSize:12,color:C.text,flex:1,fontWeight:600}}>🔄 Yeni sürüm hazır — güncellemek için dokun</span><button onClick={forceUpdate} style={{...S.btnS(C.green+"33",C.green),whiteSpace:"nowrap",fontWeight:700}}>Güncelle</button></div>}
         {!pushReady&&profile&&<div style={{display:"flex",alignItems:"center",gap:8,background:C.accentD,border:`1px solid ${C.accent}44`,borderRadius:10,padding:"8px 12px",marginBottom:12}}><span style={{fontSize:12,color:C.text,flex:1}}>🔔 Onay, arıza ve iş uyarıları telefona düşsün</span><button onClick={enablePush} style={{...S.btnS(C.accent+"33",C.accent),whiteSpace:"nowrap"}}>Bildirimleri Aç</button></div>}
         {page==="dashboard"&&renderDashboard()}
         {page==="person"&&renderPersonDetail()}
