@@ -5,7 +5,7 @@ import { supabase, signIn, signOut, getProfiles, createOvertime, updateOvertime,
 const toArr=(v)=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'&&Array.isArray(v.data))return v.data;return[];};
 // === Önbellek (stale-while-revalidate): açılışta anında veri, arkada tazeleme ===
 const CACHE_KEY='ibb_cache_v1';
-const APP_VERSION='5.24';
+const APP_VERSION='5.26';
 const VAPID_PUB='BN2YP7MOPhouxNjYjzbuOJznU5xocT3gQW3JeHUnHn3hvRCDdlIvRUDifICb_S0rc_-DqUtWRim0ehxn7UdaV3M';
 const b64ToU8=(b)=>{const p='='.repeat((4-b.length%4)%4);const r=(b+p).replace(/-/g,'+').replace(/_/g,'/');const d=atob(r);return Uint8Array.from([...d].map(c=>c.charCodeAt(0)));};
 const cacheGet=()=>{try{const r=localStorage.getItem(CACHE_KEY);if(!r)return null;const o=JSON.parse(r);return(o&&o.profiles)?o:null;}catch(e){return null;}};
@@ -24,7 +24,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.23</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.26</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -108,11 +108,18 @@ const HOLIDAYS={
   "2027-08-30":"Zafer Bayramı","2027-10-29":"Cumhuriyet Bayramı"
 };
 function isHoliday(d){return HOLIDAYS[d]||null;}
+// === Bakim Takip yardimcilari ===
+function perStr(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");}
+function curPer(){return perStr(new Date());}
+function fPer(p){const s=String(p||"").split("-");const mi=Number(s[1])-1;return (MONTHS[mi]||"?")+" "+s[0];}
+function fPerShort(p){const s=String(p||"").split("-");const mi=Number(s[1])-1;return (MONTHS[mi]||"?").slice(0,3)+"\n"+String(s[0]).slice(2);}
+function perAdd(p,n){const s=String(p).split("-");const d=new Date(Number(s[0]),Number(s[1])-1+n,1);return perStr(d);}
+const MT_ST={planned:["Planlı","#94a3b8"],in_progress:["Devam ediyor","#f59e0b"],done:["Tamamlandı","#22c55e"],skipped:["Atlandı","#64748b"]};
 const YEARLY_OT_LIMIT=270; // Yıllık yasal mesai sınırı (saat)
 function daysInMonth(y,m){return new Date(y,m+1,0).getDate();}
 function firstDay(y,m){const d=new Date(y,m,1).getDay();return d===0?6:d-1;}
 function dateStr(y,m,d){return`${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;}
-function todayStr(){try{return new Date().toISOString().split("T")[0];}catch{const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}-${String(n.getDate()).padStart(2,"0")}`;}}
+function todayStr(){const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}-${String(n.getDate()).padStart(2,"0")}`;}
 
 /* iOS-STYLE WHEEL PICKER */
 const ITEM_H=44,VISIBLE=5,PICKER_H=ITEM_H*VISIBLE;
@@ -312,6 +319,20 @@ function AppInner(){
   const[elevators,setElevators]=useState([]);
   const[elevatorFaults,setElevatorFaults]=useState([]);
   const[evForm,setEvForm]=useState({elevator_id:"",desc:"",reset:true});
+  // Bakim Takip
+  const[maintPlans,setMaintPlans]=useState([]);
+  const[maintLogs,setMaintLogs]=useState([]);
+  const[mtView,setMtView]=useState("month"); // month | overdue | calendar
+  const[mtAct,setMtAct]=useState(null); // {plan,period,mode:"done"|"skip"}
+  const[mtForm,setMtForm]=useState({done_date:"",done_by:"",company:"",notes:""});
+  const[showMtDP,setShowMtDP]=useState(false);
+  const[modEditPlan,setModEditPlan]=useState(null);
+  const[modNewPlan,setModNewPlan]=useState(false);
+  const[nPlan,setNPlan]=useState({system_name:"",discipline:"mekanik",provider:"own",device_count:"",months:[],notes:""});
+  // Gunduz/Gece is devri
+  const[pjTab,setPjTab]=useState("day");
+  const[modNightPick,setModNightPick]=useState(null); // devredilecek is
+  const carryRef=useRef(new Set());
 
   useEffect(()=>{if(toast){const t=setTimeout(()=>setToast(null),3500);return()=>clearTimeout(t);}},[toast]);
 
@@ -328,6 +349,8 @@ function AppInner(){
   const fetchAttendance=useCallback(async()=>{try{const x=new Date();const ds=x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");const{data}=await supabase.from('attendance').select('*').eq('att_date',ds);if(Array.isArray(data))setAttendance(data);}catch(e){console.error(e);}},[]);
   const fetchElevators=useCallback(async()=>{try{const{data}=await supabase.from('elevators').select('*').order('sort');if(Array.isArray(data)){setElevators(data);cacheSave({elevators:data});}}catch(e){console.error(e);}},[]);
   const fetchElevatorFaults=useCallback(async()=>{try{const{data}=await supabase.from('elevator_faults').select('*').order('created_at',{ascending:false}).limit(200);if(Array.isArray(data)){setElevatorFaults(data);cacheSave({elevatorFaults:data});}}catch(e){console.error(e);}},[]);
+  const fetchMaintPlans=useCallback(async()=>{try{const{data}=await supabase.from('maintenance_plans').select('*').order('provider').order('system_name');if(Array.isArray(data)){setMaintPlans(data);cacheSave({maintPlans:data});}}catch(e){console.error(e);}},[]);
+  const fetchMaintLogs=useCallback(async()=>{try{const{data}=await supabase.from('maintenance_logs').select('*').order('period',{ascending:false}).limit(2000);if(Array.isArray(data)){setMaintLogs(data);cacheSave({maintLogs:data});}}catch(e){console.error(e);}},[]);
 
   // Silent refresh (no loading screen) for TOKEN_REFRESHED events
   const silentRefresh=useCallback(async(uid)=>{
@@ -375,6 +398,8 @@ function AppInner(){
         if(Array.isArray(cc.pendingJobs))setPendingJobs(cc.pendingJobs);
         if(Array.isArray(cc.elevators))setElevators(cc.elevators);
         if(Array.isArray(cc.elevatorFaults))setElevatorFaults(cc.elevatorFaults);
+        if(Array.isArray(cc.maintPlans))setMaintPlans(cc.maintPlans);
+        if(Array.isArray(cc.maintLogs))setMaintLogs(cc.maintLogs);
         setProfile(cfp);
         if(!selBuilding)setSelBuilding(cfp.building_id||cc.buildings?.[0]?.id||null);
         setLoading(false); // yükleme ekranı yok, taze veri arkada gelecek
@@ -475,10 +500,12 @@ function AppInner(){
       try{const c=await subscribeToChanges('attendance',()=>{if(m)fetchAttendance();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('elevators',()=>{if(m)fetchElevators();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('elevator_faults',()=>{if(m)fetchElevatorFaults();});if(c)subs.push(c);}catch(e){}
+      try{const c=await subscribeToChanges('maintenance_plans',()=>{if(m)fetchMaintPlans();});if(c)subs.push(c);}catch(e){}
+      try{const c=await subscribeToChanges('maintenance_logs',()=>{if(m)fetchMaintLogs();});if(c)subs.push(c);}catch(e){}
     };s();return()=>{m=false;subs.forEach(s=>{try{s?.unsubscribe();}catch(e){}});};
   },[session,fetchOvertimes,fetchLeaves,fetchProfiles,fetchFaults,fetchFaultServices,fetchFaultVotes,fetchMaterials,fetchStockMovements,fetchPendingJobs,fetchAttendance]);
 
-  useEffect(()=>{if(session){fetchPendingJobs();fetchAttendance();fetchElevators();fetchElevatorFaults();}},[session,fetchPendingJobs,fetchAttendance,fetchElevators,fetchElevatorFaults]);
+  useEffect(()=>{if(session){fetchPendingJobs();fetchAttendance();fetchElevators();fetchElevatorFaults();fetchMaintPlans();fetchMaintLogs();}},[session,fetchPendingJobs,fetchAttendance,fetchElevators,fetchElevatorFaults,fetchMaintPlans,fetchMaintLogs]);
 
   const isAdmin=profile?.user_role==="admin";
   const isChef=profile?.user_role==="chef";
@@ -629,12 +656,111 @@ function AppInner(){
         {leaveDocFile&&<button style={S.btnS(C.redD,C.red)} onClick={()=>setLeaveDocFile(null)}>✕</button>}
       </div>
     </div>);
+  // ═══ Bakim Takip aksiyonlari ═══
+  async function mtUpsert(plan,period,patch){
+    if(!selBuilding){setToast("⚠ Bina seçili değil");return false;}
+    setSubmitting(true);
+    try{
+      const{error}=await supabase.from("maintenance_logs").upsert(Object.assign({
+        plan_id:plan.id,building_id:selBuilding,period,created_by:profile.id,updated_at:new Date().toISOString()
+      },patch),{onConflict:"plan_id,building_id,period"});
+      if(error)throw error;
+      await fetchMaintLogs();setSubmitting(false);return true;
+    }catch(e){setToast("Hata: "+(e?.message||""));setSubmitting(false);return false;}
+  }
+  async function mtStart(plan,period){if(await mtUpsert(plan,period,{status:"in_progress"}))setToast("▶ Bakım başlatıldı");}
+  function mtOpenDone(plan,period){
+    const lg=maintLogs.find(l=>l.plan_id===plan.id&&l.building_id===selBuilding&&l.period===period);
+    const keepNote=lg&&lg.status!=="skipped"?(lg.notes||""):"";
+    setMtForm({done_date:lg?.done_date||todayStr(),done_by:lg?.done_by||(plan.provider==="own"?profile.id:""),company:lg?.company||"",notes:keepNote});
+    setMtAct({plan,period});
+  }
+  async function mtSubmitDone(){
+    if(!mtAct)return;
+    const plan=mtAct.plan,period=mtAct.period;
+    if(!mtForm.done_date){setToast("⚠ Tarih zorunlu");return;}
+    if(plan.provider==="own"&&!mtForm.done_by){setToast("⚠ Yapan kişiyi seçin");return;}
+    if(plan.provider==="external"&&!String(mtForm.company).trim()){setToast("⚠ Firma adı zorunlu");return;}
+    const ok=await mtUpsert(plan,period,{status:"done",done_date:mtForm.done_date,
+      done_by:plan.provider==="own"?mtForm.done_by:null,
+      company:plan.provider==="external"?String(mtForm.company).trim():null,
+      notes:String(mtForm.notes||"").trim()||null});
+    if(ok){setMtAct(null);setToast("✓ Bakım tamamlandı");}
+  }
+  async function mtSkip(plan,period){
+    const r=window.prompt("Bu bakım neden atlanıyor? (zorunlu, min 5 karakter)");
+    if(r===null)return;
+    if(String(r).trim().length<5){setToast("⚠ Sebep en az 5 karakter olmalı");return;}
+    if(await mtUpsert(plan,period,{status:"skipped",notes:String(r).trim(),done_date:null,done_by:null,company:null}))setToast("⏭ Atlandı");
+  }
+  async function savePlan(){
+    if(!modEditPlan)return;
+    setSubmitting(true);
+    try{
+      const dc=modEditPlan.device_count===""||modEditPlan.device_count===null?null:Number(modEditPlan.device_count);
+      const{error}=await supabase.from("maintenance_plans").update({
+        device_count:Number.isFinite(dc)?dc:null,
+        notes:String(modEditPlan.notes||"").trim()||null,
+        active:modEditPlan.active!==false
+      }).eq("id",modEditPlan.id);
+      if(error)throw error;
+      await fetchMaintPlans();setModEditPlan(null);setToast("Kaydedildi");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+  async function addPlan(){
+    const nm=String(nPlan.system_name||"").trim();
+    if(nm.length<3){setToast("⚠ Sistem adı en az 3 karakter");return;}
+    if(nPlan.months.length===0){setToast("⚠ En az bir ay seçin");return;}
+    setSubmitting(true);
+    try{
+      const dc=nPlan.device_count===""?null:Number(nPlan.device_count);
+      const{error}=await supabase.from("maintenance_plans").insert({
+        system_name:nm,discipline:nPlan.discipline,provider:nPlan.provider,
+        yearly_count:nPlan.months.length,device_count:Number.isFinite(dc)?dc:null,
+        months:nPlan.months.slice().sort(),notes:String(nPlan.notes||"").trim()||null,active:true
+      });
+      if(error)throw error;
+      await fetchMaintPlans();setModNewPlan(false);
+      setNPlan({system_name:"",discipline:"mekanik",provider:"own",device_count:"",months:[],notes:""});
+      setToast("✓ Plan eklendi");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+
+  // ═══ Gunduz/Gece is devri aksiyonlari ═══
+  function pjOpenNightPick(job){
+    if(nightCrew.length===0){setToast("⚠ Bugün gece nöbetçisi atanmamış — Özet > Günlük Yoklama'dan ☀️ tuşuyla ata");return;}
+    setModNightPick(job);
+  }
+  async function pjToNight(job,personId){
+    setSubmitting(true);
+    try{
+      const{error}=await supabase.from("pending_jobs").update({shift:"night",assigned_to:personId,job_date:todayStr()}).eq("id",job.id);
+      if(error)throw error;
+      await fetchPendingJobs();setModNightPick(null);setPjTab("night");setToast("🌙 Geceye devredildi");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+  async function pjNotDone(j){
+    const r=window.prompt("Neden yapılamadı? (zorunlu, min 10 karakter)");
+    if(r===null)return;
+    if(String(r).trim().length<10){setToast("⚠ Sebep en az 10 karakter olmalı");return;}
+    setSubmitting(true);
+    try{
+      const{error}=await supabase.from("pending_jobs").update({status:"not_done",not_done_reason:String(r).trim()}).eq("id",j.id);
+      if(error)throw error;
+      await fetchPendingJobs();setToast("✗ Yapılamadı olarak işaretlendi — yarın gündüze aktarılacak");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+
   async function addPendingJob(){
     const t=pjForm.title.trim();
     if(t.length<5){setToast("⚠ İş başlığı yazın (min 5 karakter)");return;}
     setSubmitting(true);
     try{
-      await supabase.from("pending_jobs").insert({building_id:selBuilding||profile.building_id,title:t,description:pjForm.desc.trim(),created_by:profile.id});
+      await supabase.from("pending_jobs").insert({building_id:selBuilding||profile.building_id,title:t,description:pjForm.desc.trim(),created_by:profile.id,shift:"day",job_date:todayStr()});
       setPjForm({title:"",desc:""});await fetchPendingJobs();
       setToast("⏳ Bekleyen iş eklendi — 24 saat sayacı başladı");
     }catch(e){setToast("Hata: "+(e?.message||""));}
@@ -672,6 +798,32 @@ function AppInner(){
       await fetchAttendance();
     }catch(e){setToast("Hata: "+(e?.message||""));}
   }
+
+
+  // Yapilamayan gece isleri ertesi gun gunduze aktarilir (oturum basina bir kez)
+  useEffect(()=>{
+    if(!profile||!selBuilding)return;
+    if(!Array.isArray(pendingJobs)||pendingJobs.length===0)return;
+    const td=todayStr();
+    const stale=pendingJobs.filter(j=>j.status==="not_done"&&(j.shift||"day")==="night"&&String(j.job_date||"")<td&&j.building_id===selBuilding);
+    const already=new Set(pendingJobs.map(j=>j.carried_from).filter(Boolean));
+    // Is bazli kilit: onbellekten gelen bayat listede is gorunmuyorsa taze veri gelince yakalanir
+    const todo=stale.filter(j=>!already.has(j.id)&&!carryRef.current.has(j.id));
+    if(todo.length===0)return;
+    todo.forEach(j=>carryRef.current.add(j.id));
+    (async()=>{
+      let n=0;
+      // Tek tek: carried_from tekil oldugu icin toplu insert'te bir catisma tumunu iptal ederdi
+      for(const j of todo){
+        try{
+          const{error}=await supabase.from("pending_jobs").insert({building_id:j.building_id,title:j.title,description:j.description,
+            created_by:j.created_by,status:"open",shift:"day",job_date:td,carried_from:j.id,not_done_reason:j.not_done_reason});
+          if(!error)n++;
+        }catch(e){}
+      }
+      if(n>0){await fetchPendingJobs();setToast("↩ "+n+" gece işi bugüne aktarıldı");}
+    })();
+  },[profile,selBuilding,pendingJobs,fetchPendingJobs]);
 
   const[pushReady,setPushReady]=useState(typeof Notification!=="undefined"&&Notification.permission==="granted");
   const[updateAvailable,setUpdateAvailable]=useState(false);
@@ -852,8 +1004,15 @@ function AppInner(){
     fInp:{width:"100%",padding:"12px",borderRadius:10,border:`1px solid ${C.border}`,background:C.bg,color:C.text,fontSize:16,boxSizing:"border-box",marginBottom:10,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"},
   };
 
-  const pendOTs=useMemo(()=>bOvertimes.filter(o=>(isChef&&o.status==="pending_chef"&&deptOf(o.personnel_id)===profile?.department)||(isAdmin&&o.status==="pending_manager")),[bOvertimes,isChef,isAdmin,profile,profiles]);
-  const pendLVs=useMemo(()=>bLeaves.filter(l=>(isChef&&l.status==="pending_chef"&&deptOf(l.personnel_id)===profile?.department)||(isAdmin&&l.status==="pending_manager")),[bLeaves,isChef,isAdmin,profile,profiles]);
+  // Departmanda aktif sef kalmadiysa sef adimini admin onaylar (aksi halde talep sonsuza kadar takilir)
+  const deptHasChef=useCallback((d,bid)=>profiles.some(p=>p.active&&p.user_role==="chef"&&(p.department||"mekanik")===(d||"mekanik")&&(!bid||p.building_id===bid)),[profiles]);
+  const canApproveRec=useCallback((r)=>{const d=deptOf(r.personnel_id);const bid=profiles.find(p=>p.id===r.personnel_id)?.building_id;
+    if(isChef&&r.status==="pending_chef"&&d===profile?.department)return true;
+    if(isAdmin&&r.status==="pending_manager")return true;
+    if(isAdmin&&r.status==="pending_chef"&&!deptHasChef(d,bid))return true;
+    return false;},[isChef,isAdmin,profile,profiles,deptHasChef]);
+  const pendOTs=useMemo(()=>bOvertimes.filter(canApproveRec),[bOvertimes,canApproveRec]);
+  const pendLVs=useMemo(()=>bLeaves.filter(canApproveRec),[bLeaves,canApproveRec]);
   const totPend=pendOTs.length+pendLVs.length;
   const allPendOTs=useMemo(()=>bOvertimes.filter(o=>["pending_chef","pending_manager"].includes(o.status)),[bOvertimes]);
   const allPendLVs=useMemo(()=>bLeaves.filter(l=>["pending_chef","pending_manager"].includes(l.status)),[bLeaves]);
@@ -866,6 +1025,43 @@ function AppInner(){
   const votePeriod=getVotePeriodInfo();
   const activeFaultsAll=useMemo(()=>bFaults.filter(f=>f.status==="active"),[bFaults]);
   const myPendingVotes=useMemo(()=>{if(!profile)return[];return activeFaultsAll.filter(f=>!faultVotes.some(v=>v.fault_id===f.id&&v.personnel_id===profile.id&&vwMatch(v.vote_week,currentWeek)));},[activeFaultsAll,faultVotes,profile,currentWeek]);
+
+  // ═══ Bakim Takip turetilmis veriler ═══
+  const isJobMgr=!!profile?.job_manager;
+  const canJobAct=isAdmin||isChef||isJobMgr;
+  const deptLock=canSeeBothDepts?null:(profile?.department||"mekanik"); // sef kendi departmanina kilitli
+  const bMaintPlans=useMemo(()=>maintPlans.filter(p=>p.active!==false
+    &&(!p.building_id||p.building_id===selBuilding)
+    &&(!deptLock||(p.discipline||"mekanik")===deptLock)),[maintPlans,selBuilding,deptLock]);
+  const mtLogOf=useCallback((planId,period)=>maintLogs.find(l=>l.plan_id===planId&&l.building_id===selBuilding&&l.period===period)||null,[maintLogs,selBuilding]);
+  const mtStatusOf=useCallback((planId,period)=>mtLogOf(planId,period)?.status||"planned",[mtLogOf]);
+  // Bu ay vadesi gelen plan-ay ciftleri
+  const mtThisMonth=useMemo(()=>{const cp=curPer();
+    return bMaintPlans.filter(p=>(Array.isArray(p.months)?p.months:[]).includes(cp)).map(p=>({plan:p,period:cp}));},[bMaintPlans]);
+  // Gecikmis: gecmis ay + henuz kapanmamis (done/skipped disi)
+  const mtOverdue=useMemo(()=>{const cp=curPer();const out=[];
+    bMaintPlans.forEach(p=>{(Array.isArray(p.months)?p.months:[]).forEach(m=>{
+      if(m<cp){const st=mtStatusOf(p.id,m);if(st!=="done"&&st!=="skipped")out.push({plan:p,period:m});}
+    });});
+    return out.sort((a,b)=>a.period.localeCompare(b.period));},[bMaintPlans,mtStatusOf]);
+  const mtOpenThisMonth=useMemo(()=>mtThisMonth.filter(x=>{const st=mtStatusOf(x.plan.id,x.period);return st!=="done"&&st!=="skipped";}),[mtThisMonth,mtStatusOf]);
+  // Takvim penceresi: en erken plan ayindan itibaren 12 ay
+  const mtMonths=useMemo(()=>{const all=[];bMaintPlans.forEach(p=>(Array.isArray(p.months)?p.months:[]).forEach(m=>all.push(m)));
+    if(all.length===0)return[];all.sort();const cp=curPer();const last=all[all.length-1];
+    let m=all[0]<cp?all[0]:cp;const out=[];
+    while(out.length<36){out.push(m);if(out.length>=12&&m>=last)break;m=perAdd(m,1);}
+    return out;},[bMaintPlans]);
+  const canMtAct=useCallback((plan)=>isAdmin||(isChef&&(profile?.department||"mekanik")===(plan?.discipline||"mekanik")),[isAdmin,isChef,profile]);
+  // ═══ Gunduz/Gece is devri turetilmis veriler ═══
+  const pjToday=todayStr();
+  const pjNotDoneToday=useMemo(()=>bPJobs.filter(j=>j.status==="not_done"&&String(j.job_date||"")===pjToday),[bPJobs,pjToday]);
+  const pjOpen=useMemo(()=>bPJobs.filter(j=>j.status==="open"),[bPJobs]);
+  const pjDay=useMemo(()=>pjOpen.filter(j=>(j.shift||"day")==="day"),[pjOpen]);
+  const pjNight=useMemo(()=>pjOpen.filter(j=>(j.shift||"day")==="night"),[pjOpen]);
+  const pjMine=useMemo(()=>pjNight.filter(j=>j.assigned_to===profile?.id),[pjNight,profile]);
+  // Bugun gece nobetcisi secilenler (yoklamadan)
+  const nightCrew=useMemo(()=>{const ids=attendance.filter(a=>a.shift==="night").map(a=>a.personnel_id);
+    return bProfiles.filter(u=>u.active&&ids.includes(u.id)&&(!deptLock||(u.department||"mekanik")===deptLock));},[attendance,bProfiles,deptLock]);
 
   // Notification system
   const notifications=useMemo(()=>{
@@ -898,9 +1094,12 @@ function AppInner(){
     if(myPendingVotes.length>0)notifs.push({id:"vote",type:"warning",icon:"🗳",text:`${myPendingVotes.length} arıza için oy bekleniyor`,time:new Date().toISOString()});
     // Low stock (chef/admin)
     if((isChef||isAdmin)&&bMaterials.filter(m=>m.current_stock<=m.min_stock&&m.min_stock>0).length>0)notifs.push({id:"stock",type:"error",icon:"📦",text:`${bMaterials.filter(m=>m.current_stock<=m.min_stock&&m.min_stock>0).length} malzeme kritik seviyede`,time:new Date().toISOString()});
+    if((isChef||isAdmin)&&mtOverdue.length>0)notifs.push({id:"mtlate",type:"error",icon:"🛠",text:`${mtOverdue.length} bakım gecikmiş`,time:new Date().toISOString()});
+    if((isChef||isAdmin)&&mtOpenThisMonth.length>0)notifs.push({id:"mtnow",type:"warning",icon:"🛠",text:`${mtOpenThisMonth.length} bakımın vadesi bu ay`,time:new Date().toISOString()});
+    if(pjMine.length>0)notifs.push({id:"pjnight",type:"warning",icon:"🌙",text:`${pjMine.length} gece işi size atandı`,time:new Date().toISOString()});
     // Sort by time desc
     return notifs.sort((a,b)=>(b.time||"").localeCompare(a.time||""));
-  },[profile,leavesState,overtimes,pendOTs,pendLVs,myPendingVotes,bMaterials,isChef,isAdmin]);
+  },[profile,leavesState,overtimes,pendOTs,pendLVs,myPendingVotes,bMaterials,isChef,isAdmin,mtOverdue,mtOpenThisMonth,pjMine]);
 
   const unreadNotifs=useMemo(()=>{
     try{const lastSeen=localStorage.getItem("notif_seen")||"";return notifications.filter(n=>n.time>lastSeen).length;}catch(e){return notifications.length;}
@@ -922,7 +1121,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.24</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.26</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -958,7 +1157,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.24</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.26</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -1137,59 +1336,174 @@ function AppInner(){
     const activeFaults=bFaults.filter(f=>f.status==="active");
     const resolvedFaults=bFaults.filter(f=>f.status==="resolved");
     const canSeeResolved=isAdmin||isViewer||isChef||isAmir;
-    const list=(faultTab==="jobs"||faultTab==="asansor")?[]:(canSeeResolved?(faultTab==="active"?activeFaults:resolvedFaults):activeFaults);
+    const list=(faultTab==="jobs"||faultTab==="asansor"||faultTab==="bakim")?[]:(canSeeResolved?(faultTab==="active"?activeFaults:resolvedFaults):activeFaults);
     const openJobs=bPJobs.filter(j=>j.status==="open");
     const doneJobs=bPJobs.filter(j=>j.status==="done").slice(0,15);
+    const jobCard=(j)=>{
+      const ageMs=Date.now()-new Date(j.created_at).getTime();
+      const over=ageMs>86400000;
+      const leftH=Math.max(0,Math.round((86400000-ageMs)/3600000));
+      const cb=getU(j.created_by);
+      const asg=getU(j.assigned_to);
+      const rs=Array.isArray(j.reasons)?j.reasons:[];
+      const isNight=(j.shift||"day")==="night";
+      const mine=j.assigned_to===profile?.id;
+      const canClose=canJobAct||mine;
+      return(<div key={j.id} style={{...S.crd,cursor:"default",border:over?`2px solid ${C.red}`:`1px solid ${C.border}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"start",gap:8}}>
+          <div style={{flex:1}}>
+            <div style={{fontSize:14,fontWeight:700}}>{j.title}</div>
+            {j.description&&<div style={{fontSize:12,color:C.dim,marginTop:2}}>{j.description}</div>}
+            <div style={{fontSize:10,color:C.muted,marginTop:4}}>{cb?.full_name||"—"} • {new Date(j.created_at).toLocaleString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</div>
+          </div>
+          <div style={S.tag(over?C.redD:C.orangeD,over?C.red:C.orange)}>{over?"⏰ 24 SAAT AŞILDI":`⏳ ${leftH} saat kaldı`}</div>
+        </div>
+        {isNight&&<div style={{...S.tag(C.blueD,C.blue),marginTop:8}}>🌙 {asg?asg.full_name:"atanmadı"}</div>}
+        {j.carried_from&&<div style={{background:C.bg,borderRadius:8,padding:"6px 9px",marginTop:8,fontSize:11,color:C.orange,border:`1px solid ${C.orange}33`}}>↩ Geceden aktarıldı: {j.not_done_reason||"—"}</div>}
+        {rs.length>0&&<div style={{background:C.bg,borderRadius:8,padding:8,marginTop:8}}>
+          <div style={{fontSize:10,fontWeight:700,color:C.orange,marginBottom:4}}>📝 YAPILAMAMA SEBEPLERİ</div>
+          {rs.map((r,i)=><div key={i} style={{fontSize:11,color:C.dim,marginTop:2}}>• <b style={{color:C.text}}>{r.by}</b> ({new Date(r.at).toLocaleString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}): {r.text}</div>)}
+        </div>}
+        <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
+          {!isNight&&canJobAct&&<button style={{...S.btnS(C.blueD,C.blue),flex:"1 1 120px"}} disabled={submitting} onClick={()=>pjOpenNightPick(j)}>🌙 Geceye Devret</button>}
+          {canClose&&<button style={{...S.btnS(C.greenD,C.green),flex:"1 1 100px"}} disabled={submitting} onClick={()=>completePendingJob(j)}>✅ Yapıldı</button>}
+          {isNight&&canClose&&<button style={{...S.btnS(C.redD,C.red),flex:"1 1 110px"}} disabled={submitting} onClick={()=>pjNotDone(j)}>✗ Yapılamadı</button>}
+          {!isNight&&<button style={{...S.btnS(C.orangeD,C.orange),flex:"1 1 110px"}} onClick={()=>addPjReason(j)}>📝 Sebep</button>}
+        </div>
+      </div>);
+    };
     return(<div>
       <div style={S.sec}><span>🔧</span> Arızalı Envanter</div>
-      <div style={{display:"flex",gap:8,marginBottom:12}}>
-        <button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="active"?C.red:C.border}`,background:faultTab==="active"?C.redD:"transparent",color:faultTab==="active"?C.red:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("active")}>🔴 Aktif ({activeFaults.length})</button>
-        {canSeeResolved&&<button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="resolved"?C.green:C.border}`,background:faultTab==="resolved"?C.greenD:"transparent",color:faultTab==="resolved"?C.green:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("resolved")}>✅ Çözülen ({resolvedFaults.length})</button>}
-        {!isAmir&&<button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="jobs"?(pjOverdue.length>0?C.red:C.orange):C.border}`,background:faultTab==="jobs"?(pjOverdue.length>0?C.redD:C.orangeD):"transparent",color:faultTab==="jobs"?(pjOverdue.length>0?C.red:C.orange):C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("jobs")}>⏳ İşler ({openJobs.length}){pjOverdue.length>0?" ⏰":""}</button>}
-        <button style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${faultTab==="asansor"?(evOpen.length>0?C.red:C.blue):C.border}`,background:faultTab==="asansor"?(evOpen.length>0?C.redD:C.blueD):"transparent",color:faultTab==="asansor"?(evOpen.length>0?C.red:C.blue):C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("asansor")}>🛗{evOpen.length>0?` ${evOpen.length}`:""}</button>
+      <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:12}}>
+        <button style={{flex:"1 1 84px",minWidth:84,padding:"10px 6px",borderRadius:10,border:`2px solid ${faultTab==="active"?C.red:C.border}`,background:faultTab==="active"?C.redD:"transparent",color:faultTab==="active"?C.red:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("active")}>🔴 Aktif ({activeFaults.length})</button>
+        {canSeeResolved&&<button style={{flex:"1 1 84px",minWidth:84,padding:"10px 6px",borderRadius:10,border:`2px solid ${faultTab==="resolved"?C.green:C.border}`,background:faultTab==="resolved"?C.greenD:"transparent",color:faultTab==="resolved"?C.green:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("resolved")}>✅ Çözülen ({resolvedFaults.length})</button>}
+        {!isAmir&&<button style={{flex:"1 1 84px",minWidth:84,padding:"10px 6px",borderRadius:10,border:`2px solid ${faultTab==="jobs"?(pjOverdue.length>0?C.red:C.orange):C.border}`,background:faultTab==="jobs"?(pjOverdue.length>0?C.redD:C.orangeD):"transparent",color:faultTab==="jobs"?(pjOverdue.length>0?C.red:C.orange):C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("jobs")}>⏳ İşler ({openJobs.length}){pjOverdue.length>0?" ⏰":""}</button>}
+        {!isAmir&&<button style={{flex:"1 1 84px",minWidth:84,padding:"10px 6px",borderRadius:10,border:`2px solid ${faultTab==="bakim"?(mtOverdue.length>0?C.red:C.teal):C.border}`,background:faultTab==="bakim"?(mtOverdue.length>0?C.redD:C.tealD):"transparent",color:faultTab==="bakim"?(mtOverdue.length>0?C.red:C.teal):C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("bakim")}>🛠 Bakım{mtOverdue.length>0?` ${mtOverdue.length}`:(mtOpenThisMonth.length>0?` ${mtOpenThisMonth.length}`:"")}</button>}
+        <button style={{flex:"1 1 84px",minWidth:84,padding:"10px 6px",borderRadius:10,border:`2px solid ${faultTab==="asansor"?(evOpen.length>0?C.red:C.blue):C.border}`,background:faultTab==="asansor"?(evOpen.length>0?C.redD:C.blueD):"transparent",color:faultTab==="asansor"?(evOpen.length>0?C.red:C.blue):C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("asansor")}>🛗{evOpen.length>0?` ${evOpen.length}`:""}</button>
       </div>
       {faultTab==="jobs"&&(<div>
-        <div style={S.crd}>
+        {canJobAct&&<div style={S.crd}>
           <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>➕ Bekleyen İş Ekle</div>
-          <div style={{fontSize:11,color:C.dim,marginBottom:8}}>Bugün müdahale edilemeyen işleri buraya yaz — gece nöbetçisi veya yarınki mesai yapar. 24 saat içinde yapılmazsa kırmızıya düşer ve şef sorgular.</div>
+          <div style={{fontSize:11,color:C.dim,marginBottom:8}}>Bugün müdahale edilemeyen işleri buraya yaz — gece nöbetçisine devredebilir veya yarınki mesaiye bırakabilirsin. 24 saat içinde yapılmazsa kırmızıya düşer.</div>
           <input style={S.inp} placeholder="İş başlığı (örn: 3. kat klima su akıtıyor)" value={pjForm.title} onChange={e=>setPjForm({...pjForm,title:e.target.value})}/>
           <textarea style={{...S.inp,minHeight:56}} placeholder="Detay / konum / not (opsiyonel)" value={pjForm.desc} onChange={e=>setPjForm({...pjForm,desc:e.target.value})}/>
           <button style={S.btn(C.orange)} disabled={submitting} onClick={addPendingJob}>⏳ Ekle — 24 saat sayacı başlar</button>
+        </div>}
+        <div style={{display:"flex",gap:8,marginBottom:12}}>
+          {[["day","☀️ Gündüz",pjDay.length,C.orange],["night","🌙 Gece",pjNight.length,C.blue]].map(([k,lbl,n,cl])=>(
+            <button key={k} onClick={()=>setPjTab(k)} style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${pjTab===k?cl:C.border}`,background:pjTab===k?cl+"22":"transparent",color:pjTab===k?cl:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}}>{lbl} ({n})</button>))}
         </div>
-        {openJobs.length===0&&<div style={S.emp}>Bekleyen iş yok ✓</div>}
-        {openJobs.map(j=>{
-          const ageMs=Date.now()-new Date(j.created_at).getTime();
-          const over=ageMs>86400000;
-          const leftH=Math.max(0,Math.round((86400000-ageMs)/3600000));
-          const cb=getU(j.created_by);
-          const rs=Array.isArray(j.reasons)?j.reasons:[];
-          return(<div key={j.id} style={{...S.crd,border:over?`2px solid ${C.red}`:`1px solid ${C.border}`}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"start",gap:8}}>
-              <div style={{flex:1}}>
-                <div style={{fontSize:14,fontWeight:700}}>{j.title}</div>
-                {j.description&&<div style={{fontSize:12,color:C.dim,marginTop:2}}>{j.description}</div>}
-                <div style={{fontSize:10,color:C.muted,marginTop:4}}>{cb?.full_name||"—"} • {new Date(j.created_at).toLocaleString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</div>
-              </div>
-              <div style={S.tag(over?C.redD:C.orangeD,over?C.red:C.orange)}>{over?"⏰ 24 SAAT AŞILDI":`⏳ ${leftH} saat kaldı`}</div>
-            </div>
-            {rs.length>0&&<div style={{background:C.bg,borderRadius:8,padding:8,marginTop:8}}>
-              <div style={{fontSize:10,fontWeight:700,color:C.orange,marginBottom:4}}>📝 YAPILAMAMA SEBEPLERİ</div>
-              {rs.map((r,i)=><div key={i} style={{fontSize:11,color:C.dim,marginTop:2}}>• <b style={{color:C.text}}>{r.by}</b> ({new Date(r.at).toLocaleString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}): {r.text}</div>)}
-            </div>}
-            <div style={{display:"flex",gap:8,marginTop:10}}>
-              <button style={{...S.btnS(C.greenD,C.green),flex:1}} onClick={()=>completePendingJob(j)}>✅ Tamamlandı</button>
-              <button style={{...S.btnS(C.orangeD,C.orange),flex:1}} onClick={()=>addPjReason(j)}>📝 Yapılamadı — Sebep</button>
-            </div>
-          </div>);
-        })}
+        {pjTab==="day"&&(<div>
+          {pjDay.length===0&&<div style={S.emp}>Gündüz bekleyen iş yok ✓</div>}
+          {pjDay.map(jobCard)}
+        </div>)}
+        {pjTab==="night"&&(<div>
+          {nightCrew.length>0&&<div style={{fontSize:11,color:C.dim,marginBottom:10}}>🌙 Bu gece nöbetçi: <b style={{color:C.blue}}>{nightCrew.map(u=>u.full_name).join(", ")}</b></div>}
+          {nightCrew.length===0&&<div style={{fontSize:11,color:C.orange,marginBottom:10}}>⚠ Bugün gece nöbetçisi atanmamış — Özet {">"} Günlük Yoklama'dan ☀️ tuşuna basarak ata</div>}
+          {pjMine.length>0&&<>
+            <div style={{...S.sec,fontSize:13,color:C.blue,marginBottom:8}}><span>🌙</span> Gece İşlerim ({pjMine.length})</div>
+            {pjMine.map(jobCard)}
+          </>}
+          {pjNight.filter(j=>j.assigned_to!==profile?.id).length>0&&<>
+            <div style={{...S.sec,fontSize:13,marginTop:14,marginBottom:8}}><span>🌙</span> Diğer Gece İşleri</div>
+            {pjNight.filter(j=>j.assigned_to!==profile?.id).map(jobCard)}
+          </>}
+          {pjNight.length===0&&pjNotDoneToday.length===0&&<div style={S.emp}>Geceye devredilen iş yok</div>}
+          {pjNotDoneToday.length>0&&<>
+            <div style={{...S.sec,fontSize:13,marginTop:14,marginBottom:8,color:C.red}}><span>✗</span> Bu Gece Yapılamayanlar ({pjNotDoneToday.length})</div>
+            <div style={{fontSize:11,color:C.dim,marginBottom:8}}>Yarın sabah otomatik olarak gündüz listesine aktarılacak.</div>
+            {pjNotDoneToday.map(j=>(<div key={j.id} style={{...S.crd,cursor:"default",opacity:0.75,borderLeft:`3px solid ${C.red}`}}>
+              <div style={{fontSize:13,fontWeight:600}}>{j.title}</div>
+              <div style={{fontSize:11,color:C.red,marginTop:4}}>✗ {j.not_done_reason||"—"}</div>
+            </div>))}
+          </>}
+        </div>)}
         {doneJobs.length>0&&<div style={{marginTop:8}}>
           <button style={{...S.btnS(C.bg,C.dim),width:"100%"}} onClick={()=>setPjShowDone(!pjShowDone)}>{pjShowDone?"▲ Tamamlananları gizle":`▼ Tamamlananlar (${doneJobs.length})`}</button>
-          {pjShowDone&&doneJobs.map(j=>{const cp=getU(j.completed_by);return(<div key={j.id} style={{...S.crd,opacity:.75,marginTop:8}}>
+          {pjShowDone&&doneJobs.map(j=>{const cp=getU(j.completed_by);return(<div key={j.id} style={{...S.crd,opacity:.75,marginTop:8,cursor:"default"}}>
             <div style={{fontSize:13,fontWeight:600,textDecoration:"line-through",color:C.dim}}>{j.title}</div>
             <div style={{fontSize:10,color:C.green,marginTop:4}}>✅ {cp?.full_name||"—"} • {j.completed_at?new Date(j.completed_at).toLocaleString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):""}{j.completed_note?` — ${j.completed_note}`:""}</div>
           </div>);})}
         </div>}
       </div>)}
+      {faultTab==="bakim"&&(()=>{
+        const cp=curPer();
+        const rows=mtView==="month"?mtThisMonth:mtView==="overdue"?mtOverdue:[];
+        const card=(x)=>{
+          const p=x.plan,per=x.period;
+          const lg=mtLogOf(p.id,per);
+          const st=lg?.status||"planned";
+          const meta=MT_ST[st]||MT_ST.planned;
+          const late=per<cp&&st!=="done"&&st!=="skipped";
+          const act=canMtAct(p);
+          const db=getU(lg?.done_by);
+          return(<div key={p.id+"-"+per} style={{...S.crd,cursor:"default",borderLeft:`4px solid ${late?C.red:meta[1]}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"start",gap:8}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:700,lineHeight:1.3}}>{p.system_name}</div>
+                <div style={{fontSize:11,color:C.dim,marginTop:3}}>{fPer(per)}{p.device_count?` • ${p.device_count} cihaz`:""}</div>
+              </div>
+              <div style={S.tag(meta[1]+"22",meta[1])}>{meta[0]}</div>
+            </div>
+            <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
+              <div style={S.tag(p.provider==="own"?C.accentD:C.purpleD,p.provider==="own"?C.accent:C.purple)}>{p.provider==="own"?"👷 Kendi Ekip":"🏢 Dış Firma"}</div>
+              {late&&<div style={S.tag(C.redD,C.red)}>⏰ Gecikmiş</div>}
+              {p.notes&&<div style={S.tag(C.bg,C.muted)}>📝 {p.notes}</div>}
+            </div>
+            {st==="done"&&<div style={{fontSize:11,color:C.green,marginTop:8}}>✓ {fD(lg.done_date)}{db?` • ${db.full_name}`:""}{lg.company?` • ${lg.company}`:""}{lg.notes?` — ${lg.notes}`:""}</div>}
+            {st==="skipped"&&<div style={{fontSize:11,color:C.muted,marginTop:8}}>⏭ Atlandı: {lg.notes||"—"}</div>}
+            {act&&<div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
+              {st==="planned"&&<button style={{...S.btnS(C.orangeD,C.orange),flex:"1 1 90px"}} disabled={submitting} onClick={()=>mtStart(p,per)}>▶ Başlat</button>}
+              {st!=="done"&&<button style={{...S.btnS(C.greenD,C.green),flex:"1 1 110px"}} disabled={submitting} onClick={()=>mtOpenDone(p,per)}>✓ Tamamlandı</button>}
+              {st==="done"&&<button style={{...S.btnS(C.bg,C.dim),flex:"1 1 90px"}} onClick={()=>mtOpenDone(p,per)}>✏️ Düzelt</button>}
+              {st!=="done"&&st!=="skipped"&&<button style={{...S.btnS(C.bg,C.muted),flex:"1 1 80px"}} disabled={submitting} onClick={()=>mtSkip(p,per)}>⏭ Atla</button>}
+            </div>}
+          </div>);
+        };
+        return(<div>
+          <div style={{display:"flex",gap:6,marginBottom:12}}>
+            {[["month","Bu Ay",mtOpenThisMonth.length],["overdue","Gecikmiş",mtOverdue.length],["calendar","Takvim",0]].map(([k,l,n])=>(
+              <button key={k} onClick={()=>setMtView(k)} style={{flex:1,padding:"9px 4px",borderRadius:9,border:"1px solid "+(mtView===k?C.accent:C.border),background:mtView===k?C.accentD:"transparent",color:mtView===k?C.accent:C.muted,fontWeight:700,fontSize:11,cursor:"pointer"}}>{l}{n>0?` (${n})`:""}</button>))}
+          </div>
+          {bMaintPlans.length===0&&<div style={S.emp}>Bu bina/departman için bakım planı tanımlı değil</div>}
+          {mtView==="calendar"?(<div>
+            <div style={{fontSize:11,color:C.dim,marginBottom:8}}>Dolu kutu = o ay planlı bakım var. Yatay kaydır.</div>
+            <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch",paddingBottom:8}}>
+              <div style={{minWidth:150+mtMonths.length*40}}>
+                <div style={{display:"flex",alignItems:"flex-end",paddingBottom:4,borderBottom:`1px solid ${C.border}`}}>
+                  <div style={{width:150,minWidth:150,fontSize:9,color:C.muted,fontWeight:700}}>SİSTEM</div>
+                  {mtMonths.map(m=><div key={m} style={{width:40,minWidth:40,textAlign:"center",fontSize:9,fontWeight:700,color:m===cp?C.accent:C.muted,whiteSpace:"pre-line",lineHeight:1.2}}>{fPerShort(m)}</div>)}
+                </div>
+                {bMaintPlans.map(p=>(<div key={p.id} style={{display:"flex",alignItems:"center",borderBottom:`1px solid ${C.border}`,minHeight:36}}>
+                  <div style={{width:150,minWidth:150,fontSize:10,color:C.text,paddingRight:6,lineHeight:1.25}}>
+                    <span style={{color:p.provider==="own"?C.accent:C.purple}}>{p.provider==="own"?"👷":"🏢"} </span>
+                    {String(p.system_name||"").length>44?String(p.system_name).slice(0,42)+"…":p.system_name}
+                  </div>
+                  {mtMonths.map(m=>{
+                    const planned=(Array.isArray(p.months)?p.months:[]).includes(m);
+                    if(!planned)return<div key={m} style={{width:40,minWidth:40}}/>;
+                    const st=mtStatusOf(p.id,m);
+                    const late=m<cp&&st!=="done"&&st!=="skipped";
+                    const meta=MT_ST[st]||MT_ST.planned;
+                    const cl=late?C.red:meta[1];
+                    return(<div key={m} style={{width:40,minWidth:40,display:"flex",justifyContent:"center"}}>
+                      <div onClick={()=>setMtView(m<cp?"overdue":"month")} title={fPer(m)+" — "+meta[0]} style={{width:26,height:22,borderRadius:5,background:cl,opacity:(st==="planned"&&!late)?0.4:1,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#fff",cursor:"pointer"}}>{st==="done"?"✓":st==="skipped"?"⏭":late?"!":""}</div>
+                    </div>);})}
+                </div>))}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:10,fontSize:10,color:C.dim}}>
+              <span><b style={{color:C.green}}>✓</b> Tamamlandı</span>
+              <span><b style={{color:C.red}}>!</b> Gecikmiş</span>
+              <span><b style={{color:C.orange}}>■</b> Devam ediyor</span>
+              <span><b style={{color:C.muted}}>■</b> Planlı</span>
+            </div>
+          </div>):(<div>
+            {bMaintPlans.length>0&&rows.length===0&&<div style={S.emp}>{mtView==="month"?"Bu ay vadesi gelen bakım yok ✓":"Gecikmiş bakım yok ✓"}</div>}
+            {rows.map(card)}
+          </div>)}
+        </div>);
+      })()}
       {faultTab==="asansor"&&(()=>{
         const faultByEv=id=>evOpen.find(f=>f.elevator_id===id);
         const ASANSOR_YETKILI=["5372cbf9-823a-47fd-8bf5-a78565c31ce3","47f4e76b-3a89-4805-816f-b2e1f6e260a1","042a97db-b8eb-4b65-ae92-df00301d78d0"]; // Eyub + Arif + Yilmaz
@@ -1919,7 +2233,24 @@ function AppInner(){
         </div>
       </div>}
       {evOpen.length>0&&<div onClick={()=>{setPage("faults");setFaultTab("asansor");}} style={{...S.crd,border:`2px solid ${C.red}`,marginBottom:12,cursor:"pointer"}}><div style={{fontSize:13,fontWeight:700,color:C.red}}>🛗 {evOpen.length} asansör arızalı ({elevators.length-evOpen.length}/{elevators.length} çalışıyor)</div><div style={{fontSize:11,color:C.dim,marginTop:4}}>{evOpen.map(f=>elevators.find(e=>e.id===f.elevator_id)?.code).filter(Boolean).join(", ")} — dokun → durum ve planları gör</div></div>}
-      {(isChef||isAdmin)&&pjOverdue.length>0&&<div onClick={()=>{setPage("faults");setFaultTab("jobs");}} style={{...S.crd,border:`2px solid ${C.red}`,marginBottom:12,cursor:"pointer"}}><div style={{fontSize:13,fontWeight:700,color:C.red}}>⏰ {pjOverdue.length} bekleyen iş 24 saati aştı!</div><div style={{fontSize:11,color:C.dim,marginTop:4}}>Dokun → işleri ve yapılamama sebeplerini gör</div></div>}
+      {(isChef||isAdmin||isJobMgr)&&(pjDay.length>0||pjNight.length>0)&&<div onClick={()=>{setPage("faults");setFaultTab("jobs");setPjTab(pjDay.length>0?"day":"night");}} style={{...S.crd,border:`2px solid ${pjOverdue.length>0?C.red:C.orange}`,marginBottom:12,cursor:"pointer"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:pjOverdue.length>0?C.red:C.orange}}>{pjOverdue.length>0?`⏰ ${pjOverdue.length} bekleyen iş 24 saati aştı!`:`⏳ ${pjDay.length+pjNight.length} bekleyen iş`}</div>
+            <div style={{fontSize:11,color:C.dim,marginTop:4}}>☀️ {pjDay.length} gündüz · 🌙 {pjNight.length} gece — dokun → işleri gör</div>
+          </div>
+          <div style={{fontSize:24}}>⏳</div>
+        </div>
+      </div>}
+      {(isChef||isAdmin)&&(mtOverdue.length>0||mtOpenThisMonth.length>0)&&<div onClick={()=>{setPage("faults");setFaultTab("bakim");setMtView(mtOverdue.length>0?"overdue":"month");}} style={{...S.crd,border:`2px solid ${mtOverdue.length>0?C.red:C.teal}`,marginBottom:12,cursor:"pointer"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:mtOverdue.length>0?C.red:C.teal}}>🛠 {mtOverdue.length>0?`${mtOverdue.length} bakım gecikmiş`:`${mtOpenThisMonth.length} bakımın vadesi bu ay`}</div>
+            <div style={{fontSize:11,color:C.dim,marginTop:4}}>{mtOverdue.length>0&&mtOpenThisMonth.length>0?`Ayrıca ${mtOpenThisMonth.length} bakım bu ay — `:""}Dokun → Bakım sekmesi</div>
+          </div>
+          <div style={{fontSize:24}}>🛠</div>
+        </div>
+      </div>}
       {canSeeBothDepts&&<div style={{display:"flex",gap:8,marginBottom:10}}>{[["mekanik","⚙️ Mekanik"],["elektrik","⚡ Elektrik"]].map(([k,lbl])=>(<button key={k} onClick={()=>setSumDept(k)} style={{flex:1,padding:"11px",borderRadius:10,border:"1px solid "+(sumDept===k?C.accent:C.border),background:sumDept===k?C.accent:"transparent",color:sumDept===k?"#fff":C.text,fontWeight:700,fontSize:13,cursor:"pointer"}}>{lbl}</button>))}</div>}
       {(isChef||isAdmin||isViewer)&&(()=>{
         const x=new Date();const td=x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");
@@ -2042,6 +2373,22 @@ function AppInner(){
       }}>📊 Aylık PDF Rapor</button>
       <div style={{height:16}}/>
       <div style={{height:16}}/>
+      <div style={S.sec}><span>🛠</span> Bakım Planları ({maintPlans.length})</div>
+      <button style={S.btn(C.tealD,C.teal)} onClick={()=>setModNewPlan(true)}>+ Yeni Bakım Planı</button>
+      <div style={{height:8}}/>
+      {maintPlans.length===0&&<div style={S.emp}>Plan yok</div>}
+      {maintPlans.map(p=>(<div key={p.id} style={{...S.crd,opacity:p.active===false?0.5:1}} onClick={()=>setModEditPlan({...p})}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"start",gap:8}}>
+          <div style={{flex:1}}>
+            <div style={{fontSize:12,fontWeight:600,lineHeight:1.3}}>{p.system_name}</div>
+            <div style={{fontSize:10,color:C.dim,marginTop:3}}>{(p.discipline||"mekanik")==="mekanik"?"⚙️":"⚡"} {p.provider==="own"?"👷 Kendi Ekip":"🏢 Dış Firma"} • yılda {p.yearly_count||(Array.isArray(p.months)?p.months.length:0)} • {p.device_count?`${p.device_count} cihaz`:"⚠ cihaz adedi girilmedi"}</div>
+          </div>
+          {p.active===false&&<div style={S.tag(C.bg,C.muted)}>Pasif</div>}
+        </div>
+        <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:6}}>{(Array.isArray(p.months)?p.months:[]).map(m=><span key={m} style={S.tag(C.accentD,C.accent)}>{fPer(m)}</span>)}</div>
+        {p.notes&&<div style={{fontSize:10,color:C.muted,marginTop:6}}>📝 {p.notes}</div>}
+      </div>))}
+      <div style={{height:20}}/>
       <div style={S.sec}><span>👥</span> Ekip Grubu</div><div style={{display:"flex",gap:8,marginBottom:14}}>{[["mekanik","⚙️ Mekanik"],["elektrik","⚡ Elektrik"]].map(([k,lbl])=>(<button key={k} onClick={()=>setDeptTab(k)} style={{flex:1,padding:"11px",borderRadius:10,border:"1px solid "+(deptTab===k?C.accent:C.border),background:deptTab===k?C.accent:"transparent",color:deptTab===k?"#fff":C.text,fontWeight:700,fontSize:13,cursor:"pointer"}}>{lbl}</button>))}</div><div style={S.sec}><span>🔄</span> Vardiya Durumu</div>
       <div style={{display:"flex",gap:8,marginBottom:12}}>
         <div style={{flex:1,...S.lawBox,borderColor:C.accent+"44",textAlign:"center"}}>
@@ -2297,7 +2644,7 @@ function AppInner(){
         {editOT.start_time&&editOT.end_time&&(()=>{const h=calcOT(editOT.start_time,editOT.end_time,editOT.ot_type);return h>0?<div style={{...S.lawBox,marginTop:8,marginBottom:0}}><div style={{display:"flex",justifyContent:"space-between"}}><div><div style={{fontSize:10,color:C.dim}}>Yeni Mesai</div><div style={{fontSize:20,fontWeight:800,color:C.accent}}>{h}s</div></div><div><div style={{fontSize:10,color:C.dim}}>Yeni İzin</div><div style={{fontSize:20,fontWeight:800,color:C.purple}}>{calcLH(h)}s</div></div></div>{(h!==o.hours)&&<div style={{fontSize:11,color:C.orange,marginTop:6}}>Önceki: {o.hours}s mesai → {o.leave_hours}s izin</div>}</div>:null;})()}
         <div style={{display:"flex",gap:8,marginTop:10}}><button style={{...S.btn(C.accent),flex:1}} onClick={doEditOT} disabled={submitting}>{submitting?"Kaydediliyor...":"💾 Kaydet"}</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setEditOT(null)}>İptal</button></div>
       </div>:isAdmin&&<button style={{...S.btn(C.accentD,C.accent),marginTop:8}} onClick={()=>setEditOT({id:o.id,start_time:o.start_time?.slice(0,5)||"17:00",end_time:o.end_time?.slice(0,5)||"18:00",ot_type:o.overtime_type||"evening"})}>✏️ Saatleri Düzelt</button>}
-      {canApprove&&((isChef&&o.status==="pending_chef"&&deptOf(o.personnel_id)===profile?.department)||(isAdmin&&o.status==="pending_manager"))&&<><div style={S.dv}/><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.green),flex:1}} onClick={()=>{doApproveOT(o.id,isChef?"chef":"manager");setSelOT(null);}}>✓ Onayla</button><button style={{...S.btn(C.redD,C.red),flex:1}} onClick={()=>{doRejectOT(o.id);setSelOT(null);}}>✗ Reddet</button></div></>}
+      {canApprove&&canApproveRec(o)&&<><div style={S.dv}/><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.green),flex:1}} onClick={()=>{doApproveOT(o.id,isChef?"chef":"manager");setSelOT(null);}}>✓ Onayla</button><button style={{...S.btn(C.redD,C.red),flex:1}} onClick={()=>{doRejectOT(o.id);setSelOT(null);}}>✗ Reddet</button></div></>}
       {isAdmin&&<><div style={S.dv}/>{deleteConfirm===o.id?<div style={{background:C.redD,borderRadius:10,padding:14}}><div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:8,textAlign:"center"}}>⚠ Bu mesaiyi silmek istediğinize emin misiniz?</div><div style={{fontSize:11,color:C.dim,textAlign:"center",marginBottom:12}}>Geri alınamaz. Izin hakki da silinir.</div><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.red),flex:1}} onClick={()=>doDeleteOT(o.id)} disabled={submitting}>{submitting?"Siliniyor...":"🗑 Evet, Sil"}</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setDeleteConfirm(null)}>İptal</button></div></div>:<button style={S.btn(C.redD,C.red)} onClick={()=>setDeleteConfirm(o.id)}>🗑 Bu Mesaiyi Sil</button>}</>}
       <button style={S.btn(C.border,C.text)} onClick={()=>{setSelOT(null);setDeleteConfirm(null);setEditOT(null);}}>Kapat</button>
     </div></div>);
@@ -2323,7 +2670,7 @@ function AppInner(){
       {l.reason&&<div style={{marginTop:12,background:C.bg,borderRadius:8,padding:10,border:`1px solid ${C.border}`}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4}}>📝 Sebep</div><div style={{fontSize:13,color:l.reason.includes("borc")?C.red:C.text}}>{l.reason}</div></div>}
       
       {prevDates.length>0&&<div style={{fontSize:12,color:C.orange,marginTop:12}}>🔄 Önceki: {prevDates.map(d=>fD(d)).join(", ")}</div>}
-      {canApprove&&((isChef&&l.status==="pending_chef"&&deptOf(l.personnel_id)===profile?.department)||(isAdmin&&l.status==="pending_manager"))&&<><div style={S.dv}/><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.green),flex:1}} onClick={()=>{doApproveLV(l.id,isChef?"chef":"manager");setSelLV(null);}}>✓ Onayla</button><button style={{...S.btn(C.redD,C.red),flex:1}} onClick={()=>{doRejectLV(l.id);setSelLV(null);}}>✗ Reddet</button></div></>}
+      {canApprove&&canApproveRec(l)&&<><div style={S.dv}/><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.green),flex:1}} onClick={()=>{doApproveLV(l.id,isChef?"chef":"manager");setSelLV(null);}}>✓ Onayla</button><button style={{...S.btn(C.redD,C.red),flex:1}} onClick={()=>{doRejectLV(l.id);setSelLV(null);}}>✗ Reddet</button></div></>}
       {isAdmin&&<><div style={S.dv}/>{deleteConfirm===l.id?<div style={{background:C.redD,borderRadius:10,padding:14}}><div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:8,textAlign:"center"}}>⚠ Bu izin talebini silmek istediğinize emin misiniz?</div><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.red),flex:1}} onClick={()=>doDeleteLV(l.id)} disabled={submitting}>{submitting?"Siliniyor...":"🗑 Evet, Sil"}</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setDeleteConfirm(null)}>İptal</button></div></div>:<button style={S.btn(C.redD,C.red)} onClick={()=>setDeleteConfirm(l.id)}>🗑 Bu İzni Sil</button>}</>}
       <button style={S.btn(C.border,C.text)} onClick={()=>{setSelLV(null);setDeleteConfirm(null);}}>Kapat</button>
     </div></div>);
@@ -2361,7 +2708,89 @@ function AppInner(){
 
   const renderAddUser=()=>{if(!modAddUser)return null;return(<div style={S.mod} onClick={()=>setModAddUser(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>+ Personel</div><div style={S.lbl}>Ad Soyad</div><input style={S.inp} value={nUser.name} onChange={e=>setNUser(p=>({...p,name:e.target.value}))}/><div style={S.lbl}>E-posta</div><input style={S.inp} type="email" inputMode="email" autoCapitalize="none" value={nUser.email} onChange={e=>setNUser(p=>({...p,email:e.target.value}))}/><div style={S.lbl}>Sifre</div><input style={S.inp} type="text" value={nUser.password} onChange={e=>setNUser(p=>({...p,password:e.target.value}))}/><div style={S.lbl}>Görev</div><input style={S.inp} value={nUser.role} onChange={e=>setNUser(p=>({...p,role:e.target.value}))}/><div style={S.lbl}>Bina</div><select style={S.sel} value={nUser.buildingId||selBuilding||""} onChange={e=>setNUser(p=>({...p,buildingId:e.target.value}))}>{buildings.map(b=><option key={b.id} value={b.id}>{b.short_name||b.name}</option>)}</select><div style={S.lbl}>Yetki</div><select style={S.sel} value={nUser.userRole} onChange={e=>setNUser(p=>({...p,userRole:e.target.value}))}><option value="personnel">Personel</option><option value="chef">Teknik Şef (Onay Yetkili)</option><option value="viewer">İzleyici (Tam Görüntüleme)</option></select><div style={S.lbl}>Departman</div><select style={S.sel} value={nUser.department} onChange={e=>setNUser(p=>({...p,department:e.target.value}))}><option value="mekanik">⚙️ Mekanik</option><option value="elektrik">⚡ Elektrik</option></select><button style={S.btn(C.accent)} onClick={doAddUser} disabled={submitting}>{submitting?"...":"Ekle"}</button><button style={S.btn(C.border,C.text)} onClick={()=>setModAddUser(false)}>İptal</button></div></div>);};
 
-  const renderEditUser=()=>{if(!modEditUser)return null;const u=modEditUser;return(<div style={S.mod} onClick={()=>{setModEditUser(null);setDeleteConfirm(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>Düzenle: {u.full_name}</div><div style={S.lbl}>Görev</div><input style={S.inp} value={u.role||""} onChange={e=>setModEditUser({...u,role:e.target.value})}/><div style={S.lbl}>Bina</div><select style={S.sel} value={u.building_id||""} onChange={e=>setModEditUser({...u,building_id:e.target.value})}>{buildings.map(b=><option key={b.id} value={b.id}>{b.short_name||b.name}</option>)}</select><div style={S.lbl}>Yetki</div><select style={S.sel} value={u.user_role||"personnel"} onChange={e=>setModEditUser({...u,user_role:e.target.value})}><option value="personnel">Personel</option><option value="chef">Teknik Şef (Onay Yetkili)</option><option value="viewer">İzleyici (Tam Görüntüleme)</option></select><div style={S.lbl}>Departman</div><select style={S.sel} value={u.department||"mekanik"} onChange={e=>setModEditUser({...u,department:e.target.value})}><option value="mekanik">⚙️ Mekanik</option><option value="elektrik">⚡ Elektrik</option></select><div style={S.lbl}>🌴 Yıllık İzin Hakkı (gün)</div><input style={S.inp} type="number" min="0" max="30" value={u.annual_leave_days||14} onChange={e=>setModEditUser({...u,annual_leave_days:Number(e.target.value)||0})}/><div style={{fontSize:10,color:C.dim,marginTop:-8,marginBottom:12}}>Kullanılan: {annualUsed(u.id)}g / Kalan: {annualRemaining(u.id)}g</div><button style={S.btn(C.accent)} onClick={async()=>{try{await supabase.from('profiles').update({role:u.role,user_role:u.user_role,building_id:u.building_id,annual_leave_days:u.annual_leave_days||14,department:u.department||"mekanik"}).eq('id',u.id);await fetchProfiles();setModEditUser(null);setToast("Kaydedildi");}catch(e){setToast("Hata: "+e?.message);}}}>Kaydet</button><div style={S.dv}/><button style={S.btn(C.orangeD,C.orange)} onClick={()=>doDeactivateU(u.id)}>🚫 Pasif Yap</button>{deleteConfirm===u.id?<div style={{background:C.redD,borderRadius:10,padding:14,marginTop:8}}><div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:8,textAlign:"center"}}>⚠ {u.full_name} silinecek. Mesai ve izin kayıtları arşivde kalır.</div><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.red),flex:1}} onClick={()=>doDeleteUser(u.id)}>🗑 Evet, Sil</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setDeleteConfirm(null)}>İptal</button></div></div>:<button style={S.btn(C.redD,C.red)} onClick={()=>setDeleteConfirm(u.id)}>🗑 Personeli Sil</button>}<button style={S.btn(C.border,C.text)} onClick={()=>{setModEditUser(null);setDeleteConfirm(null);}}>Kapat</button></div></div>);};
+  const renderEditUser=()=>{if(!modEditUser)return null;const u=modEditUser;return(<div style={S.mod} onClick={()=>{setModEditUser(null);setDeleteConfirm(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>Düzenle: {u.full_name}</div><div style={S.lbl}>Görev</div><input style={S.inp} value={u.role||""} onChange={e=>setModEditUser({...u,role:e.target.value})}/><div style={S.lbl}>Bina</div><select style={S.sel} value={u.building_id||""} onChange={e=>setModEditUser({...u,building_id:e.target.value})}>{buildings.map(b=><option key={b.id} value={b.id}>{b.short_name||b.name}</option>)}</select><div style={S.lbl}>Yetki</div><select style={S.sel} value={u.user_role||"personnel"} onChange={e=>setModEditUser({...u,user_role:e.target.value})}><option value="personnel">Personel</option><option value="chef">Teknik Şef (Onay Yetkili)</option><option value="viewer">İzleyici (Tam Görüntüleme)</option></select><div style={S.lbl}>Departman</div><select style={S.sel} value={u.department||"mekanik"} onChange={e=>setModEditUser({...u,department:e.target.value})}><option value="mekanik">⚙️ Mekanik</option><option value="elektrik">⚡ Elektrik</option></select><div style={S.lbl}>İş Yöneticisi (bekleyen iş oluşturma / geceye devretme)</div><label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.text,marginBottom:12,cursor:"pointer",background:C.bg,borderRadius:10,padding:"10px 12px",border:`1px solid ${C.border}`}}><input type="checkbox" checked={!!u.job_manager} onChange={e=>setModEditUser({...u,job_manager:e.target.checked})}/><span>📋 Bekleyen iş yönetebilir</span></label><div style={S.lbl}>🌴 Yıllık İzin Hakkı (gün)</div><input style={S.inp} type="number" min="0" max="30" value={u.annual_leave_days||14} onChange={e=>setModEditUser({...u,annual_leave_days:Number(e.target.value)||0})}/><div style={{fontSize:10,color:C.dim,marginTop:-8,marginBottom:12}}>Kullanılan: {annualUsed(u.id)}g / Kalan: {annualRemaining(u.id)}g</div><button style={S.btn(C.accent)} onClick={async()=>{try{await supabase.from('profiles').update({role:u.role,user_role:u.user_role,building_id:u.building_id,annual_leave_days:u.annual_leave_days||14,department:u.department||"mekanik",job_manager:!!u.job_manager}).eq('id',u.id);await fetchProfiles();setModEditUser(null);setToast("Kaydedildi");}catch(e){setToast("Hata: "+e?.message);}}}>Kaydet</button><div style={S.dv}/><button style={S.btn(C.orangeD,C.orange)} onClick={()=>doDeactivateU(u.id)}>🚫 Pasif Yap</button>{deleteConfirm===u.id?<div style={{background:C.redD,borderRadius:10,padding:14,marginTop:8}}><div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:8,textAlign:"center"}}>⚠ {u.full_name} silinecek. Mesai ve izin kayıtları arşivde kalır.</div><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.red),flex:1}} onClick={()=>doDeleteUser(u.id)}>🗑 Evet, Sil</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setDeleteConfirm(null)}>İptal</button></div></div>:<button style={S.btn(C.redD,C.red)} onClick={()=>setDeleteConfirm(u.id)}>🗑 Personeli Sil</button>}<button style={S.btn(C.border,C.text)} onClick={()=>{setModEditUser(null);setDeleteConfirm(null);}}>Kapat</button></div></div>);};
+
+  const renderMtDone=()=>{
+    if(!mtAct)return null;
+    const p=mtAct.plan;
+    const crew=bProfiles.filter(u=>u.active);
+    return(<div style={S.mod} onClick={()=>setMtAct(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
+      <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>✓ Bakım Tamamlandı</div>
+      <div style={{fontSize:12,color:C.dim,marginBottom:14}}>{p.system_name} — {fPer(mtAct.period)}</div>
+      <div style={S.lbl}>Yapıldığı Tarih *</div>
+      <div style={S.fInp} onClick={()=>setShowMtDP(true)}><span>{mtForm.done_date?fD(mtForm.done_date):"Tarih seç"}</span><span>📅</span></div>
+      {p.provider==="own"?<><div style={S.lbl}>Yapan Kişi *</div>
+        <select style={S.sel} value={mtForm.done_by||""} onChange={e=>setMtForm({...mtForm,done_by:e.target.value})}>
+          <option value="">Seçin...</option>
+          {crew.map(u=><option key={u.id} value={u.id}>{u.full_name}</option>)}
+        </select></>:<><div style={S.lbl}>Firma Adı *</div>
+        <input style={S.inp} value={mtForm.company} onChange={e=>setMtForm({...mtForm,company:e.target.value})} placeholder="Bakımı yapan firma"/></>}
+      <div style={S.lbl}>Not (opsiyonel)</div>
+      <textarea style={{...S.inp,minHeight:60}} value={mtForm.notes} onChange={e=>setMtForm({...mtForm,notes:e.target.value})} placeholder="Yapılan işlem, değişen parça, tespit..."/>
+      <button style={S.btn(C.green)} disabled={submitting} onClick={mtSubmitDone}>{submitting?"...":"✓ Kaydet"}</button>
+      <button style={S.btn(C.border,C.text)} onClick={()=>setMtAct(null)}>İptal</button>
+    </div></div>);
+  };
+
+  const renderPlanEdit=()=>{
+    if(!modEditPlan)return null;
+    const p=modEditPlan;
+    return(<div style={S.mod} onClick={()=>setModEditPlan(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
+      <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>🛠 Plan Düzenle</div>
+      <div style={{fontSize:12,color:C.dim,marginBottom:14}}>{p.system_name}</div>
+      <div style={S.lbl}>Cihaz Adedi (Kasımpaşa gerçek sayı)</div>
+      <input style={S.inp} type="number" inputMode="numeric" min="0" value={p.device_count===null||p.device_count===undefined?"":p.device_count} onChange={e=>setModEditPlan({...p,device_count:e.target.value})} placeholder="örn: 12"/>
+      <div style={S.lbl}>Not</div>
+      <textarea style={{...S.inp,minHeight:60}} value={p.notes||""} onChange={e=>setModEditPlan({...p,notes:e.target.value})} placeholder="Sözleşme no, firma, özel talimat..."/>
+      <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.text,marginBottom:12,cursor:"pointer",background:C.bg,borderRadius:10,padding:"10px 12px",border:`1px solid ${C.border}`}}>
+        <input type="checkbox" checked={p.active!==false} onChange={e=>setModEditPlan({...p,active:e.target.checked})}/>
+        <span>Plan aktif</span>
+      </label>
+      <div style={{fontSize:11,color:C.dim,marginBottom:10}}>Planlı aylar: {(Array.isArray(p.months)?p.months:[]).map(fPer).join(" · ")||"—"}</div>
+      <button style={S.btn(C.accent)} disabled={submitting} onClick={savePlan}>{submitting?"...":"Kaydet"}</button>
+      <button style={S.btn(C.border,C.text)} onClick={()=>setModEditPlan(null)}>Kapat</button>
+    </div></div>);
+  };
+
+  const renderPlanNew=()=>{
+    if(!modNewPlan)return null;
+    const opts=[];{const base=curPer();for(let i=0;i<18;i++)opts.push(perAdd(base,i));}
+    const tog=(m)=>setNPlan(s=>({...s,months:s.months.includes(m)?s.months.filter(x=>x!==m):s.months.concat([m])}));
+    return(<div style={S.mod} onClick={()=>setModNewPlan(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
+      <div style={{fontSize:17,fontWeight:700,marginBottom:16}}>+ Yeni Bakım Planı</div>
+      <div style={S.lbl}>Sistem Adı *</div>
+      <input style={S.inp} value={nPlan.system_name} onChange={e=>setNPlan({...nPlan,system_name:e.target.value})} placeholder="örn: JENERATÖR BAKIMI"/>
+      <div style={S.lbl}>Departman</div>
+      <select style={S.sel} value={nPlan.discipline} onChange={e=>setNPlan({...nPlan,discipline:e.target.value})}>
+        <option value="mekanik">⚙️ Mekanik</option><option value="elektrik">⚡ Elektrik</option>
+      </select>
+      <div style={S.lbl}>Kim Yapıyor</div>
+      <select style={S.sel} value={nPlan.provider} onChange={e=>setNPlan({...nPlan,provider:e.target.value})}>
+        <option value="own">👷 Kendi Ekip</option><option value="external">🏢 Dış Firma</option>
+      </select>
+      <div style={S.lbl}>Cihaz Adedi</div>
+      <input style={S.inp} type="number" inputMode="numeric" min="0" value={nPlan.device_count} onChange={e=>setNPlan({...nPlan,device_count:e.target.value})} placeholder="opsiyonel"/>
+      <div style={S.lbl}>Bakım Ayları * ({nPlan.months.length} seçili)</div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
+        {opts.map(m=>{const on=nPlan.months.includes(m);return(<button key={m} onClick={()=>tog(m)} style={{padding:"7px 10px",borderRadius:8,border:`1px solid ${on?C.accent:C.border}`,background:on?C.accentD:"transparent",color:on?C.accent:C.muted,fontSize:11,fontWeight:600,cursor:"pointer"}}>{fPer(m)}</button>);})}
+      </div>
+      <div style={S.lbl}>Not</div>
+      <textarea style={{...S.inp,minHeight:56}} value={nPlan.notes} onChange={e=>setNPlan({...nPlan,notes:e.target.value})}/>
+      <button style={S.btn(C.teal)} disabled={submitting} onClick={addPlan}>{submitting?"...":"Ekle"}</button>
+      <button style={S.btn(C.border,C.text)} onClick={()=>setModNewPlan(false)}>İptal</button>
+    </div></div>);
+  };
+
+  const renderNightPick=()=>{
+    if(!modNightPick)return null;
+    return(<div style={S.mod} onClick={()=>setModNightPick(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
+      <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>🌙 Geceye Devret</div>
+      <div style={{fontSize:12,color:C.dim,marginBottom:14}}>{modNightPick.title}</div>
+      <div style={S.lbl}>Bu gecenin nöbetçisi — kime atansın?</div>
+      {nightCrew.map(u=>(<button key={u.id} style={{...S.btn(C.blueD,C.blue),textAlign:"left"}} disabled={submitting} onClick={()=>pjToNight(modNightPick,u.id)}>🌙 {u.full_name}</button>))}
+      <button style={S.btn(C.border,C.text)} onClick={()=>setModNightPick(null)}>İptal</button>
+    </div></div>);
+  };
 
   const navItems=isAmir?[{k:"faults",i:"🔧",l:"Arızalar"}]:isAdmin?[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"depo",i:"📦",l:"Depo"},{k:"calendar",i:"📅",l:"Takvim"},{k:"approvals",i:"✅",l:"Onaylar"},{k:"admin",i:"⚙️",l:"Yönetim"}]:(isChef||isViewer)?[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"depo",i:"📦",l:"Depo"},{k:"calendar",i:"📅",l:"Takvim"},{k:"approvals",i:isViewer?"👁":"✅",l:isViewer?"Takip":"Onaylar"}]:[{k:"dashboard",i:"📊",l:"Özet"},{k:"faults",i:"🔧",l:"Arızalar"},{k:"depo",i:"📦",l:"Depo"},{k:"calendar",i:"📅",l:"Takvim"}];
   const roleLabel=isAdmin?"👑 Yonetici":isChef?"🔧 Sef":isViewer?"👁 Izleyici":"👷 Personel";
@@ -2404,6 +2833,11 @@ function AppInner(){
       {renderOTDetail()}
       {renderLVDetail()}
       {renderDayDetail()}
+      {renderMtDone()}
+      {renderPlanEdit()}
+      {renderPlanNew()}
+      {renderNightPick()}
+      {showMtDP&&<CustomDatePicker value={mtForm.done_date||todayStr()} onChange={v=>setMtForm(p=>({...p,done_date:v}))} onClose={()=>setShowMtDP(false)}/>}
       {showDatePicker&&<CustomDatePicker value={otForm.date||todayStr()} onChange={v=>setOtForm(p=>({...p,date:v}))} onClose={()=>setShowDatePicker(false)}/>}
       {showStartTP&&<CustomTimePicker value={otForm.startTime||"17:00"} onChange={v=>setOtForm(p=>({...p,startTime:v}))} onClose={()=>setShowStartTP(false)} label="Başlangıç Saati"/>}
       {showEndTP&&<CustomTimePicker value={otForm.endTime||"18:00"} onChange={v=>setOtForm(p=>({...p,endTime:v}))} onClose={()=>setShowEndTP(false)} label="Bitiş Saati"/>}
@@ -2417,17 +2851,20 @@ function AppInner(){
           <div style={{overflowY:"auto",maxHeight:"calc(70vh - 50px)",padding:8}}>
             {notifications.length===0?<div style={{padding:30,textAlign:"center",color:C.dim,fontSize:13}}>Bildirim yok ✓</div>:
             notifications.map(n=>(
-              <div key={n.id} style={{display:"flex",gap:10,padding:"10px 8px",borderBottom:`1px solid ${C.border}`,cursor:n.id==="vote"?"pointer":n.id==="stock"?"pointer":n.id==="pend"?"pointer":"default"}} onClick={()=>{
+              <div key={n.id} style={{display:"flex",gap:10,padding:"10px 8px",borderBottom:`1px solid ${C.border}`,cursor:["vote","stock","pend","mtlate","mtnow","pjnight"].includes(n.id)?"pointer":"default"}} onClick={()=>{
                 if(n.id==="vote"){setPage("faults");setShowNotifs(false);}
                 else if(n.id==="stock"){setPage("depo");setDepoTab("purchase");setShowNotifs(false);}
                 else if(n.id==="pend"){setPage("approvals");setShowNotifs(false);}
+                else if(n.id==="mtlate"){setPage("faults");setFaultTab("bakim");setMtView("overdue");setShowNotifs(false);}
+                else if(n.id==="mtnow"){setPage("faults");setFaultTab("bakim");setMtView("month");setShowNotifs(false);}
+                else if(n.id==="pjnight"){setPage("faults");setFaultTab("jobs");setPjTab("night");setShowNotifs(false);}
               }}>
                 <div style={{fontSize:20,flexShrink:0}}>{n.icon}</div>
                 <div style={{flex:1}}>
                   <div style={{fontSize:13,fontWeight:600,color:n.type==="error"?C.red:n.type==="warning"?C.orange:C.green}}>{n.text}</div>
                   {n.time&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>{(()=>{try{const d=new Date(n.time);const diff=Math.round((Date.now()-d.getTime())/60000);if(diff<60)return diff+" dk önce";if(diff<1440)return Math.round(diff/60)+" saat önce";return Math.round(diff/1440)+" gün önce";}catch(e){return"";}})()}</div>}
                 </div>
-                {(n.id==="vote"||n.id==="stock"||n.id==="pend")&&<div style={{color:C.accent,fontSize:16,alignSelf:"center"}}>›</div>}
+                {["vote","stock","pend","mtlate","mtnow","pjnight"].includes(n.id)&&<div style={{color:C.accent,fontSize:16,alignSelf:"center"}}>›</div>}
               </div>
             ))}
           </div>
