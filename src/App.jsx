@@ -5,8 +5,10 @@ import { supabase, signIn, signOut, getProfiles, createOvertime, updateOvertime,
 const toArr=(v)=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'&&Array.isArray(v.data))return v.data;return[];};
 // === Önbellek (stale-while-revalidate): açılışta anında veri, arkada tazeleme ===
 const CACHE_KEY='ibb_cache_v1';
-const APP_VERSION='5.26';
+const APP_VERSION='5.27';
 const VAPID_PUB='BN2YP7MOPhouxNjYjzbuOJznU5xocT3gQW3JeHUnHn3hvRCDdlIvRUDifICb_S0rc_-DqUtWRim0ehxn7UdaV3M';
+const verCmp=(a,b)=>{const pa=String(a).split(".").map(n=>Number(n)||0),pb=String(b).split(".").map(n=>Number(n)||0);
+  for(let i=0;i<Math.max(pa.length,pb.length);i++){const x=pa[i]||0,y=pb[i]||0;if(x!==y)return x>y?1:-1;}return 0;};
 const b64ToU8=(b)=>{const p='='.repeat((4-b.length%4)%4);const r=(b+p).replace(/-/g,'+').replace(/_/g,'/');const d=atob(r);return Uint8Array.from([...d].map(c=>c.charCodeAt(0)));};
 const cacheGet=()=>{try{const r=localStorage.getItem(CACHE_KEY);if(!r)return null;const o=JSON.parse(r);return(o&&o.profiles)?o:null;}catch(e){return null;}};
 const cacheSave=(patch)=>{try{const cur=cacheGet()||{};const nx={...cur,...patch,ts:Date.now()};if(Array.isArray(nx.faults))nx.faults=nx.faults.map(f=>({...f,photos:[]}));localStorage.setItem(CACHE_KEY,JSON.stringify(nx));}catch(e){try{localStorage.removeItem(CACHE_KEY);}catch(_e){}}};
@@ -24,7 +26,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.26</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.27</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -829,7 +831,7 @@ function AppInner(){
   const[updateAvailable,setUpdateAvailable]=useState(false);
   useEffect(()=>{
     let live=true;
-    const check=async()=>{try{const{data}=await supabase.from("app_meta").select("value").eq("key","app_version").maybeSingle();if(live&&data&&data.value&&data.value!==APP_VERSION)setUpdateAvailable(true);}catch(e){}};
+    const check=async()=>{try{const{data}=await supabase.from("app_meta").select("value").eq("key","app_version").maybeSingle();if(live&&data&&data.value&&verCmp(data.value,APP_VERSION)>0)setUpdateAvailable(true);}catch(e){}};
     check();
     const id=setInterval(check,120000);
     return()=>{live=false;clearInterval(id);};
@@ -839,7 +841,13 @@ function AppInner(){
       if("serviceWorker" in navigator){const rs=await navigator.serviceWorker.getRegistrations();await Promise.all(rs.map(r=>r.unregister()));}
       if(window.caches){const ks=await caches.keys();await Promise.all(ks.map(k=>caches.delete(k)));}
     }catch(e){}
-    location.reload();
+    try{
+      // iOS'ta standalone PWA index.html'i kendi onbelleginden verebiliyor; duz reload
+      // eski asset hash'ini tekrar yukluyor. Sorgu parametresi taze dokuman getirtiyor.
+      const u=new URL(window.location.href);
+      u.searchParams.set("v",String(Date.now()));
+      window.location.replace(u.toString());
+    }catch(e){window.location.reload();}
   }
   async function enablePush(){
     try{
@@ -974,7 +982,9 @@ function AppInner(){
   const S={
     app:{fontFamily:"-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif",background:C.bg,color:C.text,minHeight:"100vh",maxWidth:480,margin:"0 auto",position:"relative",paddingBottom:80,WebkitTapHighlightColor:"transparent",WebkitTextSizeAdjust:"100%"},
     hdr:{background:"linear-gradient(135deg,#1e1b4b,#312e81)",padding:"16px",borderBottom:`1px solid ${C.border}`},
-    nav:{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,display:"flex",background:C.card,borderTop:`1px solid ${C.border}`,zIndex:100,paddingBottom:"env(safe-area-inset-bottom,0px)"},
+    // translateZ(0)+willChange: iOS Safari atalet kaydirmasinda fixed elementi her karede yeniden
+    // konumlandirmiyor; kendi GPU katmanina alinca alt menu kaydirma boyunca yerinde kaliyor.
+    nav:{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%) translateZ(0)",WebkitTransform:"translateX(-50%) translateZ(0)",willChange:"transform",backfaceVisibility:"hidden",WebkitBackfaceVisibility:"hidden",width:"100%",maxWidth:480,display:"flex",background:C.card,borderTop:`1px solid ${C.border}`,zIndex:100,paddingBottom:"env(safe-area-inset-bottom,0px)"},
     navB:(a)=>({flex:1,padding:"10px 0 8px",border:"none",background:"none",color:a?C.accent:C.muted,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2,fontSize:10,fontWeight:a?700:500,position:"relative",WebkitTapHighlightColor:"transparent"}),
     dot:{position:"absolute",top:6,right:"50%",transform:"translateX(14px)",width:6,height:6,borderRadius:"50%",background:C.red},
     cnt:{padding:16},
@@ -1121,7 +1131,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.26</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.27</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -1157,7 +1167,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.26</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.27</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
