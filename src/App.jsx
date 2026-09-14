@@ -5,7 +5,7 @@ import { supabase, signIn, signOut, getProfiles, createOvertime, updateOvertime,
 const toArr=(v)=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'&&Array.isArray(v.data))return v.data;return[];};
 // === Önbellek (stale-while-revalidate): açılışta anında veri, arkada tazeleme ===
 const CACHE_KEY='ibb_cache_v1';
-const APP_VERSION='5.27';
+const APP_VERSION='5.28';
 const VAPID_PUB='BN2YP7MOPhouxNjYjzbuOJznU5xocT3gQW3JeHUnHn3hvRCDdlIvRUDifICb_S0rc_-DqUtWRim0ehxn7UdaV3M';
 const verCmp=(a,b)=>{const pa=String(a).split(".").map(n=>Number(n)||0),pb=String(b).split(".").map(n=>Number(n)||0);
   for(let i=0;i<Math.max(pa.length,pb.length);i++){const x=pa[i]||0,y=pb[i]||0;if(x!==y)return x>y?1:-1;}return 0;};
@@ -26,7 +26,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.27</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.28</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -282,7 +282,7 @@ function AppInner(){
   const[matCategory,setMatCategory]=useState("all");
   const[selMaterial,setSelMaterial]=useState(null);
   const[modNewMat,setModNewMat]=useState(false);
-  const[matForm,setMatForm]=useState({name:"",category:"Genel Sarf",unit:"Adet",current_stock:0,min_stock:0,notes:""});
+  const[matForm,setMatForm]=useState({name:"",category:"Sarf & Hırdavat",unit:"Adet",current_stock:0,min_stock:0,notes:""});
   const[modStockOut,setModStockOut]=useState(null);
   const[stockOutForm,setStockOutForm]=useState({quantity:"",purpose:"",location:""});
   const[modStockIn,setModStockIn]=useState(null);
@@ -291,8 +291,10 @@ function AppInner(){
   const[bulkData,setBulkData]=useState([]);
   const[bulkParsed,setBulkParsed]=useState(false);
   const csvRef=useRef(null);
-  const MAT_CATS=["Tesisat","Elektrik","Klima/Havalandırma","Sıhhi Tesisat","Boya/İnşaat","Genel Sarf","Diğer"];
-  const MAT_UNITS=["Adet","Metre","Kg","Litre","Kutu","Paket","Rulo","Çift","Takım"];
+  // Depo envanteriyle birebir ayni olmali — filtre butonlari bu listeden uretiliyor,
+  // burada olmayan bir kategori Depo ekraninda filtrelenemez.
+  const MAT_CATS=["Metal Tesisat","PPRC Tesisat","Pimaş/Atık Su","Klima/Havalandırma","Sıhhi Tesisat","Sarf & Hırdavat","Boya/İnşaat","Diğer"];
+  const MAT_UNITS=["Adet","Boy","Metre","Kg","Litre","Kutu","Kova","Torba","Tüp","Set","Rulo","Paket","Çift","Takım","Bidon"];
   const[deleteConfirm,setDeleteConfirm]=useState(null);
   const[editOT,setEditOT]=useState(null);
   const[showEditStartTP,setShowEditStartTP]=useState(false);
@@ -1131,7 +1133,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.27</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.28</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -1167,7 +1169,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.27</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.28</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -1800,7 +1802,7 @@ function AppInner(){
     setSubmitting(true);
     try{
       await supabase.from('materials').insert({name:matForm.name,category:matForm.category,unit:matForm.unit,current_stock:Number(matForm.current_stock)||0,min_stock:Number(matForm.min_stock)||0,notes:matForm.notes||"",building_id:selBuilding,created_by:profile.id});
-      await fetchMaterials();setModNewMat(false);setMatForm({name:"",category:"Genel Sarf",unit:"Adet",current_stock:0,min_stock:0,notes:""});setToast("✓ Malzeme eklendi");
+      await fetchMaterials();setModNewMat(false);setMatForm({name:"",category:"Sarf & Hırdavat",unit:"Adet",current_stock:0,min_stock:0,notes:""});setToast("✓ Malzeme eklendi");
     }catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
   }
@@ -1855,7 +1857,7 @@ function AppInner(){
       for(let i=1;i<lines.length;i++){
         const cols=lines[i].split(/[,;\t]/).map(c=>c.trim().replace(/^['"]|['"]$/g,''));
         const name=cols[nameIdx];if(!name)continue;
-        rows.push({name,category:catIdx>=0?cols[catIdx]||"Genel Sarf":"Genel Sarf",unit:unitIdx>=0?cols[unitIdx]||"Adet":"Adet",current_stock:stockIdx>=0?Number(cols[stockIdx])||0:0,min_stock:minIdx>=0?Number(cols[minIdx])||0:0});
+        rows.push({name,category:catIdx>=0?cols[catIdx]||"Sarf & Hırdavat":"Sarf & Hırdavat",unit:unitIdx>=0?cols[unitIdx]||"Adet":"Adet",current_stock:stockIdx>=0?Number(cols[stockIdx])||0:0,min_stock:minIdx>=0?Number(cols[minIdx])||0:0});
       }
       setBulkData(rows);setBulkParsed(true);
       setToast("✓ "+rows.length+" malzeme okundu — kontrol edip yükleyin");
@@ -1912,7 +1914,7 @@ function AppInner(){
           {MAT_CATS.map(c=><button key={c} style={{padding:"6px 12px",borderRadius:8,border:"none",background:matCategory===c?C.accent:C.bg,color:matCategory===c?"#fff":C.muted,fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}} onClick={()=>setMatCategory(c)}>{c}</button>)}
         </div>
         {canEditFault&&<div style={{display:"flex",gap:8,marginBottom:12}}>
-          <button style={{...S.btn(C.accent),flex:1}} onClick={()=>{setMatForm({name:"",category:"Genel Sarf",unit:"Adet",current_stock:0,min_stock:0,notes:""});setModNewMat(true);}}>+ Malzeme Ekle</button>
+          <button style={{...S.btn(C.accent),flex:1}} onClick={()=>{setMatForm({name:"",category:"Sarf & Hırdavat",unit:"Adet",current_stock:0,min_stock:0,notes:""});setModNewMat(true);}}>+ Malzeme Ekle</button>
           <button style={{...S.btn(C.accentD,C.accent),flex:1}} onClick={()=>{setBulkData([]);setBulkParsed(false);setModBulkUpload(true);}}>📄 Toplu Yükle</button>
         </div>}
         {filtered.length===0&&<div style={S.emp}>Malzeme bulunamadı</div>}
