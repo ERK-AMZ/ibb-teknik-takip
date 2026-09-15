@@ -5,7 +5,7 @@ import { supabase, signIn, signOut, getProfiles, createOvertime, updateOvertime,
 const toArr=(v)=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'&&Array.isArray(v.data))return v.data;return[];};
 // === Önbellek (stale-while-revalidate): açılışta anında veri, arkada tazeleme ===
 const CACHE_KEY='ibb_cache_v1';
-const APP_VERSION='5.29';
+const APP_VERSION='5.31';
 const VAPID_PUB='BN2YP7MOPhouxNjYjzbuOJznU5xocT3gQW3JeHUnHn3hvRCDdlIvRUDifICb_S0rc_-DqUtWRim0ehxn7UdaV3M';
 const verCmp=(a,b)=>{const pa=String(a).split(".").map(n=>Number(n)||0),pb=String(b).split(".").map(n=>Number(n)||0);
   for(let i=0;i<Math.max(pa.length,pb.length);i++){const x=pa[i]||0,y=pb[i]||0;if(x!==y)return x>y?1:-1;}return 0;};
@@ -26,7 +26,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.29</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.31</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -55,41 +55,13 @@ function fD(d){if(!d)return"";try{return new Date(d+'T00:00:00').toLocaleDateStr
 function fDS(d){if(!d)return"";try{return new Date(d+'T00:00:00').toLocaleDateString("tr-TR",{day:"numeric",month:"short"});}catch{return d;}}
 function sColor(s){return s==="approved"?"#22c55e":s==="pending_chef"?"#f59e0b":s==="pending_manager"?"#3b82f6":s==="rejected"?"#ef4444":"#94a3b8";}
 function sText(s){return s==="approved"?"Onaylandı":s==="pending_chef"?"Şef Onayı Bekliyor":s==="pending_manager"?"Müh. Onayı Bekliyor":s==="rejected"?"Reddedildi":s;}
+function daysAgoTs(ts){if(!ts)return null;try{return Math.floor((Date.now()-new Date(ts).getTime())/86400000);}catch{return null;}}
+const SH_LBL={day:["Gündüz","08:00–17:00","G","#3b82f6"],night:["Gece Vardiyası","17:00–08:00","GV","#a855f7"],weekend_day:["Hafta Sonu Gündüz","08:00–17:00","HV","#14b8a6"],rest:["Nöbet İzni","","Nİ","#f59e0b"],weekly_off:["Hafta Tatili","","H","#64748b"],holiday:["Resmî Tatil","","RT","#ef4444"],leave:["İzinli","","İZ","#ef4444"]};
+const SH_WORK=["day","night","weekend_day"];
+function shAddDays(ds,n){const[y,m,d]=String(ds).split("-").map(Number);const t=new Date(y,m-1,d+n);return`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}-${String(t.getDate()).padStart(2,"0")}`;}
+const REV_LBL={continues:["devam ediyor","#ef4444"],resolved:["çözüldü","#22c55e"],waiting_service:["servis bekliyor","#3b82f6"]};
+const REV_GUN=7; // bu kadar gun gecince yeniden degerlendirilmeli
 function daysSince(d){if(!d)return 0;const t=new Date(),s=new Date(d+'T00:00:00');return Math.max(0,Math.floor((t-s)/(1000*60*60*24)));}
-function getVoteWeek(d){
-  // Vote period: Wednesday 00:00 → next Tuesday 23:59
-  const dt=d?new Date(d):new Date();
-  const day=dt.getDay(); // 0=Sun,1=Mon,2=Tue,3=Wed...
-  // Find the Wednesday that starts this period
-  const diff=day>=3?(day-3):(day+4); // days since last Wednesday
-  const wed=new Date(dt);wed.setDate(dt.getDate()-diff);wed.setHours(0,0,0,0);
-  return `${wed.getFullYear()}-${String(wed.getMonth()+1).padStart(2,'0')}-${String(wed.getDate()).padStart(2,'0')}`;
-}
-function getPrevVoteWeek(){
-  const now=new Date();
-  const prev=new Date(now);prev.setDate(now.getDate()-7);
-  return getVoteWeek(prev);
-}
-function getVoteWeekRange(weekStr){
-  // Returns {start, end} date strings for a vote_week
-  const wed=new Date(weekStr+"T00:00:00");
-  const tue=new Date(wed);tue.setDate(wed.getDate()+6);
-  return{start:weekStr,end:`${tue.getFullYear()}-${String(tue.getMonth()+1).padStart(2,'0')}-${String(tue.getDate()).padStart(2,'0')}`};
-}
-function getVotePeriodInfo(){
-  const now=new Date();const day=now.getDay();
-  const diff=day>=3?(day-3):(day+4);
-  const wed=new Date(now);wed.setDate(now.getDate()-diff);wed.setHours(0,0,0,0);
-  const tue=new Date(wed);tue.setDate(wed.getDate()+6);tue.setHours(23,59,59);
-  const daysLeft=Math.max(0,Math.ceil((tue-now)/(1000*60*60*24)));
-  const isUrgent=daysLeft<=1; // Salı (son gün)
-  const isWarning=daysLeft<=2; // Pazartesi-Salı
-  return{start:wed,end:tue,daysLeft,isUrgent,isWarning};
-}
-// Flexible vote_week comparison (handles date format differences)
-function vwMatch(vw,target){return String(vw||"").slice(0,10)===String(target||"").slice(0,10);}
-function voteMinWeek(){return getVoteWeek(new Date(Date.now()-21*24*60*60*1000));}
-function isFriday(){return new Date().getDay()===5;}
 function sIcon(s){return s==="approved"?"\u2713":s==="rejected"?"\u2717":"\u23F3";}
 function ini(n){if(!n)return"?";try{return n.split(" ").map(x=>x[0]).slice(0,2).join("").toUpperCase();}catch{return"?";}}
 
@@ -264,7 +236,6 @@ function AppInner(){
   // Faults
   const[faults,setFaults]=useState([]);
   const[faultServices,setFaultServices]=useState([]);
-  const[faultVotes,setFaultVotes]=useState([]);
   const[selFault,setSelFault]=useState(null);
   const[modNewFault,setModNewFault]=useState(false);
   const[faultForm,setFaultForm]=useState({title:"",location:"",description:"",detected_date:"",photos:[],services:[],fault_type:"service",material_needed:""});
@@ -277,6 +248,13 @@ function AppInner(){
   const[inlineSvcIdx,setInlineSvcIdx]=useState(-1);
   const[showInlineSvcDatePicker,setShowInlineSvcDatePicker]=useState(false);
   const[faultTab,setFaultTab]=useState("active");
+  const[shifts,setShifts]=useState([]);
+  const[calTab,setCalTab]=useState("leave");
+  const[shScope,setShScope]=useState("me");
+  const[shDay,setShDay]=useState("");
+  const[shSub,setShSub]=useState(null);
+  const[shSubNote,setShSubNote]=useState("");
+  const[bugun,setBugun]=useState(todayStr());
   // Stock/Inventory
   const[materials,setMaterials]=useState([]);
   const[stockMovements,setStockMovements]=useState([]);
@@ -354,7 +332,6 @@ function AppInner(){
   const fetchLeaves=useCallback(async()=>{try{const{data}=await supabase.from('leaves').select('*').order('created_at',{ascending:false});if(Array.isArray(data))setLeavesState(data);}catch(e){console.error(e);}},[]);
   const fetchFaults=useCallback(async()=>{try{const{data}=await supabase.from('faults').select('id,title,location,description,detected_date,fault_type,material_needed,status,building_id,created_by,resolved_date,created_at').order('detected_date',{ascending:false});if(Array.isArray(data))setFaults(data);}catch(e){console.error(e);}},[]);
   const fetchFaultServices=useCallback(async()=>{try{const{data}=await supabase.from('fault_services').select('*').order('visit_date',{ascending:false});if(Array.isArray(data))setFaultServices(data);}catch(e){console.error(e);}},[]);
-  const fetchFaultVotes=useCallback(async()=>{try{const{data,error}=await supabase.from('fault_votes').select('*').in('vote_week',[getVoteWeek(),getPrevVoteWeek()]).order('created_at',{ascending:false}).limit(1000);if(!error&&Array.isArray(data))setFaultVotes(data);}catch(e){console.error(e);}},[]); 
   const fetchMaterials=useCallback(async()=>{try{const{data}=await supabase.from('materials').select('*').order('name');if(Array.isArray(data))setMaterials(data);}catch(e){console.error(e);}},[]);
   const fetchStockMovements=useCallback(async()=>{try{const{data}=await supabase.from('stock_movements').select('*').order('movement_date',{ascending:false});if(Array.isArray(data))setStockMovements(data);}catch(e){console.error(e);}},[]);
   const fetchBuildings=useCallback(async()=>{try{const{data}=await supabase.from('buildings').select('*').order('name');if(Array.isArray(data))setBuildings(data);}catch(e){console.error(e);}},[]);
@@ -364,6 +341,32 @@ function AppInner(){
   const fetchElevatorFaults=useCallback(async()=>{try{const{data}=await supabase.from('elevator_faults').select('*').order('created_at',{ascending:false}).limit(200);if(Array.isArray(data)){setElevatorFaults(data);cacheSave({elevatorFaults:data});}}catch(e){console.error(e);}},[]);
   const fetchMaintPlans=useCallback(async()=>{try{const{data}=await supabase.from('maintenance_plans').select('*').order('provider').order('system_name');if(Array.isArray(data)){setMaintPlans(data);cacheSave({maintPlans:data});}}catch(e){console.error(e);}},[]);
   const fetchMaintLogs=useCallback(async()=>{try{const{data}=await supabase.from('maintenance_logs').select('*').order('period',{ascending:false}).limit(2000);if(Array.isArray(data)){setMaintLogs(data);cacheSave({maintLogs:data});}}catch(e){console.error(e);}},[]);
+  // Cizelge: gecen ayin 1'inden itibaren — gecmis sisip onbellegi doldurmasin
+  // Gece yarisini gecen oturumlarda "bugun" donup kalmasin
+  useEffect(()=>{const c=()=>{const t=todayStr();setBugun(p=>p===t?p:t);};
+    const iv=setInterval(c,60000);document.addEventListener("visibilitychange",c);
+    return()=>{clearInterval(iv);document.removeEventListener("visibilitychange",c);};},[]);
+  const fetchShifts=useCallback(async()=>{try{
+    const n=new Date(),d0=new Date(n.getFullYear(),n.getMonth()-1,1);
+    const fs=`${d0.getFullYear()}-${String(d0.getMonth()+1).padStart(2,"0")}-01`;
+    const t0=todayStr(),son=shAddDays(t0,120);
+    // PostgREST'in max_rows ayari 1000 olabilir — bu tablo 2800+ satir, o yuzden
+    // limit'e guvenmeyip acikca sayfaliyoruz.
+    const SAYFA=1000;let off=0,hepsi=[],p;
+    for(let i=0;i<8;i++){
+      const{data,error}=await supabase.from('shift_schedule')
+        .select('id,personnel_id,shift_date,shift_type,source,original_personnel_id,note')
+        .gte('shift_date',fs).lte('shift_date',son).order('shift_date').order('id').range(off,off+SAYFA-1);
+      if(error)throw error;
+      p=Array.isArray(data)?data:[];hepsi=hepsi.concat(p);
+      if(p.length<SAYFA)break;
+      off+=SAYFA;
+    }
+    setShifts(hepsi);
+    // Onbellege sadece dar pencere — tum liste ~570 KB, localStorage kotasini patlatir
+    const a=shAddDays(t0,-3),b=shAddDays(t0,10);
+    cacheSave({shifts:hepsi.filter(s=>s.shift_date>=a&&s.shift_date<=b)});
+  }catch(e){console.error(e);}},[]);
   const fetchFaultMaterials=useCallback(async()=>{try{const{data}=await supabase.from('fault_materials').select('*').order('created_at',{ascending:false}).limit(1000);if(Array.isArray(data)){setFaultMaterials(data);cacheSave({faultMaterials:data});}}catch(e){console.error(e);}},[]);
 
   // Silent refresh (no loading screen) for TOKEN_REFRESHED events
@@ -373,7 +376,7 @@ function AppInner(){
         supabase.from('profiles').select('*'),supabase.from('overtimes').select('*').order('work_date',{ascending:false}),
         supabase.from('leaves').select('*').order('created_at',{ascending:false}),supabase.from('buildings').select('*').order('name'),
         supabase.from('faults').select('id,title,location,description,detected_date,fault_type,material_needed,status,building_id,created_by,resolved_date,created_at').order('detected_date',{ascending:false}),supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),
-        supabase.from('fault_votes').select('*').in('vote_week',[getVoteWeek(),getPrevVoteWeek()]).order('created_at',{ascending:false}).limit(1000),supabase.from('materials').select('*').order('name'),
+        supabase.from('materials').select('*').order('name'),
         supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}).limit(200)
       ]);
       const profs=toArr(r[0].status==="fulfilled"?r[0].value:null);
@@ -384,9 +387,8 @@ function AppInner(){
       }
       if(r[4].status==="fulfilled"){const d=toArr(r[4].value);if(d.length>0)setFaults(d);}
       if(r[5].status==="fulfilled"){const d=toArr(r[5].value);if(d.length>0)setFaultServices(d);}
-      if(r[6].status==="fulfilled"){const d=toArr(r[6].value);if(d.length>0)setFaultVotes(d);}
-      if(r[7].status==="fulfilled"){const d=toArr(r[7].value);if(d.length>0)setMaterials(d);}
-      if(r[8].status==="fulfilled"){const d=toArr(r[8].value);if(d.length>0)setStockMovements(d);}
+      if(r[6].status==="fulfilled"){const d=toArr(r[6].value);if(d.length>0)setMaterials(d);}
+      if(r[7].status==="fulfilled"){const d=toArr(r[7].value);if(d.length>0)setStockMovements(d);}
     }catch(e){console.error("silentRefresh err:",e);}
   },[]);
 
@@ -415,6 +417,7 @@ function AppInner(){
         if(Array.isArray(cc.maintPlans))setMaintPlans(cc.maintPlans);
         if(Array.isArray(cc.maintLogs))setMaintLogs(cc.maintLogs);
         if(Array.isArray(cc.faultMaterials))setFaultMaterials(cc.faultMaterials);
+        if(Array.isArray(cc.shifts))setShifts(cc.shifts);
         setProfile(cfp);
         if(!selBuilding)setSelBuilding(cfp.building_id||cc.buildings?.[0]?.id||null);
         setLoading(false); // yükleme ekranı yok, taze veri arkada gelecek
@@ -431,7 +434,6 @@ function AppInner(){
     const secondaryP=Promise.allSettled([
       supabase.from('faults').select('id,title,location,description,detected_date,fault_type,material_needed,status,building_id,created_by,resolved_date,created_at').order('detected_date',{ascending:false}),
       supabase.from('fault_services').select('*').order('visit_date',{ascending:false}),
-      supabase.from('fault_votes').select('*').in('vote_week',[getVoteWeek(),getPrevVoteWeek()]).order('created_at',{ascending:false}).limit(1000),
       supabase.from('materials').select('*').order('name'),
       supabase.from('stock_movements').select('*').order('movement_date',{ascending:false}).limit(200),
       supabase.from('nobet_devir').select('*')
@@ -457,16 +459,10 @@ function AppInner(){
       const r2=await secondaryP;
       if(r2[0].status==="fulfilled"){const d=toArr(r2[0].value);if(d.length>0)setFaults(d);}
       if(r2[1].status==="fulfilled"){const d=toArr(r2[1].value);if(d.length>0)setFaultServices(d);}
-      if(r2[2].status==="fulfilled"){const d=toArr(r2[2].value);if(d.length>0)setFaultVotes(d);}
-      if(r2[3].status==="fulfilled"){const d=toArr(r2[3].value);if(d.length>0)setMaterials(d);}
-      if(r2[4].status==="fulfilled"){const d=toArr(r2[4].value);if(d.length>0)setStockMovements(d);}
-      if(r2[5].status==="fulfilled"){const d=toArr(r2[5].value);if(d.length>0)setNobetState(d);}
-      cacheSave({faults:toArr(r2[0].status==="fulfilled"?r2[0].value:null),faultServices:toArr(r2[1].status==="fulfilled"?r2[1].value:null),materials:toArr(r2[3].status==="fulfilled"?r2[3].value:null),stockMovements:toArr(r2[4].status==="fulfilled"?r2[4].value:null),nobet:toArr(r2[5].status==="fulfilled"?r2[5].value:null)});
-      // Retry fault_votes if empty (egress limit might have blocked it)
-      const votesLoaded=toArr(r2[2].status==="fulfilled"?r2[2].value:null);
-      if(votesLoaded.length===0){
-        setTimeout(async()=>{try{const{data,error}=await supabase.from('fault_votes').select('*').in('vote_week',[getVoteWeek(),getPrevVoteWeek()]).order('created_at',{ascending:false}).limit(1000);if(!error&&Array.isArray(data))setFaultVotes(data);}catch(e){}},3000);
-      }
+      if(r2[2].status==="fulfilled"){const d=toArr(r2[2].value);if(d.length>0)setMaterials(d);}
+      if(r2[3].status==="fulfilled"){const d=toArr(r2[3].value);if(d.length>0)setStockMovements(d);}
+      if(r2[4].status==="fulfilled"){const d=toArr(r2[4].value);if(d.length>0)setNobetState(d);}
+      cacheSave({faults:toArr(r2[0].status==="fulfilled"?r2[0].value:null),faultServices:toArr(r2[1].status==="fulfilled"?r2[1].value:null),materials:toArr(r2[2].status==="fulfilled"?r2[2].value:null),stockMovements:toArr(r2[3].status==="fulfilled"?r2[3].value:null),nobet:toArr(r2[4].status==="fulfilled"?r2[4].value:null)});
     }catch(e){}
   },[]);
 
@@ -508,7 +504,6 @@ function AppInner(){
       try{const c=await subscribeToChanges('profiles',()=>{if(m)fetchProfiles();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('faults',()=>{if(m)fetchFaults();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('fault_services',()=>{if(m)fetchFaultServices();});if(c)subs.push(c);}catch(e){}
-      try{const c=await subscribeToChanges('fault_votes',()=>{if(m)fetchFaultVotes();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('materials',()=>{if(m)fetchMaterials();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('stock_movements',()=>{if(m){fetchStockMovements();fetchMaterials();}});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('pending_jobs',()=>{if(m)fetchPendingJobs();});if(c)subs.push(c);}catch(e){}
@@ -518,10 +513,11 @@ function AppInner(){
       try{const c=await subscribeToChanges('maintenance_plans',()=>{if(m)fetchMaintPlans();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('maintenance_logs',()=>{if(m)fetchMaintLogs();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('fault_materials',()=>{if(m)fetchFaultMaterials();});if(c)subs.push(c);}catch(e){}
+      try{const c=await subscribeToChanges('shift_schedule',()=>{if(m)fetchShifts();});if(c)subs.push(c);}catch(e){}
     };s();return()=>{m=false;subs.forEach(s=>{try{s?.unsubscribe();}catch(e){}});};
-  },[session,fetchOvertimes,fetchLeaves,fetchProfiles,fetchFaults,fetchFaultServices,fetchFaultVotes,fetchMaterials,fetchStockMovements,fetchPendingJobs,fetchAttendance]);
+  },[session,fetchOvertimes,fetchLeaves,fetchProfiles,fetchFaults,fetchFaultServices,fetchMaterials,fetchStockMovements,fetchPendingJobs,fetchAttendance]);
 
-  useEffect(()=>{if(session){fetchPendingJobs();fetchAttendance();fetchElevators();fetchElevatorFaults();fetchMaintPlans();fetchMaintLogs();fetchFaultMaterials();}},[session,fetchPendingJobs,fetchAttendance,fetchElevators,fetchElevatorFaults,fetchMaintPlans,fetchMaintLogs,fetchFaultMaterials]);
+  useEffect(()=>{if(session){fetchPendingJobs();fetchAttendance();fetchElevators();fetchElevatorFaults();fetchMaintPlans();fetchMaintLogs();fetchFaultMaterials();fetchShifts();}},[session,fetchPendingJobs,fetchAttendance,fetchElevators,fetchElevatorFaults,fetchMaintPlans,fetchMaintLogs,fetchFaultMaterials,fetchShifts]);
 
   const isAdmin=profile?.user_role==="admin";
   const isChef=profile?.user_role==="chef";
@@ -767,6 +763,39 @@ function AppInner(){
       const{error}=await supabase.from("pending_jobs").update({status:"not_done",not_done_reason:String(r).trim()}).eq("id",j.id);
       if(error)throw error;
       await fetchPendingJobs();setToast("✗ Yapılamadı olarak işaretlendi — yarın gündüze aktarılacak");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+
+  // ═══ Vardiya yerine gecme aksiyonu ═══
+  async function submitSub(row,toId){
+    if(!canShiftEdit){setToast("⚠ Vardiya değiştirme yetkiniz yok");return;}
+    setSubmitting(true);
+    try{
+      const{data,error}=await supabase.rpc("shift_substitute",
+        {p_date:row.shift_date,p_from:row.personnel_id,p_to:toId,p_by:profile.id,p_note:shSubNote.trim()||null});
+      if(error)throw error;
+      if(!data?.ok){setToast("⚠ "+(data?.hata||"İşlem yapılamadı"));setSubmitting(false);return;}
+      await fetchShifts();
+      setShSub(null);setShSubNote("");
+      setToast(`🔄 ${data.kimden} yerine ${data.kime} atandı`);
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+
+  // ═══ Haftalik degerlendirme aksiyonu ═══
+  async function submitReview(f,durum){
+    if(!canReview){setToast("⚠ Değerlendirme yetkiniz yok");return;}
+    setSubmitting(true);
+    try{
+      const upd={review_status:durum,reviewed_at:new Date().toISOString(),reviewed_by:profile.id};
+      // "Çözüldü" ayni zamanda arizayi kapatir
+      if(durum==="resolved"){upd.status="resolved";upd.resolved_date=todayStr();}
+      const{error}=await supabase.from("faults").update(upd).eq("id",f.id);
+      if(error)throw error;
+      await fetchFaults();
+      setToast(durum==="resolved"?"✅ Arıza çözüldü olarak kapatıldı":
+               durum==="waiting_service"?"🔧 Servis bekliyor olarak işaretlendi":"📋 Devam ediyor olarak işaretlendi");
     }catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
   }
@@ -1101,12 +1130,79 @@ function AppInner(){
   const allPendCount=allPendOTs.length+allPendLVs.length;
   const liveOTH=calcOT(otForm.startTime,otForm.endTime,otForm.otType),liveLH=calcLH(liveOTH);
 
-  // Vote system hooks - MUST be before any early returns (React hooks rules)
-  const currentWeek=getVoteWeek();
-  const prevWeek=getPrevVoteWeek();
-  const votePeriod=getVotePeriodInfo();
-  const activeFaultsAll=useMemo(()=>bFaults.filter(f=>f.status==="active"),[bFaults]);
-  const myPendingVotes=useMemo(()=>{if(!profile)return[];return activeFaultsAll.filter(f=>!faultVotes.some(v=>v.fault_id===f.id&&v.personnel_id===profile.id&&vwMatch(v.vote_week,currentWeek)));},[activeFaultsAll,faultVotes,profile,currentWeek]);
+  // ═══ Vardiya cizelgesi turetilmis veriler ═══
+  const bShifts=useMemo(()=>{const ok=new Set(bProfiles.map(p=>p.id));return shifts.filter(s=>ok.has(s.personnel_id));},[shifts,bProfiles]);
+  const shByDate=useMemo(()=>{const m={};bShifts.forEach(s=>{(m[s.shift_date]=m[s.shift_date]||[]).push(s);});return m;},[bShifts]);
+  const shMine=useMemo(()=>{const m={};if(profile)bShifts.forEach(s=>{if(s.personnel_id===profile.id)m[s.shift_date]=s;});return m;},[bShifts,profile]);
+  const shHas=bShifts.length>0;
+  const shToday=useMemo(()=>shMine[bugun]||null,[shMine,bugun]);
+  const shTomorrow=useMemo(()=>shMine[shAddDays(bugun,1)]||null,[shMine,bugun]);
+  const shTonight=useMemo(()=>(shByDate[bugun]||[]).filter(s=>s.shift_type==="night"),[shByDate,bugun]);
+  const shMineVar=useMemo(()=>Object.keys(shMine).length>0,[shMine]);
+  const canShiftEdit=isAdmin||isChef;
+  // Yerine gecebilecekler — engel sebebiyle birlikte, engelsizler once
+  const shCandidates=useCallback((row)=>{
+    const d=row.shift_date,prev=shAddDays(d,-1),dep=profileMap.get(row.personnel_id)?.department||"mekanik";
+    const cizelgede=new Set(bShifts.map(s=>s.personnel_id));
+    return bProfiles.filter(p=>(p.active||cizelgede.has(p.id))&&p.id!==row.personnel_id).map(p=>{
+      const own=(shByDate[d]||[]).find(s=>s.personnel_id===p.id);
+      const pv=(shByDate[prev]||[]).find(s=>s.personnel_id===p.id);
+      const izinli=bLeaves.some(l=>l.status==="approved"&&l.personnel_id===p.id&&(Array.isArray(l.dates)?l.dates:[]).includes(d));
+      const yrn=(shByDate[shAddDays(d,1)]||[]).find(s=>s.personnel_id===p.id);
+      let blok=null;
+      if(!p.active)blok="kadro kaydı pasif";
+      else if(own&&SH_WORK.includes(own.shift_type))blok="o gün "+SH_LBL[own.shift_type][0].toLowerCase();
+      else if(own&&own.shift_type==="leave")blok="o gün vardiyadan çıkarılmış";
+      else if(izinli)blok="o gün izinli";
+      else if(pv&&pv.shift_type==="night")blok="önceki gece nöbetteydi";
+      else if(row.shift_type==="night"&&yrn&&SH_WORK.includes(yrn.shift_type))blok="ertesi gün de vardiyada";
+      return{p,blok,farkli:(p.department||"mekanik")!==dep,durum:own?SH_LBL[own.shift_type][0]:"çizelgede yok"};
+    }).sort((a,b)=>(a.blok?1:0)-(b.blok?1:0)||(a.farkli?1:0)-(b.farkli?1:0)||String(a.p.full_name).localeCompare(String(b.p.full_name),"tr"));
+  },[bProfiles,bShifts,shByDate,bLeaves,profileMap]);
+
+  // Cizelge tutarlilik kontrolleri — bugunden itibaren 30 gun
+  const shIssues=useMemo(()=>{
+    if(!shHas)return[];
+    const t0=bugun,out=[];
+    // Plan nerede bitiyor? Bitisten sonrasi icin "gun yok" uyarisi uretmeyelim,
+    // onun yerine tek bir "cizelge bitiyor" uyarisi verelim.
+    let sonPlan="";bShifts.forEach(s=>{if(s.shift_date>sonPlan)sonPlan=s.shift_date;});
+    const t1=shAddDays(t0,30);
+    if(sonPlan&&sonPlan<t1)out.push({d:sonPlan,tip:"bitis",mesaj:`Çizelge ${fDS(sonPlan)} tarihinde bitiyor — sonraki ayın puantajı yüklenmeli`});
+    const ust=sonPlan&&sonPlan<t1?sonPlan:t1;
+    const gunler=[];for(let d=t0;d<=ust;d=shAddDays(d,1))gunler.push(d);
+    const lvSet=new Set();
+    bLeaves.forEach(l=>{if(l.status==="approved")(Array.isArray(l.dates)?l.dates:[]).forEach(d=>lvSet.add(l.personnel_id+"|"+d));});
+    gunler.forEach(d=>{
+      const gun=shByDate[d]||[];
+      if(gun.length===0){out.push({d,tip:"bos",mesaj:"Bu gün için hiç çizelge kaydı yok"});return;}
+      const gece=gun.filter(s=>s.shift_type==="night");
+      if(gece.length!==2)out.push({d,tip:"gece",mesaj:`Gece nöbetinde ${gece.length} kişi var (normalde 2)`});
+      else{
+        const dep=new Set(gece.map(s=>profileMap.get(s.personnel_id)?.department||"mekanik"));
+        if(dep.size===1)out.push({d,tip:"birim",mesaj:`Gece nöbetinin ikisi de ${[...dep][0]==="elektrik"?"elektrik":"mekanik"} — diğer birim boş`});
+      }
+      gun.forEach(s=>{
+        if(!SH_WORK.includes(s.shift_type))return;
+        if(lvSet.has(s.personnel_id+"|"+d))
+          out.push({d,tip:"izin",mesaj:`${profileMap.get(s.personnel_id)?.full_name||"?"} hem vardiyada hem onaylı izinli`});
+        if(s.shift_type==="night"){
+          const y=(shByDate[shAddDays(d,1)]||[]).find(x=>x.personnel_id===s.personnel_id);
+          if(y&&SH_WORK.includes(y.shift_type))
+            out.push({d,tip:"dinlenme",mesaj:`${profileMap.get(s.personnel_id)?.full_name||"?"} gece nöbetinin ertesi günü de vardiyada`});
+        }
+      });
+    });
+    return out;
+  },[shHas,shByDate,bShifts,bLeaves,profileMap,bugun]);
+
+  // ═══ Haftalik ariza degerlendirmesi ═══
+  const revNeeds=useCallback((f)=>{const d=daysAgoTs(f.reviewed_at);return d===null||d>=REV_GUN;},[]);
+  // Degerlendirme bekleyen aktif arizalar — en eskiden baslayarak
+  const revDueAll=useMemo(()=>bFaults.filter(f=>f.status==="active"&&revNeeds(f))
+    .sort((a,b)=>String(a.detected_date||"").localeCompare(String(b.detected_date||""))),[bFaults,revNeeds]);
+  const revDue=useMemo(()=>revDueAll.slice(0,5),[revDueAll]);
+  const canReview=isAdmin||isChef;
 
   // ═══ Ariza malzeme turetilmis veriler ═══
   const fmOf=useCallback((fid)=>faultMaterials.filter(x=>x.fault_id===fid&&x.status!=="cancelled"),[faultMaterials]);
@@ -1183,16 +1279,18 @@ function AppInner(){
       if(pc>0)notifs.push({id:"pend",type:"warning",icon:"⏳",text:`${pc} onay bekleyen talep var`,time:new Date().toISOString()});
     }
     // Vote reminder
-    if(myPendingVotes.length>0)notifs.push({id:"vote",type:"warning",icon:"🗳",text:`${myPendingVotes.length} arıza için oy bekleniyor`,time:new Date().toISOString()});
     // Low stock (chef/admin)
     if((isChef||isAdmin)&&bMaterials.filter(m=>m.current_stock<=m.min_stock&&m.min_stock>0).length>0)notifs.push({id:"stock",type:"error",icon:"📦",text:`${bMaterials.filter(m=>m.current_stock<=m.min_stock&&m.min_stock>0).length} malzeme kritik seviyede`,time:new Date().toISOString()});
+    if(shToday&&shToday.shift_type==="night")notifs.push({id:"shnight",type:"info",icon:"🌙",text:"Bu gece nöbetçisiniz — 17:00\u201308:00",time:new Date().toISOString()});
+    if(shToday&&shToday.source==="substitute")notifs.push({id:"shsub",type:"warning",icon:"🔄",text:`Bugün ${getU(shToday.original_personnel_id)?.full_name||"bir arkadaşınız"} yerine vardiyadasınız`,time:new Date().toISOString()});
+    if((isChef||isAdmin)&&revDue.length>0)notifs.push({id:"review",type:"warning",icon:"📋",text:`${revDueAll.length} arıza değerlendirme bekliyor`,time:new Date().toISOString()});
     if(fmWaitingFaults.length>0)notifs.push({id:"fmwait",type:"warning",icon:"🧰",text:`${fmWaitingFaults.length} arıza malzeme bekliyor`,time:new Date().toISOString()});
     if((isChef||isAdmin)&&mtOverdue.length>0)notifs.push({id:"mtlate",type:"error",icon:"🛠",text:`${mtOverdue.length} bakım gecikmiş`,time:new Date().toISOString()});
     if((isChef||isAdmin)&&mtOpenThisMonth.length>0)notifs.push({id:"mtnow",type:"warning",icon:"🛠",text:`${mtOpenThisMonth.length} bakımın vadesi bu ay`,time:new Date().toISOString()});
     if(pjMine.length>0)notifs.push({id:"pjnight",type:"warning",icon:"🌙",text:`${pjMine.length} gece işi size atandı`,time:new Date().toISOString()});
     // Sort by time desc
     return notifs.sort((a,b)=>(b.time||"").localeCompare(a.time||""));
-  },[profile,leavesState,overtimes,pendOTs,pendLVs,myPendingVotes,bMaterials,isChef,isAdmin,mtOverdue,mtOpenThisMonth,pjMine,fmWaitingFaults,fmRequested]);
+  },[profile,leavesState,overtimes,pendOTs,pendLVs,bMaterials,isChef,isAdmin,mtOverdue,mtOpenThisMonth,pjMine,fmWaitingFaults,fmRequested,revDue,revDueAll,shToday,profileMap]);
 
   const unreadNotifs=useMemo(()=>{
     try{const lastSeen=localStorage.getItem("notif_seen")||"";return notifications.filter(n=>n.time>lastSeen).length;}catch(e){return notifications.length;}
@@ -1207,14 +1305,13 @@ function AppInner(){
       d.push("leavesState: "+(Array.isArray(leavesState)?"Array("+leavesState.length+")":typeof leavesState+" "+String(leavesState).slice(0,50)));
       d.push("buildings: "+(Array.isArray(buildings)?"Array("+buildings.length+")":typeof buildings+" "+String(buildings).slice(0,50)));
       d.push("faults: "+(Array.isArray(faults)?"Array("+faults.length+")":typeof faults+" "+String(faults).slice(0,50)));
-      d.push("faultVotes: "+(Array.isArray(faultVotes)?"Array("+faultVotes.length+")":typeof faultVotes+" "+String(faultVotes).slice(0,50)));
       d.push("materials: "+(Array.isArray(materials)?"Array("+materials.length+")":typeof materials+" "+String(materials).slice(0,50)));
       d.push("profile: "+(profile?"id:"+String(profile.id).slice(0,8)+".. name:"+String(profile.full_name):"null"));
       window.__DIAG=d.join("\n");
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.29</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.31</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -1250,7 +1347,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.29</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.31</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -1360,71 +1457,6 @@ function AppInner(){
     setSubmitting(false);
   }
 
-  async function submitVote(faultId,vote){
-    setSubmitting(true);
-    const dbg=[];
-    try{
-      dbg.push("1. profile.id="+String(profile.id).slice(0,8));
-      dbg.push("2. currentWeek="+currentWeek);
-      dbg.push("3. faultId="+String(faultId).slice(0,8));
-      
-      // Step 1: Check existing
-      const{data:existing,error:findErr}=await supabase.from('fault_votes').select('*').eq('fault_id',faultId).eq('personnel_id',profile.id).eq('vote_week',currentWeek).maybeSingle();
-      dbg.push("4. findErr="+(findErr?.message||"yok"));
-      dbg.push("5. existing="+(existing?JSON.stringify(existing).slice(0,80):"null"));
-      
-      if(existing){
-        dbg.push("6. UPDATE mevcut oy");
-        const{error:upErr}=await supabase.from('fault_votes').update({vote}).eq('id',existing.id);
-        dbg.push("7. upErr="+(upErr?.message||"yok ✓"));
-        if(upErr){setToast("⚠ Güncelleme hatası: "+upErr.message);setSubmitting(false);return;}
-      } else {
-        dbg.push("6. INSERT yeni oy");
-        const insertData={fault_id:faultId,personnel_id:profile.id,vote,vote_week:currentWeek};
-        dbg.push("7. data="+JSON.stringify(insertData).slice(0,120));
-        const{data:ins,error:insErr}=await supabase.from('fault_votes').insert(insertData).select();
-        dbg.push("8. insErr="+(insErr?.message||"yok"));
-        dbg.push("9. inserted="+(ins?JSON.stringify(ins).slice(0,100):"null"));
-        if(insErr){setToast("⚠ INSERT hatası: "+insErr.message);setSubmitting(false);return;}
-        if(!ins||ins.length===0){setToast("⚠ Oy kaydedilemedi (veri dönmedi)");setSubmitting(false);return;}
-      }
-      
-      // Optimistic update
-      setFaultVotes(prev=>{
-        const filtered=prev.filter(v=>!(v.fault_id===faultId&&v.personnel_id===profile.id&&vwMatch(v.vote_week,currentWeek)));
-        return[...filtered,{fault_id:faultId,personnel_id:profile.id,vote,vote_week:currentWeek,id:existing?.id||"new-"+Date.now()}];
-      });
-      
-      dbg.push("10. ✓ Başarılı!");
-      setToast(vote==="continues"?"🔴 Oy kaydedildi ✓":"🟢 Oy kaydedildi ✓");
-      
-      // DB'den yeniden senkronla AMA bu oyu garanti koru (yenileme oyu getirmese/gecikse bile geri alma)
-      try{
-        const cw=getVoteWeek(),pw=getPrevVoteWeek();
-        const{data:rs,error:rsErr}=await supabase.from('fault_votes').select('*').in('vote_week',[cw,pw]).order('created_at',{ascending:false}).limit(1000);
-        if(!rsErr&&Array.isArray(rs)){
-          const mine=v=>v.fault_id===faultId&&v.personnel_id===profile.id&&vwMatch(v.vote_week,cw);
-          setFaultVotes(rs.some(mine)?rs:[...rs,{fault_id:faultId,personnel_id:profile.id,vote,vote_week:cw,id:existing?.id||'opt-'+Date.now()}]);
-        }
-      }catch(e){}
-      
-    }catch(e){
-      dbg.push("HATA: "+String(e?.message||e));
-      setToast("⚠ "+String(e?.message||e));
-    }
-    setSubmitting(false);
-    // Store debug for viewing
-    window.__VOTE_DEBUG=dbg.join("\n");
-    console.log("VOTE DEBUG:\n"+dbg.join("\n"));
-  }
-
-  async function deleteFault(id){
-    setSubmitting(true);
-    try{await supabase.from('faults').delete().eq('id',id);await fetchFaults();setSelFault(null);setDeleteConfirm(null);setToast("🗑 Arıza silindi");}
-    catch(e){setToast("Hata: "+(e?.message||""));}
-    setSubmitting(false);
-  }
-
   const renderFaults=()=>{
     const activeFaults=bFaults.filter(f=>f.status==="active");
     const resolvedFaults=bFaults.filter(f=>f.status==="resolved");
@@ -1466,6 +1498,44 @@ function AppInner(){
       </div>);
     };
     return(<div>
+      {canReview&&revDueAll.length>0&&(()=>{
+        return(<div style={{...S.lawBox,marginBottom:14,borderColor:`${C.purple}66`,background:"rgba(168,85,247,0.06)"}}>
+          <div style={{fontSize:14,fontWeight:800,color:C.purple}}>📋 Bu hafta değerlendirilecek: {revDueAll.length} arıza</div>
+          <div style={{fontSize:11,color:C.dim,marginTop:3,marginBottom:10}}>
+            En eski {revDue.length} tanesi aşağıda. Her arıza için durumu işaretle — {REV_GUN} gün sonra tekrar sorulur.
+          </div>
+          {revDue.map(f=>{
+            const gun=daysSince(f.detected_date);
+            const son=daysAgoTs(f.reviewed_at);
+            return(<div key={f.id} style={{background:C.bg,borderRadius:9,padding:"10px 11px",marginBottom:8,border:`1px solid ${C.border}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"start",gap:8}}>
+                <div style={{flex:1,cursor:"pointer"}} onClick={()=>setSelFault(f)}>
+                  <div style={{fontSize:13,fontWeight:700}}>{f.title}</div>
+                  <div style={{fontSize:10,color:C.muted,marginTop:2}}>📍 {f.location}</div>
+                </div>
+                <div style={{textAlign:"right",minWidth:52}}>
+                  <div style={{fontSize:17,fontWeight:800,color:gun>90?C.red:gun>30?C.orange:C.text}}>{gun}</div>
+                  <div style={{fontSize:9,color:C.dim}}>gün</div>
+                </div>
+              </div>
+              <div style={{fontSize:10,color:C.muted,marginTop:4}}>
+                {son===null?"Hiç değerlendirilmemiş":`Son değerlendirme ${son} gün önce`}
+              </div>
+              <div style={{display:"flex",gap:6,marginTop:9,flexWrap:"wrap"}}>
+                <button style={{...S.btnS(C.redD,C.red),flex:"1 1 96px"}} disabled={submitting}
+                  onClick={()=>submitReview(f,"continues")}>Devam ediyor</button>
+                <button style={{...S.btnS(C.greenD,C.green),flex:"1 1 88px"}} disabled={submitting}
+                  onClick={()=>submitReview(f,"resolved")}>Çözüldü</button>
+                <button style={{...S.btnS(C.blueD,C.blue),flex:"1 1 106px"}} disabled={submitting}
+                  onClick={()=>submitReview(f,"waiting_service")}>Servis bekliyor</button>
+              </div>
+            </div>);
+          })}
+          {revDueAll.length>revDue.length&&<div style={{fontSize:10,color:C.muted,textAlign:"center"}}>
+            +{revDueAll.length-revDue.length} arıza daha bekliyor — bunları bitirince gelecekler
+          </div>}
+        </div>);
+      })()}
       <div style={S.sec}><span>🔧</span> Arızalı Envanter</div>
       <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:12}}>
         <button style={{flex:"1 1 84px",minWidth:84,padding:"10px 6px",borderRadius:10,border:`2px solid ${faultTab==="active"?C.red:C.border}`,background:faultTab==="active"?C.redD:"transparent",color:faultTab==="active"?C.red:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("active")}>🔴 Aktif ({activeFaults.length})</button>
@@ -1648,12 +1718,6 @@ function AppInner(){
       {list.map(f=>{
         const days=daysSince(f.detected_date);
         const svcCount=faultServices.filter(s=>s.fault_id===f.id).length;
-        const weekVotes=faultVotes.filter(v=>v.fault_id===f.id&&vwMatch(v.vote_week,currentWeek));
-        const pvVotes=faultVotes.filter(v=>v.fault_id===f.id&&vwMatch(v.vote_week,prevWeek));
-        const votedCount=weekVotes.length;
-        const myVote=weekVotes.find(v=>v.personnel_id===profile.id);
-        const pvCont=pvVotes.filter(v=>v.vote==="continues").length;
-        const pvRes=pvVotes.filter(v=>v.vote==="resolved").length;
         return(<div key={f.id} style={{...S.crd,borderLeft:`4px solid ${f.status==="active"?C.red:C.green}`}} onClick={()=>setSelFault(f)}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}>
             <div style={{flex:1}}>
@@ -1667,16 +1731,17 @@ function AppInner(){
           </div>
           <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
             {f.fault_type==="material"?<div style={S.tag("rgba(245,158,11,0.15)",C.orange)}>📦 Malzeme</div>:<div style={S.tag(C.blueD,C.blue)}>🔧 Servis</div>}
+            {f.status==="active"&&(()=>{const d=daysAgoTs(f.reviewed_at);
+              if(d===null)return<div style={S.tag(C.bg,C.muted)}>⏳ hiç değerlendirilmedi</div>;
+              const m=REV_LBL[f.review_status]||["—",C.muted];
+              return d>=REV_GUN?<div style={S.tag(C.orangeD,C.orange)}>⏳ {d} gündür değerlendirilmedi</div>
+                              :<div style={S.tag(m[1]+"22",m[1])}>✓ {d===0?"bugün":d+" gün önce"}: {m[0]}</div>;})()}
             {(()=>{const fl=fmOf(f.id);if(fl.length===0)return null;
               const acik=fl.filter(x=>x.status==="needed"||x.status==="requested").length;
               return (acik>0&&f.status==="active")?<div style={S.tag(C.orangeD,C.orange)}>🧰 {acik} malzeme bekliyor</div>
                           :<div style={S.tag(C.greenD,C.green)}>🧰 {fl.filter(x=>x.status==="issued").length}/{fl.length} çıkıldı</div>;})()}
             {svcCount>0&&<div style={S.tag(C.blueD,C.blue)}>🔧 {svcCount} servis</div>}
             
-            {myVote&&<div style={S.tag(myVote.vote==="continues"?C.redD:C.greenD,myVote.vote==="continues"?C.red:C.green)}>{myVote.vote==="continues"?"🔴 Devam":"🟢 Giderildi"}</div>}
-            {!myVote&&f.status==="active"&&<div style={S.tag(C.orangeD,C.orange)}>⏳ Oy bekleniyor</div>}
-            {votedCount>0&&<div style={{fontSize:10,color:C.muted,alignSelf:"center"}}>{votedCount} oy</div>}
-            {pvVotes.length>0&&<div style={{fontSize:10,color:C.purple,alignSelf:"center"}}>📋 Önceki: {pvCont}🔴 {pvRes}🟢</div>}
           </div>
         </div>);
       })}
@@ -1688,9 +1753,6 @@ function AppInner(){
     const f=selFault;
     const days=daysSince(f.detected_date);
     const services=faultServices.filter(s=>s.fault_id===f.id).sort((a,b)=>(b.visit_date||"").localeCompare(a.visit_date||""));
-    const weekVotes=faultVotes.filter(v=>v.fault_id===f.id&&vwMatch(v.vote_week,currentWeek));
-    const myVote=weekVotes.find(v=>v.personnel_id===profile.id);
-    const allActiveProfiles=bProfiles.filter(p=>p.active);
     const creator=profiles.find(p=>p.id===f.created_by);
 
     return(<div style={S.mod} onClick={()=>{setSelFault(null);setModAddService(false);setModEditFault(null);setDeleteConfirm(null);}}><div style={{...S.modC,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
@@ -1762,6 +1824,12 @@ function AppInner(){
           })}
         </div>);
       })()}
+      {f.reviewed_at&&(()=>{const m=REV_LBL[f.review_status]||["—",C.muted];const rb=getU(f.reviewed_by);const d=daysAgoTs(f.reviewed_at);
+        return(<div style={{background:C.bg,borderRadius:9,padding:"8px 10px",marginBottom:12,border:`1px solid ${m[1]}33`}}>
+          <div style={{fontSize:10,color:C.muted,fontWeight:700,marginBottom:3}}>SON DEĞERLENDİRME</div>
+          <div style={{fontSize:12,color:m[1],fontWeight:700}}>{m[0]}</div>
+          <div style={{fontSize:10,color:C.muted,marginTop:2}}>{rb?rb.full_name:"—"} • {d===0?"bugün":d+" gün önce"}</div>
+        </div>);})()}
       {f.description&&<div style={{...S.lawBox,marginBottom:12}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4}}>Açıklama</div><div style={{fontSize:13}}>{f.description}</div></div>}
 
       
@@ -1783,95 +1851,6 @@ function AppInner(){
         <textarea style={S.ta} placeholder="Servisin yaptığı işlem veya tespitler..." value={serviceForm.notes} onChange={e=>setServiceForm(p=>({...p,notes:e.target.value}))}/>
         <div style={{display:"flex",gap:8}}><button style={{...S.btn(C.blue),flex:1}} onClick={()=>submitService(f.id)} disabled={submitting}>{submitting?"...":"Kaydet"}</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setModAddService(false)}>İptal</button></div>
       </div>}
-
-      {/* OYLAMA */}
-      {f.status==="active"&&!isAmir&&<div style={{...S.lawBox,marginBottom:12,borderColor:`${C.orange}44`}}>
-        <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>📊 Haftalık Durum Oylaması <span style={{fontSize:10,color:votePeriod.isUrgent?C.red:C.muted,fontWeight:votePeriod.isUrgent?700:500}}>({fDS(votePeriod.start.toISOString().slice(0,10))} → {fDS(votePeriod.end.toISOString().slice(0,10))}{votePeriod.isUrgent?" ⏰ SON GÜN!":votePeriod.isWarning?" ⚠ "+votePeriod.daysLeft+" gün kaldı":""})</span></div>
-        {!myVote?<div style={{display:"flex",gap:8}}>
-          <button style={{flex:1,padding:12,borderRadius:10,background:C.redD,border:`2px solid ${C.red}44`,color:C.red,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>submitVote(f.id,"continues")} disabled={submitting}>🔴 Arıza Devam Ediyor</button>
-          <button style={{flex:1,padding:12,borderRadius:10,background:C.greenD,border:`2px solid ${C.green}44`,color:C.green,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>submitVote(f.id,"resolved")} disabled={submitting}>🟢 Arıza Giderildi</button>
-        </div>:<div style={{textAlign:"center",padding:8,background:myVote.vote==="continues"?C.redD:C.greenD,borderRadius:8}}>
-          <span style={{color:myVote.vote==="continues"?C.red:C.green,fontWeight:700}}>{myVote.vote==="continues"?"🔴 Devam ediyor olarak oy kullandınız":"🟢 Giderildi olarak oy kullandınız"}</span>
-          {canEditFault&&<div style={{marginTop:6}}><button style={{fontSize:11,color:C.muted,background:"none",border:"none",textDecoration:"underline",cursor:"pointer"}} onClick={()=>submitVote(f.id,myVote.vote==="continues"?"resolved":"continues")}>Oyumu değiştir</button></div>}
-          {isPerso&&<div style={{fontSize:10,color:C.muted,marginTop:6}}>🔒 Oyunuz kaydedildi</div>}
-        </div>}
-        {canEditFault&&<div style={{marginTop:10}}>
-          <div style={{fontSize:11,color:C.muted,fontWeight:600,marginBottom:6}}>Bu hafta oylar ({weekVotes.length}/{allActiveProfiles.length})</div>
-          {allActiveProfiles.map(p=>{
-            const v=weekVotes.find(vt=>vt.personnel_id===p.id);
-            return(<div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:`1px solid ${C.border}`}}>
-              <div style={{fontSize:12,fontWeight:500}}>{p.full_name}</div>
-              {v?<div style={{fontSize:11,fontWeight:700,color:v.vote==="continues"?C.red:C.green}}>{v.vote==="continues"?"🔴 Devam":"🟢 Giderildi"}</div>
-              :<div style={{fontSize:11,color:C.orange}}>⏳ Oy yok</div>}
-            </div>);
-          })}
-        </div>}
-        {/* Debug: vote info */}
-        <details style={{marginTop:8}}>
-          <summary style={{fontSize:10,color:C.muted,cursor:"pointer"}}>🔍 Oy Debug</summary>
-          <pre style={{fontSize:9,color:C.dim,background:C.bg,padding:8,borderRadius:6,whiteSpace:"pre-wrap",marginTop:4}}>{
-            "currentWeek: '"+currentWeek+"'"+
-            "\nprofile.id: "+String(profile?.id).slice(0,12)+
-            "\nfault.id: "+String(f.id).slice(0,12)+
-            "\nweekvotes: "+weekVotes.length+
-            "\nmyVote: "+(myVote?JSON.stringify(myVote).slice(0,120):"YOK")+
-            "\ntoplam faultVotes state: "+faultVotes.length+
-            "\nbu arıza tüm oylar: "+faultVotes.filter(v=>v.fault_id===f.id).length+
-            "\n\n--- vote_week formatları (bu arıza) ---\n"+
-            faultVotes.filter(v=>v.fault_id===f.id).slice(0,5).map(v=>"id:"+String(v.id).slice(0,8)+" week:'"+v.vote_week+"' type:"+typeof v.vote_week+" match:"+vwMatch(v.vote_week,currentWeek)+" pid:"+String(v.personnel_id).slice(0,8)).join("\n")+
-            "\n\n"+(typeof window!=="undefined"&&window.__VOTE_DEBUG||"henüz oy kullanılmadı")
-          }</pre>
-        </details>
-      </div>}
-
-      {/* ÖNCEKİ DÖNEM SONUÇLARI */}
-      {f.status==="active"&&(()=>{
-        // Collect ALL past vote weeks for this fault
-        const allVotesForFault=faultVotes.filter(v=>v.fault_id===f.id&&!vwMatch(v.vote_week,currentWeek));
-        const pastWeeks=[...new Set(allVotesForFault.map(v=>v.vote_week))].sort((a,b)=>b.localeCompare(a));
-        if(pastWeeks.length===0)return null;
-        return(<div style={{...S.lawBox,marginBottom:12,borderColor:`${C.purple}44`,background:"rgba(168,85,247,0.04)"}}>
-          <div style={{fontSize:13,fontWeight:700,color:C.purple,marginBottom:10}}>📋 Önceki Dönem Sonuçları</div>
-          {pastWeeks.map((wk,wi)=>{
-            const wkVotes=allVotesForFault.filter(v=>vwMatch(v.vote_week,wk));
-            const wkRange=getVoteWeekRange(wk);
-            const contCount=wkVotes.filter(v=>v.vote==="continues").length;
-            const resCount=wkVotes.filter(v=>v.vote==="resolved").length;
-            const noVote=allActiveProfiles.filter(p=>!wkVotes.some(v=>v.personnel_id===p.id));
-            const isLatest=wi===0;
-            return(<div key={wk} style={{marginBottom:wi<pastWeeks.length-1?12:0}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                <div style={{fontSize:11,fontWeight:600,color:isLatest?C.purple:C.muted}}>{isLatest?"Geçen Hafta":"Hafta"}: {fDS(wkRange.start)} → {fDS(wkRange.end)}</div>
-              </div>
-              <div style={{display:"flex",gap:6,marginBottom:canEditFault&&isLatest?8:0}}>
-                <div style={{flex:1,background:C.redD,borderRadius:6,padding:"6px 8px",textAlign:"center"}}>
-                  <div style={{fontSize:16,fontWeight:800,color:C.red}}>{contCount}</div>
-                  <div style={{fontSize:9,color:C.dim}}>🔴 Devam</div>
-                </div>
-                <div style={{flex:1,background:C.greenD,borderRadius:6,padding:"6px 8px",textAlign:"center"}}>
-                  <div style={{fontSize:16,fontWeight:800,color:C.green}}>{resCount}</div>
-                  <div style={{fontSize:9,color:C.dim}}>🟢 Giderildi</div>
-                </div>
-                <div style={{flex:1,background:C.orangeD,borderRadius:6,padding:"6px 8px",textAlign:"center"}}>
-                  <div style={{fontSize:16,fontWeight:800,color:C.orange}}>{noVote.length}</div>
-                  <div style={{fontSize:9,color:C.dim}}>❌ Yok</div>
-                </div>
-              </div>
-              {canEditFault&&isLatest&&<div>
-                {allActiveProfiles.map(p=>{
-                  const v=wkVotes.find(vt=>vt.personnel_id===p.id);
-                  return(<div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${C.border}`}}>
-                    <div style={{fontSize:12,fontWeight:500}}>{p.full_name}</div>
-                    {v?<div style={{fontSize:11,fontWeight:700,color:v.vote==="continues"?C.red:C.green}}>{v.vote==="continues"?"🔴 Devam":"🟢 Giderildi"}</div>
-                    :<div style={{fontSize:11,color:C.orange,fontWeight:600}}>❌ Oy kullanmadı</div>}
-                  </div>);
-                })}
-              </div>}
-              {wi<pastWeeks.length-1&&<div style={{borderBottom:`1px solid ${C.border}`,marginTop:8}}/>}
-            </div>);
-          })}
-        </div>);
-      })()}
 
       {/* Edit / Admin actions */}
       {isOwnFault(f)&&f.status==="active"&&<button style={S.btn(C.accentD,C.accent)} onClick={()=>{setFaultForm({title:f.title,location:f.location,description:f.description||"",detected_date:f.detected_date,photos:f.photos||[],services:[],fault_type:f.fault_type||"service",material_needed:f.material_needed||"",editId:f.id});setFaultPhotoFiles([]);setSelFault(null);setModNewFault(true);}}>✏️ Arızayı Düzenle</button>}
@@ -2260,6 +2239,43 @@ function AppInner(){
     </div></div>);
   };
 
+  const renderShSub=()=>{
+    if(!shSub)return null;const row=shSub;const u=getU(row.personnel_id);const L=SH_LBL[row.shift_type];
+    const adaylar=shCandidates(row);
+    const uygun=adaylar.filter(a=>!a.blok).length;
+    return(<div style={S.mod} onClick={()=>setShSub(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+      <div style={S.modH}/>
+      <div style={{fontSize:17,fontWeight:700,marginBottom:4}}>🔄 Yerine Ata</div>
+      <div style={{fontSize:13,color:C.dim,marginBottom:12}}>
+        {fDS(row.shift_date)} · <b style={{color:L[3]}}>{L[0]}</b> {L[1]&&`(${L[1]})`}<br/>
+        <b style={{color:C.text}}>{u?u.full_name:"—"}</b> yerine kim girecek?
+      </div>
+      <div style={S.lbl}>Not (isteğe bağlı)</div>
+      <input style={S.inp} placeholder="Örn. raporlu, izinli, görevlendirme" value={shSubNote} onChange={e=>setShSubNote(e.target.value)}/>
+      <div style={{fontSize:11,color:C.dim,margin:"12px 0 6px"}}>{uygun} kişi uygun · toplam {adaylar.length} personel</div>
+      <div style={{maxHeight:"42vh",overflowY:"auto",margin:"0 -4px",padding:"0 4px"}}>
+        {adaylar.map(a=>(
+          <div key={a.p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,
+            padding:"9px 10px",marginBottom:6,borderRadius:9,background:a.blok?"transparent":C.bg,
+            border:`1px solid ${a.blok?C.border:(a.farkli?C.orange+"55":C.green+"44")}`,opacity:a.blok?0.45:1}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:600}}>{a.p.full_name}</div>
+              <div style={{fontSize:10,color:a.blok?C.red:C.muted}}>
+                {a.blok?"⛔ "+a.blok:a.durum}
+                {!a.blok&&a.farkli&&<span style={{color:C.orange}}> · ⚠ farklı birim</span>}
+              </div>
+            </div>
+            <button style={S.btnS(a.blok?C.bg:C.greenD,a.blok?C.dim:C.green)} disabled={!!a.blok||submitting}
+              onClick={()=>submitSub(row,a.p.id)}>{a.blok?"—":"Ata"}</button>
+          </div>))}
+      </div>
+      <div style={{fontSize:10,color:C.dim,margin:"8px 0 12px"}}>
+        ⚠ Gece vardiyası normalde 1 mekanik + 1 elektrik olarak kurulur. Farklı birimden atarsanız o gece o birim boş kalır.
+      </div>
+      <button style={S.btn(C.bg,C.muted)} onClick={()=>setShSub(null)}>Vazgeç</button>
+    </div></div>);
+  };
+
   const renderStockOutModal=()=>{
     if(!modStockOut)return null;const m=modStockOut;
     return(<div style={S.mod} onClick={()=>setModStockOut(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
@@ -2351,11 +2367,32 @@ function AppInner(){
           {debt>0&&<div style={{marginTop:8,background:C.redD,borderRadius:8,padding:"6px 10px",textAlign:"center"}}><span style={{fontSize:12,color:C.red,fontWeight:700}}>⚠ {debt} gun mesai borcu</span></div>}
         </div>
         <button style={S.btn(C.accent)} onClick={()=>{setOtForm({date:todayStr(),startTime:"17:00",endTime:"",otType:"evening",desc:""});setOtErrors([]);setModNewOT(true);}}>+ Fazla Mesai Bildir</button>
-        {myPendingVotes.length>0&&<div style={{...S.crd,background:votePeriod.isUrgent?C.redD:votePeriod.isWarning?"rgba(245,158,11,0.12)":"rgba(99,102,241,0.1)",borderColor:votePeriod.isUrgent?`${C.red}66`:votePeriod.isWarning?`${C.orange}44`:`${C.accent}44`,cursor:"pointer",textAlign:"center"}} onClick={()=>setPage("faults")}>
-          <div style={{fontSize:votePeriod.isUrgent?24:20,fontWeight:800,color:votePeriod.isUrgent?C.red:votePeriod.isWarning?C.orange:C.accent}}>🗳 {myPendingVotes.length}</div>
-          <div style={{fontSize:12,fontWeight:600,color:votePeriod.isUrgent?C.red:votePeriod.isWarning?C.orange:C.text}}>Arıza için oy bekleniyor</div>
-          <div style={{fontSize:10,color:C.muted,marginTop:4}}>{votePeriod.isUrgent?"⏰ Son gün! Bugün oy kullanın":"Kalan süre: "+votePeriod.daysLeft+" gün"}</div>
-        </div>}
+        {(()=>{
+          if(!shHas)return null;
+          const L=shToday?SH_LBL[shToday.shift_type]:null;
+          const T=shTomorrow?SH_LBL[shTomorrow.shift_type]:null;
+          const calisiyor=shToday&&SH_WORK.includes(shToday.shift_type);
+          return(<div style={{...S.crd,marginBottom:12,cursor:"pointer",
+            borderColor:L?L[3]+"55":C.border,background:calisiyor?L[3]+"14":C.card}}
+            onClick={()=>{setPage("calendar");setCalTab("shift");setShScope("me");}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:10,color:C.muted,fontWeight:700,letterSpacing:0.3}}>BUGÜNKÜ VARDİYAM</div>
+                <div style={{fontSize:16,fontWeight:800,color:L?L[3]:C.dim,marginTop:2}}>
+                    {L?L[0]:"Çizelgede kayıt yok"}</div>
+                  {L&&L[1]&&<div style={{fontSize:11,color:C.dim,marginTop:1}}>{L[1]}</div>}
+                  {shToday?.source==="substitute"&&<div style={{fontSize:10,color:C.orange,marginTop:2}}>
+                  🔄 {getU(shToday.original_personnel_id)?.full_name||"?"} yerine</div>}
+              </div>
+              <div style={{textAlign:"right",minWidth:78}}>
+                <div style={{fontSize:9,color:C.muted,fontWeight:700}}>YARIN</div>
+                <div style={{fontSize:12,fontWeight:700,color:T?T[3]:C.dim,marginTop:2}}>{T?T[2]+" "+T[0]:"—"}</div>
+              </div>
+            </div>
+              {shTonight.length>0&&<div style={{marginTop:9,paddingTop:8,borderTop:`1px solid ${C.border}`,fontSize:11,color:C.dim}}>
+              🌙 Bu gece nöbetçi: <b style={{color:C.purple}}>{shTonight.map(s=>getU(s.personnel_id)?.full_name||"—").join(" + ")}</b>
+            </div>}
+          </div>);})()}
         <div style={{height:12}}/>
         <div style={S.sec}><span>⏱</span> Son Mesailer</div>
         {myOTs.length===0&&<div style={S.emp}>Henüz mesai kaydi yok</div>}
@@ -2400,12 +2437,32 @@ function AppInner(){
         <div style={{fontSize:12,color:C.dim}}>{vPC>0?"Onay Bekleyen Talep":"Bekleyen talep yok"}</div>
         {isViewer&&vPC>0&&<div style={{fontSize:10,color:C.muted,marginTop:4}}>Sadece görüntüleme</div>}
       </div>
-      {myPendingVotes.length>0&&<div style={{...S.crd,background:votePeriod.isUrgent?C.redD:votePeriod.isWarning?"rgba(245,158,11,0.12)":"rgba(99,102,241,0.1)",borderColor:votePeriod.isUrgent?`${C.red}66`:votePeriod.isWarning?`${C.orange}44`:`${C.accent}44`,cursor:"pointer"}} onClick={()=>setPage("faults")}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div><div style={{fontSize:14,fontWeight:700,color:votePeriod.isUrgent?C.red:C.accent}}>🗳 {myPendingVotes.length} arıza için oy bekleniyor</div><div style={{fontSize:10,color:C.muted,marginTop:2}}>{votePeriod.isUrgent?"⏰ Son gün!":"Kalan: "+votePeriod.daysLeft+" gün"}</div></div>
-          <div style={{fontSize:24}}>{votePeriod.isUrgent?"🔴":"📊"}</div>
-        </div>
-      </div>}
+      {(()=>{
+        if(!shHas)return null;
+        const L=shToday?SH_LBL[shToday.shift_type]:null;
+        const T=shTomorrow?SH_LBL[shTomorrow.shift_type]:null;
+        const calisiyor=shToday&&SH_WORK.includes(shToday.shift_type);
+        return(<div style={{...S.crd,marginBottom:12,cursor:"pointer",
+          borderColor:L?L[3]+"55":C.border,background:calisiyor?L[3]+"14":C.card}}
+          onClick={()=>{setPage("calendar");setCalTab("shift");setShScope("me");}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:10,color:C.muted,fontWeight:700,letterSpacing:0.3}}>BUGÜNKÜ VARDİYAM</div>
+              <div style={{fontSize:16,fontWeight:800,color:L?L[3]:C.dim,marginTop:2}}>
+                {L?L[0]:"Çizelgede kayıt yok"}</div>
+              {L&&L[1]&&<div style={{fontSize:11,color:C.dim,marginTop:1}}>{L[1]}</div>}
+              {shToday?.source==="substitute"&&<div style={{fontSize:10,color:C.orange,marginTop:2}}>
+                🔄 {getU(shToday.original_personnel_id)?.full_name||"?"} yerine</div>}
+            </div>
+            <div style={{textAlign:"right",minWidth:78}}>
+              <div style={{fontSize:9,color:C.muted,fontWeight:700}}>YARIN</div>
+              <div style={{fontSize:12,fontWeight:700,color:T?T[3]:C.dim,marginTop:2}}>{T?T[2]+" "+T[0]:"—"}</div>
+            </div>
+          </div>
+          {shTonight.length>0&&<div style={{marginTop:9,paddingTop:8,borderTop:`1px solid ${C.border}`,fontSize:11,color:C.dim}}>
+            🌙 Bu gece nöbetçi: <b style={{color:C.purple}}>{shTonight.map(s=>getU(s.personnel_id)?.full_name||"—").join(" + ")}</b>
+          </div>}
+        </div>);})()}
       {debtors.length>0&&<div style={{marginBottom:16}}><div style={{...S.sec,color:C.red}}><span>⚠</span> Borçlu Personel</div>{debtors.map(u=>(<div key={u.id} style={{...S.crd,borderColor:`${C.red}44`}} onClick={()=>{setSelPerson(u.id);setPage("person");}}><div style={S.row}><div style={S.av(C.redD)}>{ini(u.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14,fontWeight:600}}>{u.full_name}</div><div style={{fontSize:11,color:C.dim}}>{u.role}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:18,fontWeight:800,color:C.red}}>{debtDays(u.id)}</div><div style={{fontSize:10,color:C.red}}>gün borç</div></div></div></div>))}</div>}
       {criticalCount>0&&<div style={{...S.crd,background:"rgba(239,68,68,0.06)",borderColor:C.red+"44",cursor:"pointer"}} onClick={()=>{setPage("depo");setDepoTab("purchase");}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -2534,6 +2591,22 @@ function AppInner(){
     const activeAll=bProfiles.filter(u=>u.active&&u.id!==profile?.id&&(u.department||"mekanik")===deptTab);
     return(<div>
       <div style={S.sec}><span>⚙️</span> Yonetim</div>
+      {shHas&&<div style={{...S.crd,marginBottom:12,cursor:"pointer",
+        borderColor:shIssues.length>0?C.orange+"66":C.green+"44",
+        background:shIssues.length>0?"rgba(245,158,11,0.06)":"transparent"}}
+        onClick={()=>{setPage("calendar");setCalTab("shift");setShScope("team");setShDay(shIssues[0]?.d||todayStr());}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+          <div style={{flex:1}}>
+            <div style={{fontSize:13,fontWeight:800,color:shIssues.length>0?C.orange:C.green}}>
+              {shIssues.length>0?`⚠ Çizelgede ${shIssues.length} uyarı`:"✓ Çizelge tutarlı"}</div>
+            <div style={{fontSize:10,color:C.dim,marginTop:2}}>Önümüzdeki 30 gün · gece kapsaması, birim dengesi, izin çakışması</div>
+          </div>
+          <div style={{color:C.accent,fontSize:18}}>&#8250;</div>
+        </div>
+        {shIssues.slice(0,4).map((x,i)=>(<div key={i} style={{marginTop:7,paddingTop:7,borderTop:`1px solid ${C.border}`,fontSize:11,color:C.dim}}>
+          <b style={{color:C.orange}}>{fDS(x.d)}</b> — {x.mesaj}</div>))}
+        {shIssues.length>4&&<div style={{fontSize:10,color:C.muted,marginTop:6}}>+{shIssues.length-4} uyarı daha</div>}
+      </div>}
       <button style={S.btn(C.accent)} onClick={()=>setModAddUser(true)}>+ Yeni Personel</button>
       <div style={{height:8}}/>
       <button style={S.btn(C.tealD,C.teal)} onClick={()=>setShowPWA(true)}>📲 Ana Ekrana Ekleme Rehberi</button>
@@ -2619,7 +2692,132 @@ function AppInner(){
     </div></div>);
   };
 
+  // ═══ Vardiya cizelgesi gorunumu ═══
+  const shTabBar=()=>(<div style={{display:"flex",gap:6,marginBottom:12}}>
+    {[["leave","🌴 İzin",C.teal],["shift","🔄 Vardiya",C.purple]].map(([k,lbl,col])=>(
+      <button key={k} style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${calTab===k?col:C.border}`,
+        background:calTab===k?col+"1f":"transparent",color:calTab===k?col:C.muted,fontWeight:700,fontSize:13,cursor:"pointer",WebkitAppearance:"none"}}
+        onClick={()=>{setCalTab(k);setCalMode("view");setCalSel([]);}}>{lbl}</button>))}
+  </div>);
+
+  const renderShift=()=>{
+    const today=bugun;
+    if(!shHas)return(<div style={{...S.crd,padding:20,textAlign:"center"}}>
+      <div style={{fontSize:30,marginBottom:8}}>🗓</div>
+      <div style={{fontSize:14,fontWeight:700,marginBottom:4}}>Vardiya çizelgesi yüklenmemiş</div>
+      <div style={{fontSize:12,color:C.dim}}>Bu bina için henüz puantaj aktarılmadı.</div>
+    </div>);
+    const dim=daysInMonth(calY,calM),fd=firstDay(calY,calM);
+    function prev(){calM===0?(setCalY(calY-1),setCalM(11)):setCalM(calM-1);}
+    function next(){calM===11?(setCalY(calY+1),setCalM(0)):setCalM(calM+1);}
+    const gun=shDay||today;
+
+    const kapsam=(<div style={{display:"flex",gap:6,marginBottom:12}}>
+      <button style={{flex:1,...S.btnS(shScope==="me"?C.purple:C.bg,shScope==="me"?"#fff":C.muted),padding:"9px"}}
+        onClick={()=>setShScope("me")}>Benim</button>
+      <button style={{flex:1,...S.btnS(shScope==="team"?C.purple:C.bg,shScope==="team"?"#fff":C.muted),padding:"9px"}}
+        onClick={()=>{setShScope("team");if(!shDay)setShDay(today);}}>Tüm ekip</button>
+    </div>);
+
+    // ── Ay basligi + gezinme
+    const nav=(<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+      <button onClick={prev} style={{background:C.accentD,border:"none",color:C.accent,width:40,height:40,borderRadius:10,cursor:"pointer",fontSize:18,fontWeight:700,WebkitAppearance:"none"}}>&#8249;</button>
+      <div style={{fontSize:17,fontWeight:700}}>{MONTHS[calM]} {calY}</div>
+      <button onClick={next} style={{background:C.accentD,border:"none",color:C.accent,width:40,height:40,borderRadius:10,cursor:"pointer",fontSize:18,fontWeight:700,WebkitAppearance:"none"}}>&#8250;</button>
+    </div>);
+
+    // ── KISISEL AY GORUNUMU
+    if(shScope==="me"){
+      const cells=[];for(let i=0;i<fd;i++)cells.push(<div key={`e${i}`}/>);
+      const say={};
+      for(let d=1;d<=dim;d++){
+        const ds=dateStr(calY,calM,d),s=shMine[ds],isT=ds===today;
+        const L=s?SH_LBL[s.shift_type]:null;
+        if(s)say[s.shift_type]=(say[s.shift_type]||0)+1;
+        const calisma=s&&SH_WORK.includes(s.shift_type);
+        cells.push(<div key={d} style={{width:"100%",paddingTop:"100%",borderRadius:10,position:"relative",
+          background:L?(calisma?L[3]+"26":C.bg):"transparent",border:isT?`2px solid ${C.accent}`:`1px solid ${L?L[3]+"33":"transparent"}`}}>
+          <div style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+            <div style={{fontSize:13,fontWeight:isT?800:600,color:L?L[3]:C.dim,lineHeight:1}}>{d}</div>
+            {L&&<div style={{fontSize:9,fontWeight:800,color:L[3],lineHeight:1,marginTop:2}}>{L[2]}</div>}
+          </div></div>);
+      }
+      const calGun=(say.day||0)+(say.night||0)+(say.weekend_day||0);
+      return(<div>
+        {kapsam}
+        {!shMineVar?<div style={{...S.crd,padding:18,textAlign:"center"}}>
+          <div style={{fontSize:26,marginBottom:6}}>🗓</div>
+          <div style={{fontSize:13,fontWeight:700,marginBottom:3}}>Vardiya çizelgesinde kaydınız yok</div>
+          <div style={{fontSize:11,color:C.dim,marginBottom:12}}>Puantaja dahil değilsiniz. Ekibin çizelgesini görebilirsiniz.</div>
+          <button style={S.btnS(C.purple,"#fff")} onClick={()=>{setShScope("team");setShDay(today);}}>Tüm ekibi göster</button>
+        </div>:<>{nav}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4,marginBottom:4}}>{DAYS_TR.map(d=><div key={d} style={{textAlign:"center",fontSize:11,color:C.muted,fontWeight:600,padding:"4px 0"}}>{d}</div>)}</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>{cells}</div>
+        <div style={{...S.lawBox,marginTop:14}}>
+          <div style={{fontSize:12,fontWeight:800,marginBottom:8}}>{MONTHS[calM]} özeti — <span style={{color:C.accent}}>{calGun} çalışma günü</span></div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+            {Object.keys(SH_LBL).filter(k=>say[k]).map(k=>{const L=SH_LBL[k];
+              return<div key={k} style={S.tag(L[3]+"1f",L[3])}>{L[2]} {L[0]}: <b>{say[k]}</b></div>;})}
+          </div>
+          <div style={{fontSize:10,color:C.dim,marginTop:8}}>G/HV 08:00–17:00 · GV 17:00–08:00 · Nİ gece nöbeti sonrası izin</div>
+        </div></>}
+      </div>);
+    }
+
+    // ── TUM EKIP: GUN GORUNUMU
+    const liste=(shByDate[gun]||[]);
+    const grup=(t)=>liste.filter(s=>s.shift_type===t);
+    const gunAdi=DAYS_TR[(new Date(Number(gun.slice(0,4)),Number(gun.slice(5,7))-1,Number(gun.slice(8,10))).getDay()+6)%7];
+    const blok=(t)=>{const rows=grup(t);if(rows.length===0)return null;const L=SH_LBL[t];
+      return(<div key={t} style={{...S.crd,padding:12,marginBottom:10,borderColor:L[3]+"44"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <div style={{fontSize:13,fontWeight:800,color:L[3]}}>{L[2]} {L[0]}</div>
+          <div style={{fontSize:10,color:C.dim}}>{L[1]}</div>
+        </div>
+        {rows.map(s=>{const u=getU(s.personnel_id);
+          return(<div key={s.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,padding:"7px 0",borderTop:`1px solid ${C.border}`}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:600}}>{u?u.full_name:"—"}</div>
+              <div style={{fontSize:10,color:C.muted}}>
+                {(u?.department||"mekanik")==="elektrik"?"⚡ Elektrik":"🔧 Mekanik"}
+                {s.source==="substitute"&&<span style={{color:C.orange}}> · 🔄 {getU(s.original_personnel_id)?.full_name||"?"} yerine</span>}
+              </div>
+            </div>
+            {canShiftEdit&&SH_WORK.includes(s.shift_type)&&
+              <button style={S.btnS(C.orangeD,C.orange)} disabled={submitting} onClick={()=>{setShSubNote("");setShSub(s);}}>Yerine ata</button>}
+          </div>);})}
+      </div>);};
+    const izinli=liste.filter(s=>s.shift_type==="leave");
+    return(<div>
+      {kapsam}
+      {canShiftEdit&&shIssues.length>0&&<div style={{...S.lawBox,marginBottom:12,borderColor:C.orange+"55",background:"rgba(245,158,11,0.06)"}}>
+        <div style={{fontSize:12,fontWeight:800,color:C.orange,marginBottom:5}}>⚠ Çizelgede {shIssues.length} uyarı (30 gün)</div>
+        {shIssues.slice(0,3).map((x,i)=>(<div key={i} style={{fontSize:11,color:C.dim,padding:"2px 0",cursor:"pointer"}}
+          onClick={()=>setShDay(x.d)}><b style={{color:C.orange}}>{fDS(x.d)}</b> — {x.mesaj}</div>))}
+        {shIssues.length>3&&<div style={{fontSize:10,color:C.muted,marginTop:4}}>+{shIssues.length-3} uyarı daha</div>}
+      </div>}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <button onClick={()=>setShDay(shAddDays(gun,-1))} style={{background:C.accentD,border:"none",color:C.accent,width:40,height:40,borderRadius:10,cursor:"pointer",fontSize:18,fontWeight:700,WebkitAppearance:"none"}}>&#8249;</button>
+        <div style={{textAlign:"center",cursor:"pointer"}} onClick={()=>setShDay(today)}>
+          <div style={{fontSize:16,fontWeight:700}}>{fDS(gun)} · {gunAdi}</div>
+          <div style={{fontSize:10,color:gun===today?C.accent:C.dim,marginTop:2}}>{gun===today?"bugün":"bugüne dön"}</div>
+        </div>
+        <button onClick={()=>setShDay(shAddDays(gun,1))} style={{background:C.accentD,border:"none",color:C.accent,width:40,height:40,borderRadius:10,cursor:"pointer",fontSize:18,fontWeight:700,WebkitAppearance:"none"}}>&#8250;</button>
+      </div>
+      {liste.length===0?<div style={{...S.crd,padding:18,textAlign:"center",fontSize:13,color:C.dim}}>Bu tarih için çizelge yok</div>
+        :<>{["night","weekend_day","day"].map(blok)}
+          {izinli.length>0&&<div style={{...S.lawBox,borderColor:C.red+"33"}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.red,marginBottom:4}}>İZ Vardiyası devredilenler</div>
+            {izinli.map(s=><div key={s.id} style={{fontSize:11,color:C.dim,padding:"2px 0"}}>{getU(s.personnel_id)?.full_name||"—"}{s.note?" — "+s.note:""}</div>)}
+          </div>}
+          <div style={{fontSize:10,color:C.dim,textAlign:"center",marginTop:10}}>
+            Nİ/H/RT olanlar listelenmez — sadece o gün görevli olanlar görünür
+          </div></>}
+    </div>);
+  };
+
   const renderCalendar=()=>{
+    if(calTab==="shift")return(<div><div style={S.sec}><span>📅</span> Takvim</div>{shTabBar()}{renderShift()}</div>);
     const dim=daysInMonth(calY,calM),fd=firstDay(calY,calM),isSel=calMode!=="view";
     const myLvs=leavesState.filter(l=>l.personnel_id===profile.id&&l.status!=="rejected");
     const allLvs=isPerso?myLvs:bLeaves.filter(l=>l.status!=="rejected");
@@ -2645,7 +2843,8 @@ function AppInner(){
     }
     const needH=calSel.length*8,currentRH=myRemHours(profile.id),willDebt=needH>0&&currentRH<needH,debtAmt=willDebt?Math.round((needH-currentRH)/8*10)/10:0;
     return(<div>
-      <div style={S.sec}><span>📅</span> İzin Takvimi</div>
+      <div style={S.sec}><span>📅</span> Takvim</div>
+      {shTabBar()}
       {/* Leave source toggle */}
       <div style={{display:"flex",gap:6,marginBottom:12}}>
         <button style={{flex:1,padding:"10px",borderRadius:10,border:"2px solid "+(leaveSource==="overtime"?C.accent:C.border),background:leaveSource==="overtime"?C.accentD:"transparent",color:leaveSource==="overtime"?C.accent:C.muted,fontWeight:700,fontSize:13,cursor:"pointer"}} onClick={()=>{setLeaveSource("overtime");setCalMode("view");setCalSel([]);setHourlyMode(false);}}>⏱ Mesai İzni</button>
@@ -3091,6 +3290,7 @@ function AppInner(){
       {renderPlanEdit()}
       {renderPlanNew()}
       {renderNightPick()}
+      {renderShSub()}
       {showMtDP&&<CustomDatePicker value={mtForm.done_date||todayStr()} onChange={v=>setMtForm(p=>({...p,done_date:v}))} onClose={()=>setShowMtDP(false)}/>}
       {showDatePicker&&<CustomDatePicker value={otForm.date||todayStr()} onChange={v=>setOtForm(p=>({...p,date:v}))} onClose={()=>setShowDatePicker(false)}/>}
       {showStartTP&&<CustomTimePicker value={otForm.startTime||"17:00"} onChange={v=>setOtForm(p=>({...p,startTime:v}))} onClose={()=>setShowStartTP(false)} label="Başlangıç Saati"/>}
@@ -3105,8 +3305,9 @@ function AppInner(){
           <div style={{overflowY:"auto",maxHeight:"calc(70vh - 50px)",padding:8}}>
             {notifications.length===0?<div style={{padding:30,textAlign:"center",color:C.dim,fontSize:13}}>Bildirim yok ✓</div>:
             notifications.map(n=>(
-              <div key={n.id} style={{display:"flex",gap:10,padding:"10px 8px",borderBottom:`1px solid ${C.border}`,cursor:["vote","stock","pend","mtlate","mtnow","pjnight","fmwait"].includes(n.id)?"pointer":"default"}} onClick={()=>{
-                if(n.id==="vote"){setPage("faults");setShowNotifs(false);}
+              <div key={n.id} style={{display:"flex",gap:10,padding:"10px 8px",borderBottom:`1px solid ${C.border}`,cursor:["review","stock","pend","mtlate","mtnow","pjnight","fmwait","shnight","shsub"].includes(n.id)?"pointer":"default"}} onClick={()=>{
+                if(n.id==="review"){setPage("faults");setFaultTab("active");setShowNotifs(false);}
+                else if(n.id==="shnight"||n.id==="shsub"){setPage("calendar");setCalTab("shift");setShScope("me");setShowNotifs(false);}
                 else if(n.id==="stock"){setPage("depo");setDepoTab("purchase");setShowNotifs(false);}
                 else if(n.id==="pend"){setPage("approvals");setShowNotifs(false);}
                 else if(n.id==="mtlate"){setPage("faults");setFaultTab("bakim");setMtView("overdue");setShowNotifs(false);}
@@ -3119,7 +3320,7 @@ function AppInner(){
                   <div style={{fontSize:13,fontWeight:600,color:n.type==="error"?C.red:n.type==="warning"?C.orange:C.green}}>{n.text}</div>
                   {n.time&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>{(()=>{try{const d=new Date(n.time);const diff=Math.round((Date.now()-d.getTime())/60000);if(diff<60)return diff+" dk önce";if(diff<1440)return Math.round(diff/60)+" saat önce";return Math.round(diff/1440)+" gün önce";}catch(e){return"";}})()}</div>}
                 </div>
-                {["vote","stock","pend","mtlate","mtnow","pjnight","fmwait"].includes(n.id)&&<div style={{color:C.accent,fontSize:16,alignSelf:"center"}}>›</div>}
+                {["review","stock","pend","mtlate","mtnow","pjnight","fmwait","shnight","shsub"].includes(n.id)&&<div style={{color:C.accent,fontSize:16,alignSelf:"center"}}>›</div>}
               </div>
             ))}
           </div>
