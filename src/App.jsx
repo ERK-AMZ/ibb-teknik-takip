@@ -5,7 +5,7 @@ import { supabase, signIn, signOut, getProfiles, createOvertime, updateOvertime,
 const toArr=(v)=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'&&Array.isArray(v.data))return v.data;return[];};
 // === Önbellek (stale-while-revalidate): açılışta anında veri, arkada tazeleme ===
 const CACHE_KEY='ibb_cache_v1';
-const APP_VERSION='5.28';
+const APP_VERSION='5.29';
 const VAPID_PUB='BN2YP7MOPhouxNjYjzbuOJznU5xocT3gQW3JeHUnHn3hvRCDdlIvRUDifICb_S0rc_-DqUtWRim0ehxn7UdaV3M';
 const verCmp=(a,b)=>{const pa=String(a).split(".").map(n=>Number(n)||0),pb=String(b).split(".").map(n=>Number(n)||0);
   for(let i=0;i<Math.max(pa.length,pb.length);i++){const x=pa[i]||0,y=pb[i]||0;if(x!==y)return x>y?1:-1;}return 0;};
@@ -26,7 +26,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.28</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.29</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -110,6 +110,9 @@ const HOLIDAYS={
   "2027-08-30":"Zafer Bayramı","2027-10-29":"Cumhuriyet Bayramı"
 };
 function isHoliday(d){return HOLIDAYS[d]||null;}
+// Turkce arama: 'IZOLE' ile 'izole', 'İZOLE' ile 'izole' eslesmeli.
+// Duz toLowerCase 'I'yi 'i' yapar (İ kacar), tr locale 'I'yi 'ı' yapar (i kacar) — ikisini de kats.
+function trNorm(s){return String(s||"").replace(/İ/g,"i").replace(/I/g,"i").replace(/ı/g,"i").toLowerCase();}
 // === Bakim Takip yardimcilari ===
 function perStr(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");}
 function curPer(){return perStr(new Date());}
@@ -323,6 +326,12 @@ function AppInner(){
   const[elevators,setElevators]=useState([]);
   const[elevatorFaults,setElevatorFaults]=useState([]);
   const[evForm,setEvForm]=useState({elevator_id:"",desc:"",reset:true});
+  // Ariza <-> depo baglantisi
+  const[faultMaterials,setFaultMaterials]=useState([]);
+  const[modAddFMat,setModAddFMat]=useState(null); // hangi ariza icin malzeme ekleniyor
+  const[fmSearch,setFmSearch]=useState("");
+  const[fmSel,setFmSel]=useState(null);
+  const[fmQty,setFmQty]=useState("");
   // Bakim Takip
   const[maintPlans,setMaintPlans]=useState([]);
   const[maintLogs,setMaintLogs]=useState([]);
@@ -355,6 +364,7 @@ function AppInner(){
   const fetchElevatorFaults=useCallback(async()=>{try{const{data}=await supabase.from('elevator_faults').select('*').order('created_at',{ascending:false}).limit(200);if(Array.isArray(data)){setElevatorFaults(data);cacheSave({elevatorFaults:data});}}catch(e){console.error(e);}},[]);
   const fetchMaintPlans=useCallback(async()=>{try{const{data}=await supabase.from('maintenance_plans').select('*').order('provider').order('system_name');if(Array.isArray(data)){setMaintPlans(data);cacheSave({maintPlans:data});}}catch(e){console.error(e);}},[]);
   const fetchMaintLogs=useCallback(async()=>{try{const{data}=await supabase.from('maintenance_logs').select('*').order('period',{ascending:false}).limit(2000);if(Array.isArray(data)){setMaintLogs(data);cacheSave({maintLogs:data});}}catch(e){console.error(e);}},[]);
+  const fetchFaultMaterials=useCallback(async()=>{try{const{data}=await supabase.from('fault_materials').select('*').order('created_at',{ascending:false}).limit(1000);if(Array.isArray(data)){setFaultMaterials(data);cacheSave({faultMaterials:data});}}catch(e){console.error(e);}},[]);
 
   // Silent refresh (no loading screen) for TOKEN_REFRESHED events
   const silentRefresh=useCallback(async(uid)=>{
@@ -404,6 +414,7 @@ function AppInner(){
         if(Array.isArray(cc.elevatorFaults))setElevatorFaults(cc.elevatorFaults);
         if(Array.isArray(cc.maintPlans))setMaintPlans(cc.maintPlans);
         if(Array.isArray(cc.maintLogs))setMaintLogs(cc.maintLogs);
+        if(Array.isArray(cc.faultMaterials))setFaultMaterials(cc.faultMaterials);
         setProfile(cfp);
         if(!selBuilding)setSelBuilding(cfp.building_id||cc.buildings?.[0]?.id||null);
         setLoading(false); // yükleme ekranı yok, taze veri arkada gelecek
@@ -506,10 +517,11 @@ function AppInner(){
       try{const c=await subscribeToChanges('elevator_faults',()=>{if(m)fetchElevatorFaults();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('maintenance_plans',()=>{if(m)fetchMaintPlans();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('maintenance_logs',()=>{if(m)fetchMaintLogs();});if(c)subs.push(c);}catch(e){}
+      try{const c=await subscribeToChanges('fault_materials',()=>{if(m)fetchFaultMaterials();});if(c)subs.push(c);}catch(e){}
     };s();return()=>{m=false;subs.forEach(s=>{try{s?.unsubscribe();}catch(e){}});};
   },[session,fetchOvertimes,fetchLeaves,fetchProfiles,fetchFaults,fetchFaultServices,fetchFaultVotes,fetchMaterials,fetchStockMovements,fetchPendingJobs,fetchAttendance]);
 
-  useEffect(()=>{if(session){fetchPendingJobs();fetchAttendance();fetchElevators();fetchElevatorFaults();fetchMaintPlans();fetchMaintLogs();}},[session,fetchPendingJobs,fetchAttendance,fetchElevators,fetchElevatorFaults,fetchMaintPlans,fetchMaintLogs]);
+  useEffect(()=>{if(session){fetchPendingJobs();fetchAttendance();fetchElevators();fetchElevatorFaults();fetchMaintPlans();fetchMaintLogs();fetchFaultMaterials();}},[session,fetchPendingJobs,fetchAttendance,fetchElevators,fetchElevatorFaults,fetchMaintPlans,fetchMaintLogs,fetchFaultMaterials]);
 
   const isAdmin=profile?.user_role==="admin";
   const isChef=profile?.user_role==="chef";
@@ -755,6 +767,64 @@ function AppInner(){
       const{error}=await supabase.from("pending_jobs").update({status:"not_done",not_done_reason:String(r).trim()}).eq("id",j.id);
       if(error)throw error;
       await fetchPendingJobs();setToast("✗ Yapılamadı olarak işaretlendi — yarın gündüze aktarılacak");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+
+  // ═══ Ariza malzeme aksiyonlari ═══
+  // Amir salt-gorur; viewer olsa bile is yoneticisi isaretliyse saha personelidir, cikis yapabilir
+  const canIssueStock=(isAdmin||isChef||!!profile?.job_manager)&&!isAmir;
+
+  async function addFaultMaterial(){
+    if(!modAddFMat){return;}
+    const q=Number(String(fmQty).trim().replace(/\s/g,"").replace(/,/g,"."));
+    if(!fmSel){setToast("⚠ Depodan malzeme seçin");return;}
+    if(!Number.isFinite(q)||q<=0){setToast("⚠ Geçerli miktar girin");return;}
+    const zaten=faultMaterials.find(x=>x.fault_id===modAddFMat.id&&x.material_id===fmSel.id&&x.status!=="cancelled");
+    if(zaten){setToast("⚠ Bu malzeme bu arızaya zaten eklenmiş");return;}
+    setSubmitting(true);
+    try{
+      const{error}=await supabase.from("fault_materials").insert({
+        fault_id:modAddFMat.id, material_id:fmSel.id, material_name:fmSel.name,
+        unit:fmSel.unit||"Adet", quantity:q, status:"needed", created_by:profile.id});
+      if(error)throw error;
+      await fetchFaultMaterials();
+      setModAddFMat(null);setFmSel(null);setFmQty("");setFmSearch("");
+      setToast("🧰 Malzeme ihtiyacı eklendi");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+
+  async function issueFaultMaterial(fm){
+    if(!canIssueStock){setToast("⚠ Stok çıkışı için yetkiniz yok");return;}
+    setSubmitting(true);
+    try{
+      // Stok dusurme + hareket yazma + isaretleme tek islemde (fm_issue), yaris kosulu olmasin
+      const{data,error}=await supabase.rpc("fm_issue",{p_fm:fm.id,p_user:profile.id});
+      if(error)throw error;
+      if(data&&data.ok===false){setToast("⚠ "+(data.hata||"Çıkış yapılamadı"));}
+      else{setToast("📤 Depodan çıkış yapıldı — kalan "+(data?.kalan??"?"));}
+      await Promise.all([fetchFaultMaterials(),fetchMaterials(),fetchStockMovements()]);
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+
+  async function requestFaultMaterial(fm){
+    setSubmitting(true);
+    try{
+      const{error}=await supabase.from("fault_materials").update({status:"requested"}).eq("id",fm.id);
+      if(error)throw error;
+      await fetchFaultMaterials();setToast("🛒 Talep listesine eklendi");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+
+  async function cancelFaultMaterial(fm){
+    setSubmitting(true);
+    try{
+      const{error}=await supabase.from("fault_materials").update({status:"cancelled"}).eq("id",fm.id);
+      if(error)throw error;
+      await fetchFaultMaterials();setToast("Kaldırıldı");
     }catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
   }
@@ -1038,6 +1108,16 @@ function AppInner(){
   const activeFaultsAll=useMemo(()=>bFaults.filter(f=>f.status==="active"),[bFaults]);
   const myPendingVotes=useMemo(()=>{if(!profile)return[];return activeFaultsAll.filter(f=>!faultVotes.some(v=>v.fault_id===f.id&&v.personnel_id===profile.id&&vwMatch(v.vote_week,currentWeek)));},[activeFaultsAll,faultVotes,profile,currentWeek]);
 
+  // ═══ Ariza malzeme turetilmis veriler ═══
+  const fmOf=useCallback((fid)=>faultMaterials.filter(x=>x.fault_id===fid&&x.status!=="cancelled"),[faultMaterials]);
+  // Malzeme bekleyen aktif ariza sayisi (Ozet karti + sekme rozeti)
+  const fmWaitingFaults=useMemo(()=>{
+    const s=new Set();faultMaterials.forEach(x=>{if(x.status==="needed"||x.status==="requested")s.add(x.fault_id);});
+    return bFaults.filter(f=>f.status==="active"&&s.has(f.id));},[faultMaterials,bFaults]);
+  // Talep edilecekler: stokta olmayan / yetersiz kalemler
+  const fmRequested=useMemo(()=>{const ids=new Set(bFaults.map(f=>f.id));
+    return faultMaterials.filter(x=>x.status==="requested"&&ids.has(x.fault_id));},[faultMaterials,bFaults]);
+
   // ═══ Bakim Takip turetilmis veriler ═══
   const isJobMgr=!!profile?.job_manager;
   const canJobAct=isAdmin||isChef||isJobMgr;
@@ -1106,12 +1186,13 @@ function AppInner(){
     if(myPendingVotes.length>0)notifs.push({id:"vote",type:"warning",icon:"🗳",text:`${myPendingVotes.length} arıza için oy bekleniyor`,time:new Date().toISOString()});
     // Low stock (chef/admin)
     if((isChef||isAdmin)&&bMaterials.filter(m=>m.current_stock<=m.min_stock&&m.min_stock>0).length>0)notifs.push({id:"stock",type:"error",icon:"📦",text:`${bMaterials.filter(m=>m.current_stock<=m.min_stock&&m.min_stock>0).length} malzeme kritik seviyede`,time:new Date().toISOString()});
+    if(fmWaitingFaults.length>0)notifs.push({id:"fmwait",type:"warning",icon:"🧰",text:`${fmWaitingFaults.length} arıza malzeme bekliyor`,time:new Date().toISOString()});
     if((isChef||isAdmin)&&mtOverdue.length>0)notifs.push({id:"mtlate",type:"error",icon:"🛠",text:`${mtOverdue.length} bakım gecikmiş`,time:new Date().toISOString()});
     if((isChef||isAdmin)&&mtOpenThisMonth.length>0)notifs.push({id:"mtnow",type:"warning",icon:"🛠",text:`${mtOpenThisMonth.length} bakımın vadesi bu ay`,time:new Date().toISOString()});
     if(pjMine.length>0)notifs.push({id:"pjnight",type:"warning",icon:"🌙",text:`${pjMine.length} gece işi size atandı`,time:new Date().toISOString()});
     // Sort by time desc
     return notifs.sort((a,b)=>(b.time||"").localeCompare(a.time||""));
-  },[profile,leavesState,overtimes,pendOTs,pendLVs,myPendingVotes,bMaterials,isChef,isAdmin,mtOverdue,mtOpenThisMonth,pjMine]);
+  },[profile,leavesState,overtimes,pendOTs,pendLVs,myPendingVotes,bMaterials,isChef,isAdmin,mtOverdue,mtOpenThisMonth,pjMine,fmWaitingFaults,fmRequested]);
 
   const unreadNotifs=useMemo(()=>{
     try{const lastSeen=localStorage.getItem("notif_seen")||"";return notifications.filter(n=>n.time>lastSeen).length;}catch(e){return notifications.length;}
@@ -1133,7 +1214,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.28</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.29</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -1169,7 +1250,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.28</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.29</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -1586,6 +1667,10 @@ function AppInner(){
           </div>
           <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
             {f.fault_type==="material"?<div style={S.tag("rgba(245,158,11,0.15)",C.orange)}>📦 Malzeme</div>:<div style={S.tag(C.blueD,C.blue)}>🔧 Servis</div>}
+            {(()=>{const fl=fmOf(f.id);if(fl.length===0)return null;
+              const acik=fl.filter(x=>x.status==="needed"||x.status==="requested").length;
+              return (acik>0&&f.status==="active")?<div style={S.tag(C.orangeD,C.orange)}>🧰 {acik} malzeme bekliyor</div>
+                          :<div style={S.tag(C.greenD,C.green)}>🧰 {fl.filter(x=>x.status==="issued").length}/{fl.length} çıkıldı</div>;})()}
             {svcCount>0&&<div style={S.tag(C.blueD,C.blue)}>🔧 {svcCount} servis</div>}
             
             {myVote&&<div style={S.tag(myVote.vote==="continues"?C.redD:C.greenD,myVote.vote==="continues"?C.red:C.green)}>{myVote.vote==="continues"?"🔴 Devam":"🟢 Giderildi"}</div>}
@@ -1621,6 +1706,62 @@ function AppInner(){
 
       {f.material_needed&&<div style={{...S.lawBox,marginBottom:12,borderColor:`${C.orange}44`}}><div style={{fontSize:10,color:C.orange,fontWeight:600,marginBottom:4}}>📦 İhtiyaç Duyulan Malzeme</div><div style={{fontSize:13}}>{f.material_needed}</div></div>}
 
+
+      {/* ═══ Gereken Malzeme — depo bağlantısı ═══ */}
+      {(()=>{
+        const list=fmOf(f.id);
+        const acik=list.filter(x=>x.status==="needed"||x.status==="requested").length;
+        return(<div style={{...S.lawBox,marginBottom:12,borderColor:acik>0?`${C.orange}66`:`${C.green}44`,
+          background:acik>0?"rgba(245,158,11,0.06)":"rgba(34,197,94,0.05)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:list.length?8:0}}>
+            <div style={{fontSize:12,fontWeight:700,color:acik>0?C.orange:C.green}}>
+              🧰 Gereken Malzeme {list.length>0&&`(${list.length})`}
+            </div>
+            {f.status==="active"&&!isAmir&&<button style={S.btnS(C.accentD,C.accent)} onClick={(e)=>{
+              e.stopPropagation();setModAddFMat(f);setFmSel(null);setFmQty("");setFmSearch("");
+            }}>+ Ekle</button>}
+          </div>
+          {list.length===0&&<div style={{fontSize:11,color:C.muted,marginTop:6}}>
+            Depodan malzeme bağlanmamış. "+ Ekle" ile bağlarsan stok durumu burada görünür.
+          </div>}
+          {list.map(x=>{
+            const mat=materials.find(m=>m.id===x.material_id);
+            const stokHam=mat?Number(mat.current_stock):null;
+            const stok=(stokHam===null||!Number.isFinite(stokHam))?null:stokHam;
+            const yeter=stok!==null&&stok>=Number(x.quantity);
+            const rozet=x.status==="issued"?["✅ Çıkış yapıldı",C.green]
+                       :x.status==="requested"?["🛒 Talep edildi",C.purple]
+                       :yeter?["📦 Depoda var",C.blue]:["🔴 Stok yetersiz",C.red];
+            const iss=getU(x.issued_by);
+            return(<div key={x.id} style={{background:C.bg,borderRadius:8,padding:"9px 10px",marginTop:6,
+              border:`1px solid ${rozet[1]}33`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"start",gap:8}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:12,fontWeight:600}}>{x.material_name}</div>
+                  <div style={{fontSize:10,color:C.muted,marginTop:2}}>
+                    {Number(x.quantity)} {x.unit||""} gerekiyor
+                    {stok!==null&&x.status!=="issued"&&` • depoda ${stok} ${mat?.unit||""}`}
+                    {!mat&&" • depo kaydı bulunamadı"}
+                  </div>
+                  {x.status==="issued"&&<div style={{fontSize:10,color:C.green,marginTop:3}}>
+                    {iss?iss.full_name:"—"} • {x.issued_at?new Date(x.issued_at).toLocaleString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):""}
+                  </div>}
+                </div>
+                <div style={S.tag(rozet[1]+"22",rozet[1])}>{rozet[0]}</div>
+              </div>
+              {(x.status==="needed"||x.status==="requested")&&<div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
+                {yeter&&canIssueStock&&<button style={{...S.btnS(C.greenD,C.green),flex:"1 1 130px"}} disabled={submitting}
+                  onClick={(e)=>{e.stopPropagation();issueFaultMaterial(x);}}>📤 Depodan Çıkış Yap</button>}
+                {yeter&&!canIssueStock&&<div style={{fontSize:10,color:C.dim,flex:"1 1 130px",alignSelf:"center"}}>Depoda var — çıkışı şef veya iş yöneticisi yapar</div>}
+                {!yeter&&x.status==="needed"&&!isAmir&&<button style={{...S.btnS(C.purpleD,C.purple),flex:"1 1 130px"}} disabled={submitting}
+                  onClick={(e)=>{e.stopPropagation();requestFaultMaterial(x);}}>🛒 Talep Listesine Ekle</button>}
+                {!isAmir&&<button style={{...S.btnS(C.bg,C.muted),flex:"0 1 90px"}} disabled={submitting}
+                  onClick={(e)=>{e.stopPropagation();cancelFaultMaterial(x);}}>Kaldır</button>}
+              </div>}
+            </div>);
+          })}
+        </div>);
+      })()}
       {f.description&&<div style={{...S.lawBox,marginBottom:12}}><div style={{fontSize:10,color:C.muted,fontWeight:600,marginBottom:4}}>Açıklama</div><div style={{fontSize:13}}>{f.description}</div></div>}
 
       
@@ -1932,6 +2073,10 @@ function AppInner(){
 
       {/* PURCHASE LIST TAB */}
       {depoTab==="purchase"&&(()=>{
+        // Arizalardan gelen talepler: stogu yetmedigi icin 'requested' isaretlenen kalemler.
+        // Kritik stok listesinden bagimsiz — min_stock 0 olsa bile buraya duser.
+        const talepler=fmRequested.map(x=>({fm:x,f:bFaults.find(ff=>ff.id===x.fault_id),
+          mat:materials.find(m=>m.id===x.material_id)}));
         // Split into zero stock (tükenmiş) and low stock (azalan)
         const zeroStock=purchaseList.filter(m=>m.current_stock===0);
         const lowStock=purchaseList.filter(m=>m.current_stock>0);
@@ -1948,6 +2093,12 @@ function AppInner(){
         // Build shareable text
         const buildShareText=()=>{
           let txt="📋 SATIN ALMA LİSTESİ\n"+curBuildingName+" — "+new Date().toLocaleDateString("tr-TR")+"\n\n";
+          if(talepler.length>0){
+            txt+="🧰 ARIZALAR İÇİN TALEP EDİLEN ("+talepler.length+" kalem)\n";
+            talepler.forEach(t=>{txt+="    • "+t.fm.material_name+" → "+Number(t.fm.quantity)+" "+(t.fm.unit||"")+
+              (t.f?"  [arıza: "+t.f.title+"]":"")+"\n";});
+            txt+="\n";
+          }
           if(zeroStock.length>0){
             txt+="🔴 STOK TÜKENMİŞ ("+zeroStock.length+" kalem)\n";
             zeroGroups.forEach(([cat,items])=>{
@@ -1968,6 +2119,24 @@ function AppInner(){
         };
 
         return(<>
+          {talepler.length>0&&<div style={{marginBottom:16}}>
+            <div style={{...S.sec,color:C.purple}}><span>🧰</span> Arızalar İçin Talep Edilen ({talepler.length})</div>
+            <div style={{fontSize:11,color:C.dim,marginBottom:8}}>Stok yetmediği için arıza kaydından talep edilen kalemler. Malzeme geldikten sonra Depo {'>'} Stok Girişi yapıp arıza kartından çıkışını verin.</div>
+            {talepler.map(t=>(<div key={t.fm.id} style={{...S.crd,borderLeft:`4px solid ${C.purple}`,cursor:t.f?"pointer":"default"}}
+              onClick={()=>{if(t.f){setSelFault(t.f);setPage("faults");}}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"start",gap:8}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13,fontWeight:700}}>{t.fm.material_name}</div>
+                  {t.f&&<div style={{fontSize:11,color:C.dim,marginTop:2}}>🔧 {t.f.title} · 📍 {t.f.location}</div>}
+                  <div style={{fontSize:10,color:C.muted,marginTop:3}}>Depoda {t.mat?Number(t.mat.current_stock):0} {t.mat?.unit||t.fm.unit||""} var</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:18,fontWeight:800,color:C.purple}}>{Number(t.fm.quantity)}</div>
+                  <div style={{fontSize:9,color:C.dim}}>{t.fm.unit||""} gerekli</div>
+                </div>
+              </div>
+            </div>))}
+          </div>}
           {/* Summary banner */}
           <div style={{...S.lawBox,marginBottom:12,borderColor:purchaseList.length>0?C.red+"66":C.green+"44",background:purchaseList.length>0?"rgba(239,68,68,0.06)":"rgba(34,197,94,0.06)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -2252,6 +2421,15 @@ function AppInner(){
             <div style={{fontSize:11,color:C.dim,marginTop:4}}>☀️ {pjDay.length} gündüz · 🌙 {pjNight.length} gece — dokun → işleri gör</div>
           </div>
           <div style={{fontSize:24}}>⏳</div>
+        </div>
+      </div>}
+      {fmWaitingFaults.length>0&&<div onClick={()=>{setPage("faults");setFaultTab("active");}} style={{...S.crd,border:`2px solid ${C.orange}`,marginBottom:12,cursor:"pointer"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:C.orange}}>🧰 {fmWaitingFaults.length} arıza malzeme bekliyor</div>
+            <div style={{fontSize:11,color:C.dim,marginTop:4}}>{fmRequested.length>0?`${fmRequested.length} kalem talep listesinde — `:""}Dokun → arızaları gör</div>
+          </div>
+          <div style={{fontSize:24}}>🧰</div>
         </div>
       </div>}
       {(isChef||isAdmin)&&(mtOverdue.length>0||mtOpenThisMonth.length>0)&&<div onClick={()=>{setPage("faults");setFaultTab("bakim");setMtView(mtOverdue.length>0?"overdue":"month");}} style={{...S.crd,border:`2px solid ${mtOverdue.length>0?C.red:C.teal}`,marginBottom:12,cursor:"pointer"}}>
@@ -2722,6 +2900,69 @@ function AppInner(){
 
   const renderEditUser=()=>{if(!modEditUser)return null;const u=modEditUser;return(<div style={S.mod} onClick={()=>{setModEditUser(null);setDeleteConfirm(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>Düzenle: {u.full_name}</div><div style={S.lbl}>Görev</div><input style={S.inp} value={u.role||""} onChange={e=>setModEditUser({...u,role:e.target.value})}/><div style={S.lbl}>Bina</div><select style={S.sel} value={u.building_id||""} onChange={e=>setModEditUser({...u,building_id:e.target.value})}>{buildings.map(b=><option key={b.id} value={b.id}>{b.short_name||b.name}</option>)}</select><div style={S.lbl}>Yetki</div><select style={S.sel} value={u.user_role||"personnel"} onChange={e=>setModEditUser({...u,user_role:e.target.value})}><option value="personnel">Personel</option><option value="chef">Teknik Şef (Onay Yetkili)</option><option value="viewer">İzleyici (Tam Görüntüleme)</option></select><div style={S.lbl}>Departman</div><select style={S.sel} value={u.department||"mekanik"} onChange={e=>setModEditUser({...u,department:e.target.value})}><option value="mekanik">⚙️ Mekanik</option><option value="elektrik">⚡ Elektrik</option></select><div style={S.lbl}>İş Yöneticisi (bekleyen iş oluşturma / geceye devretme)</div><label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.text,marginBottom:12,cursor:"pointer",background:C.bg,borderRadius:10,padding:"10px 12px",border:`1px solid ${C.border}`}}><input type="checkbox" checked={!!u.job_manager} onChange={e=>setModEditUser({...u,job_manager:e.target.checked})}/><span>📋 Bekleyen iş yönetebilir</span></label><div style={S.lbl}>🌴 Yıllık İzin Hakkı (gün)</div><input style={S.inp} type="number" min="0" max="30" value={u.annual_leave_days||14} onChange={e=>setModEditUser({...u,annual_leave_days:Number(e.target.value)||0})}/><div style={{fontSize:10,color:C.dim,marginTop:-8,marginBottom:12}}>Kullanılan: {annualUsed(u.id)}g / Kalan: {annualRemaining(u.id)}g</div><button style={S.btn(C.accent)} onClick={async()=>{try{await supabase.from('profiles').update({role:u.role,user_role:u.user_role,building_id:u.building_id,annual_leave_days:u.annual_leave_days||14,department:u.department||"mekanik",job_manager:!!u.job_manager}).eq('id',u.id);await fetchProfiles();setModEditUser(null);setToast("Kaydedildi");}catch(e){setToast("Hata: "+e?.message);}}}>Kaydet</button><div style={S.dv}/><button style={S.btn(C.orangeD,C.orange)} onClick={()=>doDeactivateU(u.id)}>🚫 Pasif Yap</button>{deleteConfirm===u.id?<div style={{background:C.redD,borderRadius:10,padding:14,marginTop:8}}><div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:8,textAlign:"center"}}>⚠ {u.full_name} silinecek. Mesai ve izin kayıtları arşivde kalır.</div><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.red),flex:1}} onClick={()=>doDeleteUser(u.id)}>🗑 Evet, Sil</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setDeleteConfirm(null)}>İptal</button></div></div>:<button style={S.btn(C.redD,C.red)} onClick={()=>setDeleteConfirm(u.id)}>🗑 Personeli Sil</button>}<button style={S.btn(C.border,C.text)} onClick={()=>{setModEditUser(null);setDeleteConfirm(null);}}>Kapat</button></div></div>);};
 
+  const renderAddFMat=()=>{
+    if(!modAddFMat)return null;
+    const q=trNorm(fmSearch.trim());
+    const liste=q.length<2?[]:bMaterials.filter(m=>trNorm(m.name).includes(q)).slice(0,25);
+    // Modal acikken baskasi cikis yapabilir — stogu her render'da canli listeden oku
+    const secCanli=fmSel?materials.find(m=>m.id===fmSel.id):null;
+    const secStokHam=secCanli?Number(secCanli.current_stock):NaN;
+    const secStok=Number.isFinite(secStokHam)?secStokHam:0;
+    const istenen=Number(String(fmQty).trim().replace(/\s/g,"").replace(/,/g,"."));
+    const yeter=fmSel&&Number.isFinite(istenen)&&istenen>0&&secStok>=istenen;
+    return(<div style={S.mod} onClick={()=>setModAddFMat(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+      <div style={S.modH}/>
+      <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>🧰 Gereken Malzeme Ekle</div>
+      <div style={{fontSize:12,color:C.dim,marginBottom:14}}>{modAddFMat.title}</div>
+      {modAddFMat.material_needed&&<div style={{background:C.bg,borderRadius:8,padding:"8px 10px",marginBottom:12,border:`1px solid ${C.orange}33`}}>
+        <div style={{fontSize:10,color:C.orange,fontWeight:700,marginBottom:3}}>ARIZA KAYDINDAKİ NOT</div>
+        <div style={{fontSize:12,color:C.text}}>{modAddFMat.material_needed}</div>
+      </div>}
+      {!fmSel&&<>
+        <div style={S.lbl}>Depodan ara (en az 2 harf)</div>
+        <input style={S.inp} value={fmSearch} onChange={e=>setFmSearch(e.target.value)} placeholder="örn: teflon, pprc dirsek, silikon" autoFocus/>
+        {q.length>=2&&liste.length===0&&<div style={{fontSize:12,color:C.muted,padding:"8px 0"}}>Eşleşen malzeme yok. Depoda kayıtlı değilse önce Depo {">"} + Yeni Malzeme ile ekle.</div>}
+        {liste.map(m=>{const s=Number(m.current_stock);return(
+          <div key={m.id} onClick={()=>{setFmSel(m);setFmQty("1");}} style={{background:C.bg,borderRadius:8,padding:"9px 10px",marginBottom:6,cursor:"pointer",border:`1px solid ${C.border}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:12,fontWeight:600}}>{m.name}</div>
+                <div style={{fontSize:10,color:C.muted,marginTop:2}}>{m.category}</div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontSize:14,fontWeight:800,color:s>0?C.green:C.red}}>{s}</div>
+                <div style={{fontSize:9,color:C.dim}}>{m.unit}</div>
+              </div>
+            </div>
+          </div>);})}
+      </>}
+      {fmSel&&<>
+        <div style={{background:C.bg,borderRadius:10,padding:"10px 12px",marginBottom:12,border:`1px solid ${C.accent}44`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"start",gap:8}}>
+            <div style={{flex:1}}>
+              <div style={{fontSize:13,fontWeight:700}}>{fmSel.name}</div>
+              <div style={{fontSize:10,color:C.muted,marginTop:2}}>{fmSel.category}{fmSel.notes?` • ${fmSel.notes}`:""}</div>
+            </div>
+            <button style={S.btnS(C.bg,C.dim)} onClick={()=>{setFmSel(null);setFmQty("");}}>Değiştir</button>
+          </div>
+          <div style={{fontSize:12,marginTop:8,color:secStok>0?C.green:C.red,fontWeight:700}}>
+            Depoda {secStok} {fmSel.unit} var
+          </div>
+        </div>
+        <div style={S.lbl}>Gereken Miktar ({fmSel.unit})</div>
+        <input style={S.inp} type="text" inputMode="decimal" value={fmQty}
+               onChange={e=>setFmQty(e.target.value.replace(/[^0-9.,]/g,""))} placeholder="örn: 2 veya 1,5"/>
+        {Number.isFinite(istenen)&&istenen>0&&<div style={{fontSize:12,fontWeight:600,marginBottom:10,
+          color:yeter?C.green:C.red}}>
+          {yeter?`✅ Depoda yeterli — çıkış yapılabilir (kalan ${Math.round((secStok-istenen)*100)/100} ${fmSel.unit})`
+                :`🔴 Stok yetersiz — ${Math.round((istenen-secStok)*100)/100} ${fmSel.unit} eksik, talep listesine düşecek`}
+        </div>}
+        <button style={S.btn(C.accent)} disabled={submitting} onClick={addFaultMaterial}>{submitting?"...":"Ekle"}</button>
+      </>}
+      <button style={S.btn(C.border,C.text)} onClick={()=>setModAddFMat(null)}>İptal</button>
+    </div></div>);
+  };
+
   const renderMtDone=()=>{
     if(!mtAct)return null;
     const p=mtAct.plan;
@@ -2845,6 +3086,7 @@ function AppInner(){
       {renderOTDetail()}
       {renderLVDetail()}
       {renderDayDetail()}
+      {renderAddFMat()}
       {renderMtDone()}
       {renderPlanEdit()}
       {renderPlanNew()}
@@ -2863,20 +3105,21 @@ function AppInner(){
           <div style={{overflowY:"auto",maxHeight:"calc(70vh - 50px)",padding:8}}>
             {notifications.length===0?<div style={{padding:30,textAlign:"center",color:C.dim,fontSize:13}}>Bildirim yok ✓</div>:
             notifications.map(n=>(
-              <div key={n.id} style={{display:"flex",gap:10,padding:"10px 8px",borderBottom:`1px solid ${C.border}`,cursor:["vote","stock","pend","mtlate","mtnow","pjnight"].includes(n.id)?"pointer":"default"}} onClick={()=>{
+              <div key={n.id} style={{display:"flex",gap:10,padding:"10px 8px",borderBottom:`1px solid ${C.border}`,cursor:["vote","stock","pend","mtlate","mtnow","pjnight","fmwait"].includes(n.id)?"pointer":"default"}} onClick={()=>{
                 if(n.id==="vote"){setPage("faults");setShowNotifs(false);}
                 else if(n.id==="stock"){setPage("depo");setDepoTab("purchase");setShowNotifs(false);}
                 else if(n.id==="pend"){setPage("approvals");setShowNotifs(false);}
                 else if(n.id==="mtlate"){setPage("faults");setFaultTab("bakim");setMtView("overdue");setShowNotifs(false);}
                 else if(n.id==="mtnow"){setPage("faults");setFaultTab("bakim");setMtView("month");setShowNotifs(false);}
                 else if(n.id==="pjnight"){setPage("faults");setFaultTab("jobs");setPjTab("night");setShowNotifs(false);}
+                else if(n.id==="fmwait"){setPage("faults");setFaultTab("active");setShowNotifs(false);}
               }}>
                 <div style={{fontSize:20,flexShrink:0}}>{n.icon}</div>
                 <div style={{flex:1}}>
                   <div style={{fontSize:13,fontWeight:600,color:n.type==="error"?C.red:n.type==="warning"?C.orange:C.green}}>{n.text}</div>
                   {n.time&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>{(()=>{try{const d=new Date(n.time);const diff=Math.round((Date.now()-d.getTime())/60000);if(diff<60)return diff+" dk önce";if(diff<1440)return Math.round(diff/60)+" saat önce";return Math.round(diff/1440)+" gün önce";}catch(e){return"";}})()}</div>}
                 </div>
-                {["vote","stock","pend","mtlate","mtnow","pjnight"].includes(n.id)&&<div style={{color:C.accent,fontSize:16,alignSelf:"center"}}>›</div>}
+                {["vote","stock","pend","mtlate","mtnow","pjnight","fmwait"].includes(n.id)&&<div style={{color:C.accent,fontSize:16,alignSelf:"center"}}>›</div>}
               </div>
             ))}
           </div>
