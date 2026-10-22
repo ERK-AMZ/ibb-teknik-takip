@@ -5,7 +5,7 @@ import { supabase, signIn, signOut, getProfiles, createOvertime, updateOvertime,
 const toArr=(v)=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'&&Array.isArray(v.data))return v.data;return[];};
 // === Önbellek (stale-while-revalidate): açılışta anında veri, arkada tazeleme ===
 const CACHE_KEY='ibb_cache_v1';
-const APP_VERSION='5.31';
+const APP_VERSION='5.32';
 const VAPID_PUB='BN2YP7MOPhouxNjYjzbuOJznU5xocT3gQW3JeHUnHn3hvRCDdlIvRUDifICb_S0rc_-DqUtWRim0ehxn7UdaV3M';
 const verCmp=(a,b)=>{const pa=String(a).split(".").map(n=>Number(n)||0),pb=String(b).split(".").map(n=>Number(n)||0);
   for(let i=0;i<Math.max(pa.length,pb.length);i++){const x=pa[i]||0,y=pb[i]||0;if(x!==y)return x>y?1:-1;}return 0;};
@@ -26,7 +26,7 @@ class ErrorBoundary extends Component {
       return(<div style={{minHeight:"100vh",background:"#0c0e14",color:"#e2e8f0",padding:20}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.31</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama Hatası v5.32</div>
           <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,maxWidth:340,margin:"0 auto 16px",wordBreak:"break-word"}}>{errMsg}</div>
           <button style={{padding:"12px 24px",background:"#6366f1",color:"white",border:"none",borderRadius:10,fontSize:14,fontWeight:600,cursor:"pointer",marginBottom:8,display:"block",margin:"0 auto 8px"}} onClick={()=>{
             if('caches' in window)caches.keys().then(n=>n.forEach(k=>caches.delete(k)));
@@ -57,6 +57,7 @@ function sColor(s){return s==="approved"?"#22c55e":s==="pending_chef"?"#f59e0b":
 function sText(s){return s==="approved"?"Onaylandı":s==="pending_chef"?"Şef Onayı Bekliyor":s==="pending_manager"?"Müh. Onayı Bekliyor":s==="rejected"?"Reddedildi":s;}
 function daysAgoTs(ts){if(!ts)return null;try{return Math.floor((Date.now()-new Date(ts).getTime())/86400000);}catch{return null;}}
 const SH_LBL={day:["Gündüz","08:00–17:00","G","#3b82f6"],night:["Gece Vardiyası","17:00–08:00","GV","#a855f7"],weekend_day:["Hafta Sonu Gündüz","08:00–17:00","HV","#14b8a6"],rest:["Nöbet İzni","","Nİ","#f59e0b"],weekly_off:["Hafta Tatili","","H","#64748b"],holiday:["Resmî Tatil","","RT","#ef4444"],leave:["İzinli","","İZ","#ef4444"]};
+const ABS_RSN={izinli:["🌴","İzin talebi var"],sozlu_izin:["🗣","Sözlü izin"],raporlu:["🏥","Raporlu"],kendisi:["⏳","Kendisi girecek"],habersiz:["❓","Habersiz"]};
 const SH_WORK=["day","night","weekend_day"];
 function shAddDays(ds,n){const[y,m,d]=String(ds).split("-").map(Number);const t=new Date(y,m-1,d+n);return`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}-${String(t.getDate()).padStart(2,"0")}`;}
 const REV_LBL={continues:["devam ediyor","#ef4444"],resolved:["çözüldü","#22c55e"],waiting_service:["servis bekliyor","#3b82f6"]};
@@ -255,6 +256,13 @@ function AppInner(){
   const[shSub,setShSub]=useState(null);
   const[shSubNote,setShSubNote]=useState("");
   const[bugun,setBugun]=useState(todayStr());
+  const[absFlags,setAbsFlags]=useState([]);
+  const[devMeta,setDevMeta]=useState({bas:null,dus:null});
+  const[absSheet,setAbsSheet]=useState(null);
+  const[absSrc,setAbsSrc]=useState(false);
+  const[absCloseFor,setAbsCloseFor]=useState(null);
+  const[absCloseNote,setAbsCloseNote]=useState("");
+  const[nowTs,setNowTs]=useState(Date.now());
   // Stock/Inventory
   const[materials,setMaterials]=useState([]);
   const[stockMovements,setStockMovements]=useState([]);
@@ -342,6 +350,9 @@ function AppInner(){
   const fetchMaintPlans=useCallback(async()=>{try{const{data}=await supabase.from('maintenance_plans').select('*').order('provider').order('system_name');if(Array.isArray(data)){setMaintPlans(data);cacheSave({maintPlans:data});}}catch(e){console.error(e);}},[]);
   const fetchMaintLogs=useCallback(async()=>{try{const{data}=await supabase.from('maintenance_logs').select('*').order('period',{ascending:false}).limit(2000);if(Array.isArray(data)){setMaintLogs(data);cacheSave({maintLogs:data});}}catch(e){console.error(e);}},[]);
   // Cizelge: gecen ayin 1'inden itibaren — gecmis sisip onbellegi doldurmasin
+  // Kayit disi devamsizlik kayitlari + sistem ayarlari (bos = kapali)
+  const fetchAbsFlags=useCallback(async()=>{try{const{data}=await supabase.from('absence_flags').select('*').order('flag_date',{ascending:false}).limit(300);if(Array.isArray(data)){setAbsFlags(data);cacheSave({absFlags:data});}}catch(e){console.error(e);}},[]);
+  const fetchDevMeta=useCallback(async()=>{try{const{data}=await supabase.from('app_meta').select('key,value').in('key',['devamsizlik_baslangic','devamsizlik_dusum_baslangic']);if(Array.isArray(data)){const g=k=>(data.find(r=>r.key===k)?.value)||null;setDevMeta({bas:g('devamsizlik_baslangic'),dus:g('devamsizlik_dusum_baslangic')});}}catch(e){}},[]);
   // Gece yarisini gecen oturumlarda "bugun" donup kalmasin
   useEffect(()=>{const c=()=>{const t=todayStr();setBugun(p=>p===t?p:t);};
     const iv=setInterval(c,60000);document.addEventListener("visibilitychange",c);
@@ -418,6 +429,7 @@ function AppInner(){
         if(Array.isArray(cc.maintLogs))setMaintLogs(cc.maintLogs);
         if(Array.isArray(cc.faultMaterials))setFaultMaterials(cc.faultMaterials);
         if(Array.isArray(cc.shifts))setShifts(cc.shifts);
+        if(Array.isArray(cc.absFlags))setAbsFlags(cc.absFlags);
         setProfile(cfp);
         if(!selBuilding)setSelBuilding(cfp.building_id||cc.buildings?.[0]?.id||null);
         setLoading(false); // yükleme ekranı yok, taze veri arkada gelecek
@@ -514,10 +526,11 @@ function AppInner(){
       try{const c=await subscribeToChanges('maintenance_logs',()=>{if(m)fetchMaintLogs();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('fault_materials',()=>{if(m)fetchFaultMaterials();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('shift_schedule',()=>{if(m)fetchShifts();});if(c)subs.push(c);}catch(e){}
+      try{const c=await subscribeToChanges('absence_flags',()=>{if(m)fetchAbsFlags();});if(c)subs.push(c);}catch(e){}
     };s();return()=>{m=false;subs.forEach(s=>{try{s?.unsubscribe();}catch(e){}});};
   },[session,fetchOvertimes,fetchLeaves,fetchProfiles,fetchFaults,fetchFaultServices,fetchMaterials,fetchStockMovements,fetchPendingJobs,fetchAttendance]);
 
-  useEffect(()=>{if(session){fetchPendingJobs();fetchAttendance();fetchElevators();fetchElevatorFaults();fetchMaintPlans();fetchMaintLogs();fetchFaultMaterials();fetchShifts();}},[session,fetchPendingJobs,fetchAttendance,fetchElevators,fetchElevatorFaults,fetchMaintPlans,fetchMaintLogs,fetchFaultMaterials,fetchShifts]);
+  useEffect(()=>{if(session){fetchPendingJobs();fetchAttendance();fetchElevators();fetchElevatorFaults();fetchMaintPlans();fetchMaintLogs();fetchFaultMaterials();fetchShifts();fetchAbsFlags();fetchDevMeta();}},[session,fetchPendingJobs,fetchAttendance,fetchElevators,fetchElevatorFaults,fetchMaintPlans,fetchMaintLogs,fetchFaultMaterials,fetchShifts,fetchAbsFlags,fetchDevMeta]);
 
   const isAdmin=profile?.user_role==="admin";
   const isChef=profile?.user_role==="chef";
@@ -576,8 +589,8 @@ function AppInner(){
   async function doLogout(){try{await signOut();}catch(e){}setProfile(null);setPage("dashboard");setSelPerson(null);}
   async function doApproveOT(id,lvl){try{const up=lvl==="chef"?{approved_by_chef:true,status:"pending_manager"}:{approved_by_chef:true,approved_by_manager:true,status:"approved"};await updateOvertime(id,up);await fetchOvertimes();setToast("✓ Mesai onaylandı");}catch(e){setToast("Hata: "+e?.message);}}
   async function doRejectOT(id){try{await updateOvertime(id,{status:"rejected"});await fetchOvertimes();setToast("Reddedildi");}catch(e){setToast("Hata: "+e?.message);}}
-  async function doApproveLV(id,lvl){try{const up=lvl==="chef"?{approved_by_chef:true,status:"pending_manager"}:{approved_by_chef:true,approved_by_manager:true,status:"approved"};await updateLeave(id,up);await fetchLeaves();setToast("✓ İzin onaylandı");}catch(e){setToast("Hata: "+e?.message);}}
-  async function doRejectLV(id){try{await updateLeave(id,{status:"rejected"});await fetchLeaves();setToast("Reddedildi");}catch(e){setToast("Hata: "+e?.message);}}
+  async function doApproveLV(id,lvl){try{const up=lvl==="chef"?{approved_by_chef:true,status:"pending_manager"}:{approved_by_chef:true,approved_by_manager:true,status:"approved"};await updateLeave(id,up);await fetchLeaves();fetchAbsFlags();setToast("✓ İzin onaylandı");}catch(e){setToast("Hata: "+e?.message);}}
+  async function doRejectLV(id){try{await updateLeave(id,{status:"rejected"});await fetchLeaves();fetchAbsFlags();setToast("Reddedildi");}catch(e){setToast("Hata: "+e?.message);}}
 
   async function doDeleteOT(id){
     setSubmitting(true);
@@ -588,7 +601,7 @@ function AppInner(){
 
   async function doDeleteLV(id){
     setSubmitting(true);
-    try{const{error}=await supabase.from('leaves').delete().eq('id',id);if(error)throw error;await fetchLeaves();setDeleteConfirm(null);setSelLV(null);setToast("🗑 İzin talebi silindi");}
+    try{const{error}=await supabase.from('leaves').delete().eq('id',id);if(error)throw error;await fetchLeaves();fetchAbsFlags();setDeleteConfirm(null);setSelLV(null);setToast("🗑 İzin talebi silindi");}
     catch(e){setToast("Silinemedi: "+(e?.message||"Hata"));}
     setSubmitting(false);
   }
@@ -767,6 +780,41 @@ function AppInner(){
     setSubmitting(false);
   }
 
+  // ═══ Yoklama: yok + sebep (sef/yonetici) ═══
+  async function markAbsent(u,reason,src){
+    setSubmitting(true);
+    try{
+      const{data,error}=await supabase.rpc("attendance_absent",{p_pid:u.id,p_reason:reason,p_leave_source:src||null});
+      if(error)throw error;
+      if(!data?.ok){setToast("⚠ "+(data?.hata||"İşlem yapılamadı"));setSubmitting(false);return;}
+      setAbsSheet(null);setAbsSrc(false);
+      await Promise.all([fetchAttendance(),fetchAbsFlags(),data.leave_id?fetchLeaves():null]);
+      setToast(reason==="sozlu_izin"?`🗣 ${u.full_name} için izin kaydı oluşturuldu`
+        :data.flag?`⏳ ${u.full_name} bilgilendirildi — 48 saat süresi başladı`
+        :`❌ ${u.full_name} yok olarak işaretlendi`);
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+  async function closeAbsFlag(f){
+    if(absCloseNote.trim().length<5){setToast("⚠ Kısa bir açıklama yaz (en az 5 karakter)");return;}
+    setSubmitting(true);
+    try{
+      const{data,error}=await supabase.rpc("absence_flag_close",{p_id:f.id,p_note:absCloseNote.trim()});
+      if(error)throw error;
+      if(!data?.ok){setToast("⚠ "+(data?.hata||"İşlem yapılamadı"));setSubmitting(false);return;}
+      setAbsCloseFor(null);setAbsCloseNote("");
+      await Promise.all([fetchAbsFlags(),fetchLeaves()]);
+      setToast(data.islem==="geri_alindi"?"🟢 Düşüm geri alındı, 8 saat iade edildi":"✓ Kayıt kapatıldı");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+  // Kayit disi gun icin izin ekranini o tarih secili acar
+  function openLeaveFor(ds){
+    const[y,m]=String(ds).split("-").map(Number);
+    setShowNotifs(false);setPage("calendar");setCalTab("leave");setLeaveSource("overtime");setHourlyMode(false);
+    setCalModId(null);setCalY(y);setCalM(m-1);setCalMode("select");setCalSel([ds]);setLeaveReason("");
+  }
+
   // ═══ Vardiya yerine gecme aksiyonu ═══
   async function submitSub(row,toId){
     if(!canShiftEdit){setToast("⚠ Vardiya değiştirme yetkiniz yok");return;}
@@ -887,10 +935,10 @@ function AppInner(){
       await fetchPendingJobs();setToast("📝 Sebep kaydedildi");
     }catch(e){setToast("Hata: "+(e?.message||""));}
   }
-  async function markAttendance(pid,st){
+  async function markAttendance(pid,st,sh){
     const x=new Date();const td=x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");
     try{
-      await supabase.from("attendance").upsert({att_date:td,personnel_id:pid,status:st,building_id:selBuilding||profile.building_id,marked_by:profile.id,marked_at:new Date().toISOString()},{onConflict:"att_date,personnel_id"});
+      await supabase.from("attendance").upsert({att_date:td,personnel_id:pid,status:st,...(st==="present"?{absence_reason:null}:{}),...(sh?{shift:sh}:{}),building_id:selBuilding||profile.building_id,marked_by:profile.id,marked_at:new Date().toISOString()},{onConflict:"att_date,personnel_id"});
       await fetchAttendance();
     }catch(e){setToast("Hata: "+(e?.message||""));}
   }
@@ -1013,7 +1061,7 @@ function AppInner(){
       try{
         const docUrl=await uploadLeaveDoc(leaveDocFile);
         await createLeave({personnel_id:profile.id,dates:calSel.sort(),total_hours:calSel.length*8,reason:`[Yıllık İzin] ${leaveReason.trim()||"Yıllık izin"}`,leave_type:"daily",leave_source:"annual",leave_doc_url:docUrl,status:isChef?"pending_manager":"pending_chef",approved_by_chef:isChef});
-        await fetchLeaves();setCalSel([]);setCalMode("view");setLeaveReason("");setLeaveDocFile(null);
+        await fetchLeaves();fetchAbsFlags();setCalSel([]);setCalMode("view");setLeaveReason("");setLeaveDocFile(null);
         setToast(`🌴 ${calSel.length} günlük yıllık izin onaya gönderildi`);
       }catch(e){setToast("Hata: "+(e?.message||""));}
       setSubmitting(false);
@@ -1028,7 +1076,7 @@ function AppInner(){
       const reason=willDebt?`${leaveReason.trim()} (${Math.round((needH-rH)/8*10)/10} gün borçlanma)`:(leaveReason.trim()||"Fazla mesai karşılığı izin");
       const docUrl=await uploadLeaveDoc(leaveDocFile);
       await createLeave({personnel_id:profile.id,dates:calSel.sort(),total_hours:needH,reason,leave_type:"daily",leave_source:"overtime",leave_doc_url:docUrl,status:isChef?"pending_manager":"pending_chef",approved_by_chef:isChef});
-      await fetchLeaves();setCalSel([]);setCalMode("view");setLeaveReason("");setLeaveDocFile(null);
+      await fetchLeaves();fetchAbsFlags();setCalSel([]);setCalMode("view");setLeaveReason("");setLeaveDocFile(null);
       setToast(willDebt?`${calSel.length} gun izin gönderildi (borclanma dahil)`:`${calSel.length} gunluk izin onaya gönderildi`);
     }catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
@@ -1052,7 +1100,7 @@ function AppInner(){
     try{
       const docUrl=await uploadLeaveDoc(leaveDocFile);
       await createLeave({personnel_id:profile.id,dates:[hourlyForm.date],total_hours:totalH,reason:`[Saatlik İzin] ${hourlyForm.startTime}-${hourlyForm.endTime} (${totalH}s) - ${hourlyForm.reason.trim()}`,leave_type:"hourly",leave_start_time:hourlyForm.startTime,leave_end_time:hourlyForm.endTime,leave_doc_url:docUrl,status:isChef?"pending_manager":"pending_chef",approved_by_chef:isChef});
-      await fetchLeaves();
+      await fetchLeaves();fetchAbsFlags();
       setHourlyForm({date:"",startTime:"",endTime:"",reason:""});setLeaveDocFile(null);
       setHourlyMode(false);
       setToast(`✓ ${totalH} saatlik izin talebi onaya gönderildi`);
@@ -1064,7 +1112,7 @@ function AppInner(){
     if(calSel.length===0){setToast("Yeni tarihleri seçin");return;}
     const lv=leavesState.find(l=>l.id===calModId);if(!lv)return;
     setSubmitting(true);
-    try{await updateLeave(calModId,{previous_dates:lv.dates,dates:calSel.sort(),total_hours:calSel.length*8,status:isChef?"pending_manager":"pending_chef",approved_by_chef:isChef,approved_by_manager:false});await fetchLeaves();setCalSel([]);setCalMode("view");setCalModId(null);setToast("Tarihler değiştirildi");}catch(e){setToast("Hata: "+(e?.message||""));}
+    try{await updateLeave(calModId,{previous_dates:lv.dates,dates:calSel.sort(),total_hours:calSel.length*8,status:isChef?"pending_manager":"pending_chef",approved_by_chef:isChef,approved_by_manager:false});await fetchLeaves();fetchAbsFlags();setCalSel([]);setCalMode("view");setCalModId(null);setToast("Tarihler değiştirildi");}catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
   }
 
@@ -1196,6 +1244,25 @@ function AppInner(){
     return out;
   },[shHas,shByDate,bShifts,bLeaves,profileMap,bugun]);
 
+  // ═══ Kayit disi devamsizlik ═══
+  const myOpenFlags=useMemo(()=>profile?absFlags.filter(f=>f.personnel_id===profile.id&&f.status==="open").sort((a,b)=>String(a.due_at).localeCompare(String(b.due_at))):[],[absFlags,profile]);
+  const myClosedFlags=useMemo(()=>{if(!profile)return[];const s=Date.now()-14*86400000;
+    return absFlags.filter(f=>f.personnel_id===profile.id&&(f.status==="deducted"||f.status==="warned")&&new Date(f.resolved_at||f.created_at).getTime()>=s);},[absFlags,profile]);
+  // Sef: kendi birimi; yonetici: binadaki herkes + son 14 gunde dusulenler (geri alma icin)
+  const mgrFlags=useMemo(()=>{
+    if(!(isAdmin||isChef))return[];
+    const dep=profile?.department||"mekanik";
+    const ok=new Set(bProfiles.filter(p=>isAdmin||(p.department||"mekanik")===dep).map(p=>p.id));
+    const s=Date.now()-14*86400000;
+    return absFlags.filter(f=>ok.has(f.personnel_id)&&(f.status==="open"||(isAdmin&&f.status==="deducted"&&new Date(f.resolved_at||f.created_at).getTime()>=s)))
+      .sort((a,b)=>(a.status==="open"?0:1)-(b.status==="open"?0:1)||String(a.due_at).localeCompare(String(b.due_at)));
+  },[absFlags,bProfiles,isAdmin,isChef,profile]);
+  const mgrOpenCount=useMemo(()=>mgrFlags.filter(f=>f.status==="open").length,[mgrFlags]);
+  const devAktif=!!devMeta.bas&&bugun>=devMeta.bas;
+  // Geri sayim icin dakikada bir yeniden cizim — sadece acik kayit varken
+  useEffect(()=>{if(myOpenFlags.length===0&&mgrOpenCount===0)return;setNowTs(Date.now());
+    const iv=setInterval(()=>setNowTs(Date.now()),60000);return()=>clearInterval(iv);},[myOpenFlags.length,mgrOpenCount]);
+
   // ═══ Haftalik ariza degerlendirmesi ═══
   const revNeeds=useCallback((f)=>{const d=daysAgoTs(f.reviewed_at);return d===null||d>=REV_GUN;},[]);
   // Degerlendirme bekleyen aktif arizalar — en eskiden baslayarak
@@ -1258,7 +1325,7 @@ function AppInner(){
     const now=Date.now();
     const sevenDaysAgo=new Date(now-7*24*60*60*1000).toISOString();
     // My recently approved/rejected leaves
-    leavesState.filter(l=>l.personnel_id===profile.id&&l.status==="approved"&&(l.updated_at||l.created_at)>sevenDaysAgo).forEach(l=>{
+    leavesState.filter(l=>l.personnel_id===profile.id&&l.status==="approved"&&!String(l.reason||"").startsWith("[Otomatik]")&&(l.updated_at||l.created_at)>sevenDaysAgo).forEach(l=>{
       const isAnn=l.leave_source==="annual";
       const days=Array.isArray(l.dates)?l.dates.length:0;
       notifs.push({id:"la-"+l.id,type:"success",icon:"✅",text:`${isAnn?"Yıllık":"Mesai"} izniniz onaylandı (${days}g)`,time:l.updated_at||l.created_at});
@@ -1287,10 +1354,13 @@ function AppInner(){
     if(fmWaitingFaults.length>0)notifs.push({id:"fmwait",type:"warning",icon:"🧰",text:`${fmWaitingFaults.length} arıza malzeme bekliyor`,time:new Date().toISOString()});
     if((isChef||isAdmin)&&mtOverdue.length>0)notifs.push({id:"mtlate",type:"error",icon:"🛠",text:`${mtOverdue.length} bakım gecikmiş`,time:new Date().toISOString()});
     if((isChef||isAdmin)&&mtOpenThisMonth.length>0)notifs.push({id:"mtnow",type:"warning",icon:"🛠",text:`${mtOpenThisMonth.length} bakımın vadesi bu ay`,time:new Date().toISOString()});
+    if(myOpenFlags.length>0)notifs.push({id:"absflag",type:"error",icon:"⚠",text:`${myOpenFlags.length} kayıt dışı devamsızlık — 48 saat içinde izin talebi gir`,time:myOpenFlags[0].created_at});
+    myClosedFlags.filter(f=>f.status==="deducted").forEach(f=>notifs.push({id:"absded-"+f.id,type:"error",icon:"🔴",text:`${fDS(f.flag_date)}: 8 saat mesai izninden düşüldü`,time:f.resolved_at||f.created_at}));
+    if(mgrOpenCount>0)notifs.push({id:"absmgr",type:"warning",icon:"⏳",text:`${mgrOpenCount} açık kayıt dışı devamsızlık`,time:new Date().toISOString()});
     if(pjMine.length>0)notifs.push({id:"pjnight",type:"warning",icon:"🌙",text:`${pjMine.length} gece işi size atandı`,time:new Date().toISOString()});
     // Sort by time desc
     return notifs.sort((a,b)=>(b.time||"").localeCompare(a.time||""));
-  },[profile,leavesState,overtimes,pendOTs,pendLVs,bMaterials,isChef,isAdmin,mtOverdue,mtOpenThisMonth,pjMine,fmWaitingFaults,fmRequested,revDue,revDueAll,shToday,profileMap]);
+  },[profile,leavesState,overtimes,pendOTs,pendLVs,bMaterials,isChef,isAdmin,mtOverdue,mtOpenThisMonth,pjMine,fmWaitingFaults,fmRequested,revDue,revDueAll,shToday,profileMap,myOpenFlags,myClosedFlags,mgrOpenCount]);
 
   const unreadNotifs=useMemo(()=>{
     try{const lastSeen=localStorage.getItem("notif_seen")||"";return notifications.filter(n=>n.time>lastSeen).length;}catch(e){return notifications.length;}
@@ -1311,7 +1381,7 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.31</div></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>🔧</div><div style={{color:C.dim}}>Yükleniyor...</div><div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.32</div></div></div>);
   if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
@@ -1347,7 +1417,7 @@ function AppInner(){
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
     <button style={S.btn(C.red)} onClick={doLogout}>Çıkış Yap + Tekrar Giriş</button>
-    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.31</div>
+    <div style={{fontSize:10,color:"#475569",marginTop:20}}>v5.32</div>
     <details style={{marginTop:8,textAlign:"left",fontSize:10,color:"#64748b"}}>
       <summary style={{cursor:"pointer"}}>🔍 Teşhis</summary>
       <pre style={{whiteSpace:"pre-wrap",background:"#161923",padding:8,borderRadius:6,marginTop:6,maxHeight:250,overflow:"auto",fontSize:9}}>{(typeof window!=='undefined'&&window.__LOAD_DEBUG)||"yok"}</pre>
@@ -2239,6 +2309,55 @@ function AppInner(){
     </div></div>);
   };
 
+  const renderAbsSheet=()=>{
+    if(!absSheet)return null;const u=absSheet;const td=todayStr();
+    const plan=(shByDate[td]||[]).find(s=>s.personnel_id===u.id);const L=plan?SH_LBL[plan.shift_type]:null;
+    const bekleyen=leavesState.find(l=>l.personnel_id===u.id&&["pending_chef","pending_manager"].includes(l.status)
+      &&Array.isArray(l.dates)&&l.dates.includes(td)&&l.leave_type!=="hourly");
+    const uyari=!devMeta.dus||td<devMeta.dus;
+    const saatlik=leavesState.find(l=>l.personnel_id===u.id&&l.status!=="rejected"&&l.leave_type==="hourly"&&Array.isArray(l.dates)&&l.dates.includes(td));
+    const kapat=()=>{setAbsSheet(null);setAbsSrc(false);};
+    // Gece nobeti 17:00'de baslar: oncesinde kayit acan sebepler secilemez; sozlu izin / rapor serbest
+    const geceKilit=plan?.shift_type==="night"&&new Date().getHours()<17;
+    const opt=(ic,t,d,on,col,kilit)=>(<button key={t} disabled={submitting||kilit} onClick={on}
+      style={{display:"flex",alignItems:"center",gap:10,width:"100%",textAlign:"left",padding:"11px 12px",marginBottom:7,
+        borderRadius:10,border:`1px solid ${col}55`,background:col+"14",color:C.text,cursor:kilit?"not-allowed":"pointer",WebkitAppearance:"none",opacity:(submitting||kilit)?0.45:1}}>
+      <span style={{fontSize:20}}>{ic}</span>
+      <span style={{flex:1}}><span style={{display:"block",fontSize:13,fontWeight:700}}>{t}</span>
+        <span style={{display:"block",fontSize:10,color:C.dim,marginTop:1}}>{d}</span></span>
+    </button>);
+    return(<div style={S.mod} onClick={kapat}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+      <div style={S.modH}/>
+      <div style={{fontSize:17,fontWeight:700,marginBottom:2}}>❌ {u.full_name} — bugün yok</div>
+      <div style={{fontSize:12,color:C.dim,marginBottom:12}}>{L?`Çizelgeye göre: ${L[0]}${L[1]?" ("+L[1]+")":""}`:"Çizelgede bugün için kayıt yok"}</div>
+      {saatlik&&<div style={{background:C.orangeD,border:`1px solid ${C.orange}55`,borderRadius:9,padding:"8px 10px",marginBottom:10,fontSize:12,color:C.orange}}>
+        ⏰ Bugün saatlik izni var ({saatlik.total_hours} saat). İzin bitince gelecekse <b>yok işaretleme</b> — Vazgeç'e bas, geldiğinde ✅ yap.</div>}
+      {geceKilit&&<div style={{background:C.blueD,border:`1px solid ${C.blue}55`,borderRadius:9,padding:"8px 10px",marginBottom:10,fontSize:12,color:C.blue}}>
+        🌙 Gece vardiyası 17:00'de başlıyor. Şimdi sadece <b>sözlü izin</b> ya da <b>rapor</b> kaydedilebilir; gelmezse 17:00'den sonra işaretle.</div>}
+      {bekleyen&&opt("🌴","İzin talebi var — izinli işaretle","Bekleyen talebi onay sürecinde",()=>markAbsent(u,"izinli"),C.teal,geceKilit)}
+      {!absSrc
+        ?opt("🗣","Sözlü izin verdim","Kişi adına izin kaydı oluşur, yöneticiye onaya gider",()=>setAbsSrc(true),C.accent)
+        :<div style={{border:`1px solid ${C.accent}55`,borderRadius:10,padding:10,marginBottom:7}}>
+          <div style={{fontSize:12,fontWeight:700,marginBottom:8}}>🗣 Hangi bakiyeden düşülsün?</div>
+          <div style={{display:"flex",gap:6}}>
+            <button style={{...S.btnS(C.accentD,C.accent),flex:1,padding:"10px 6px"}} disabled={submitting} onClick={()=>markAbsent(u,"sozlu_izin","overtime")}>
+              ⏱ Mesai izni<br/><span style={{fontSize:10,fontWeight:500}}>kalan {remDays(u.id)} gün</span></button>
+            <button style={{...S.btnS(C.tealD,C.teal),flex:1,padding:"10px 6px"}} disabled={submitting} onClick={()=>markAbsent(u,"sozlu_izin","annual")}>
+              🌴 Yıllık izin<br/><span style={{fontSize:10,fontWeight:500}}>kalan {annualRemaining(u.id)} gün</span></button>
+          </div>
+        </div>}
+      {opt("🏥","Raporlu","Bakiyeden düşülmez — rapor belgesi İK'ya",()=>markAbsent(u,"raporlu"),C.blue)}
+      {opt("⏳","İzin talebi yok — kendisi girecek",devAktif?"Kişiye bildirim gider, 48 saat süresi başlar":"Sebep kaydedilir",()=>markAbsent(u,"kendisi"),C.orange,geceKilit)}
+      {opt("❓","Habersiz gelmedi",devAktif?"Kişiye bildirim gider, 48 saat süresi başlar":"Sebep kaydedilir",()=>markAbsent(u,"habersiz"),C.red,geceKilit)}
+      <div style={{fontSize:10,color:C.dim,margin:"6px 0 4px"}}>
+        {!devAktif?"Sistem henüz açılmadı: sebep kaydedilir, süre ve düşüm işlemez."
+          :uyari?"Uyarı dönemi: 48 saatte izin girilmezse kişi uyarılır, bakiye düşülmez."
+          :"48 saatte izin girilmezse 8 saat mesai izni otomatik düşülür."}
+      </div>
+      <button style={S.btn(C.bg,C.muted)} onClick={kapat}>Vazgeç</button>
+    </div></div>);
+  };
+
   const renderShSub=()=>{
     if(!shSub)return null;const row=shSub;const u=getU(row.personnel_id);const L=SH_LBL[row.shift_type];
     const adaylar=shCandidates(row);
@@ -2351,6 +2470,66 @@ function AppInner(){
     </div></div>);
   };
 
+  // ═══ Kayit disi devamsizlik: calisanin kendi karti ═══
+  const renderMyAbs=()=>{
+    if(myOpenFlags.length===0&&myClosedFlags.length===0)return null;
+    return(<>
+      {myOpenFlags.map(f=>{
+        const kalan=Math.max(0,new Date(f.due_at).getTime()-Math.max(nowTs,Date.now()));
+        const sa=Math.floor(kalan/3600000),dk=Math.floor((kalan%3600000)/60000);
+        const uyari=!devMeta.dus||f.flag_date<devMeta.dus;
+        return(<div key={f.id} style={{...S.crd,marginBottom:12,borderColor:C.red+"88",background:C.redD,cursor:"default"}}>
+          <div style={{fontSize:14,fontWeight:800,color:C.red}}>⚠ Kayıt dışı devamsızlık — {fDS(f.flag_date)}</div>
+          <div style={{fontSize:12,color:C.text,marginTop:4}}>Yoklamada <b>yok</b> yazıldın ama bu gün için izin kaydın yok.</div>
+          <div style={{fontSize:14,fontWeight:800,color:kalan<6*3600000?C.red:C.orange,marginTop:8}}>⏳ {sa} saat {dk} dk kaldı</div>
+          <div style={{fontSize:11,color:C.dim,marginTop:2}}>{uyari
+            ?"Uyarı dönemi: bu sefer bakiyeden düşülmeyecek, ama izin talebini yine de gir."
+            :"Süre dolarsa 8 saat mesai izni bakiyenden otomatik düşülür. Kendin girersen hangi bakiyeden (mesai / yıllık) düşüleceğini sen seçersin."}</div>
+          <button style={S.btn(C.red)} onClick={()=>openLeaveFor(f.flag_date)}>📝 İzin talebi gir</button>
+          <div style={{fontSize:10,color:C.dim,marginTop:6}}>Vardiya değişimi ya da görevlendirme varsa şefine söyle — kaydı o kapatır.</div>
+        </div>);})}
+      {myClosedFlags.length>0&&<div style={{...S.crd,marginBottom:12,cursor:"default"}}>
+        <div style={{fontSize:10,color:C.muted,fontWeight:700,marginBottom:4}}>SON 14 GÜN — KAYIT DIŞI DEVAMSIZLIK</div>
+        {myClosedFlags.map(f=><div key={f.id} style={{fontSize:12,color:f.status==="deducted"?C.red:C.orange,padding:"2px 0"}}>
+          {fDS(f.flag_date)} — {f.status==="deducted"?"8 saat mesai izninden düşüldü":"uyarı dönemi, düşülmedi"}</div>)}
+      </div>}
+    </>);
+  };
+
+  // ═══ Kayit disi devamsizlik: sef / yonetici listesi ═══
+  const renderMgrAbs=()=>{
+    if(!(isAdmin||isChef)||mgrFlags.length===0)return null;
+    return(<div style={{...S.crd,marginBottom:12,borderColor:C.orange+"66",cursor:"default"}}>
+      <div style={{fontSize:13,fontWeight:800,color:C.orange}}>⏳ Kayıt dışı devamsızlık ({mgrOpenCount} açık)</div>
+      <div style={{fontSize:10,color:C.dim,marginTop:2,marginBottom:6}}>
+        {!devAktif?"Sistem kapalı — düşüm işlemez.":(!devMeta.dus||bugun<devMeta.dus)?`Uyarı dönemi${devMeta.dus?" ("+fDS(devMeta.dus)+"'e kadar)":""}: süre dolunca kişi uyarılır, bakiye düşülmez.`:"48 saat içinde izin girilmezse 8 saat mesai izninden düşülür."} Yanlış tespitse açıklamayla kapat.
+      </div>
+      {mgrFlags.map(f=>{
+        const u=getU(f.personnel_id);
+        const kalan=Math.max(0,new Date(f.due_at).getTime()-Math.max(nowTs,Date.now()));
+        const acik=f.status==="open";
+        return(<div key={f.id} style={{padding:"8px 0",borderTop:`1px solid ${C.border}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:600}}>{u?u.full_name:"—"}</div>
+              <div style={{fontSize:10,color:acik?C.muted:C.red}}>
+                {fDS(f.flag_date)} · {acik?`${Math.floor(kalan/3600000)} saat kaldı`:"8 saat düşüldü"}{f.note?` · ${f.note}`:""}
+              </div>
+            </div>
+            {absCloseFor!==f.id&&(acik||isAdmin)&&<button style={S.btnS(C.bg,C.muted)} disabled={submitting}
+              onClick={()=>{setAbsCloseFor(f.id);setAbsCloseNote("");}}>{acik?"Kapat":"Geri al"}</button>}
+          </div>
+          {absCloseFor===f.id&&<div style={{marginTop:6}}>
+            <input style={S.inp} placeholder={acik?"Neden? (vardiya değişimi, görevlendirme…)":"Neden geri alınıyor?"} value={absCloseNote} onChange={e=>setAbsCloseNote(e.target.value)}/>
+            <div style={{display:"flex",gap:6,marginTop:6}}>
+              <button style={{...S.btnS(C.greenD,C.green),flex:1}} disabled={submitting} onClick={()=>closeAbsFlag(f)}>{acik?"Kaydı kapat":"Düşümü geri al"}</button>
+              <button style={{...S.btnS(C.bg,C.muted),flex:1}} onClick={()=>setAbsCloseFor(null)}>Vazgeç</button>
+            </div>
+          </div>}
+        </div>);})}
+    </div>);
+  };
+
   const renderDashboard=()=>{
     if(isPerso){
       const myOTs=overtimes.filter(o=>o.personnel_id===profile.id).sort((a,b)=>(b.work_date||"").localeCompare(a.work_date||""));
@@ -2366,6 +2545,7 @@ function AppInner(){
           </div>
           {debt>0&&<div style={{marginTop:8,background:C.redD,borderRadius:8,padding:"6px 10px",textAlign:"center"}}><span style={{fontSize:12,color:C.red,fontWeight:700}}>⚠ {debt} gun mesai borcu</span></div>}
         </div>
+        {renderMyAbs()}
         <button style={S.btn(C.accent)} onClick={()=>{setOtForm({date:todayStr(),startTime:"17:00",endTime:"",otType:"evening",desc:""});setOtErrors([]);setModNewOT(true);}}>+ Fazla Mesai Bildir</button>
         {(()=>{
           if(!shHas)return null;
@@ -2437,6 +2617,7 @@ function AppInner(){
         <div style={{fontSize:12,color:C.dim}}>{vPC>0?"Onay Bekleyen Talep":"Bekleyen talep yok"}</div>
         {isViewer&&vPC>0&&<div style={{fontSize:10,color:C.muted,marginTop:4}}>Sadece görüntüleme</div>}
       </div>
+      {renderMyAbs()}
       {(()=>{
         if(!shHas)return null;
         const L=shToday?SH_LBL[shToday.shift_type]:null;
@@ -2504,8 +2685,15 @@ function AppInner(){
         const attList=bProfiles.filter(u=>u.active&&(u.department||"mekanik")===effDept&&(u.user_role==="personnel"||u.user_role==="viewer"));
         const onLeave=new Set(leavesState.filter(l=>l.status==="approved"&&Array.isArray(l.dates)&&l.dates.includes(td)&&l.leave_type!=="hourly").map(l=>l.personnel_id));
         const rec=id=>attendance.find(a=>a.personnel_id===id);
-        const shiftOf=id=>rec(id)?.shift||"day";
-        const working=attList.filter(u=>!onLeave.has(u.id));
+        const planOf=id=>(shByDate[td]||[]).find(s=>s.personnel_id===id)?.shift_type;
+        // Cizelge varsa vardiya cizelgeden (attendance.shift varsayilani "day" oldugu icin sefin
+        // secimiyle ayirt edilemiyor); cizelgesi olmayan kiside sefin ☀️/🌙 secimi gecerli
+        const hasPlan=id=>!!planOf(id);
+        const shiftOf=id=>{const p=planOf(id);if(p)return p==="night"?"night":"day";return rec(id)?.shift||"day";};
+        const working0=attList.filter(u=>!onLeave.has(u.id));
+        // Cizelgeye gore bugun calismayanlar (Ni/H/RT/devredildi) beklenen listesinden cikar
+        const offPlan=working0.filter(u=>!rec(u.id)&&["rest","weekly_off","holiday","leave"].includes(planOf(u.id)));
+        const working=working0.filter(u=>!offPlan.includes(u));
         const dayL=working.filter(u=>shiftOf(u.id)==="day");
         const nightL=working.filter(u=>shiftOf(u.id)==="night");
         const leaveL=attList.filter(u=>onLeave.has(u.id));
@@ -2523,10 +2711,10 @@ function AppInner(){
           const r=rec(u.id);const st=r?r.status:null;const isN=shiftOf(u.id)==="night";
           const bg=st==="present"?C.greenD:st==="absent"?C.redD:C.bg;
           const cl=st==="present"?C.green:st==="absent"?C.red:C.dim;
-          const ic=st==="present"?"✅":st==="absent"?"❌":"⬜";
+          const ic=st==="present"?"✅":st==="absent"?((ABS_RSN[r?.absence_reason]||["❌"])[0]):"⬜";
           return(<div key={u.id} style={{display:"flex",alignItems:"center",gap:0,borderRadius:16,overflow:"hidden",border:`1px solid ${cl}44`}}>
-            {canMark&&<span onClick={(e)=>{e.stopPropagation();toggleShift(u.id,isN?"day":"night");}} title="Gündüz/Gece" style={{padding:"6px 8px",background:isN?C.blueD:C.orangeD,color:isN?C.blue:C.orange,fontSize:13,cursor:"pointer",borderRight:`1px solid ${cl}44`}}>{isN?"🌙":"☀️"}</span>}
-            <span onClick={()=>{if(!canMark)return;markAttendance(u.id,st==="present"?"absent":"present");}} style={{padding:"6px 10px",background:bg,color:cl,fontSize:12,fontWeight:600,cursor:canMark?"pointer":"default"}}>{ic} {u.full_name}</span>
+            {canMark&&!hasPlan(u.id)&&<span onClick={(e)=>{e.stopPropagation();toggleShift(u.id,isN?"day":"night");}} title="Gündüz/Gece" style={{padding:"6px 8px",background:isN?C.blueD:C.orangeD,color:isN?C.blue:C.orange,fontSize:13,cursor:"pointer",borderRight:`1px solid ${cl}44`}}>{isN?"🌙":"☀️"}</span>}
+            <span onClick={()=>{if(!canMark)return;if(st==="present"){setAbsSrc(false);setAbsSheet(u);}else markAttendance(u.id,"present",shiftOf(u.id));}} style={{padding:"6px 10px",background:bg,color:cl,fontSize:12,fontWeight:600,cursor:canMark?"pointer":"default"}}>{ic} {u.full_name}</span>
           </div>);
         };
         return(<div style={{...S.crd,marginBottom:12}}>
@@ -2534,7 +2722,7 @@ function AppInner(){
             <div style={{fontSize:13,fontWeight:700}}>📋 Günlük Yoklama</div>
             <div style={{fontSize:12,fontWeight:700}}><span style={{color:C.green}}>✅{pres}</span> <span style={{color:C.red}}>❌{abs}</span> <span style={{color:C.orange}}>🌴{leaveL.length}</span>{unm>0&&<span style={{color:C.dim}}> ⬜{unm}</span>}</div>
           </div>
-          {canMark&&<div style={{fontSize:10,color:C.dim,marginBottom:8}}>☀️/🌙 ile gündüz-gece ata, isme dokun: ✅ mesaide ↔ ❌ yok. İzinliler otomatik.</div>}
+          {canMark&&<div style={{fontSize:10,color:C.dim,marginBottom:8}}>İsme dokun: ⬜ → ✅ mesaide. ✅ olana dokun → yok sebebini seç. Gündüz/gece vardiya çizelgesinden gelir; değişiklik için Takvim → Vardiya → Yerine ata.</div>}
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
             <span style={{fontSize:11,fontWeight:700,color:C.orange}}>☀️ Gündüz</span>
             <span style={{fontSize:10,color:C.dim}}>{dayL.length} kişi · {dPres} mesaide</span>
@@ -2548,9 +2736,16 @@ function AppInner(){
             {nightL.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6}}>{nightL.map(chip)}</div>}
           </div>
           {leaveL.length>0&&<div style={{fontSize:11,color:C.orange,marginTop:10,borderTop:`1px solid ${C.border}`,paddingTop:8}}>🌴 İzinli ({leaveL.length}): {leaveL.map(u=>u.full_name).join(", ")}</div>}
-          {isAdmin&&pres+abs===0&&<div style={{fontSize:11,color:C.orange,marginTop:8}}>⚠ Bugün bu departmanda yoklama henüz alınmadı</div>}
+          {offPlan.length>0&&<div style={{marginTop:10,borderTop:`1px solid ${C.border}`,paddingTop:8}}>
+            <div style={{fontSize:11,color:C.muted,marginBottom:6}}>💤 Çizelgeye göre bugün çalışmıyor ({offPlan.length}){canMark?" — geldiyse dokun":""}</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{offPlan.map(u=>(<span key={u.id} onClick={()=>{if(canMark)markAttendance(u.id,"present","day");}}
+              style={{padding:"5px 9px",borderRadius:14,fontSize:11,color:C.muted,border:`1px dashed ${C.border}`,cursor:canMark?"pointer":"default"}}>
+              {(SH_LBL[planOf(u.id)]||["","","—"])[2]} {u.full_name}</span>))}</div>
+          </div>}
+          {(isAdmin||canMark)&&working.length>0&&pres+abs===0&&<div style={{fontSize:12,fontWeight:700,color:C.red,marginTop:8}}>⚠ Bugün bu departmanda yoklama henüz alınmadı{devAktif?" — kayıt dışı devamsızlık tespiti yoklamaya bağlı":""}</div>}
         </div>);
       })()}
+      {renderMgrAbs()}
       <div style={S.sec}><span>👥</span> {canSeeBothDepts?"Personel":(myDept==="elektrik"?"⚡ Elektrik Ekibi":"⚙️ Mekanik Ekibi")} ({list.length})</div>
       {list.map((p,i)=>{const rD=remDays(p.id),debt=debtDays(p.id),pend=pendCount(p.id),aR=annualRemaining(p.id),aT=annualDays(p.id);return(<div key={p.id} style={S.crd} onClick={()=>{setSelPerson(p.id);setPage("person");}}><div style={S.row}><div style={S.av(getAv(i))}>{ini(p.full_name)}</div><div style={{flex:1}}><div style={{fontSize:14,fontWeight:600}}>{p.full_name}</div><div style={{fontSize:11,color:C.dim}}>{p.role}{p.night_shift?" 🌙":""}</div>{pend>0&&<div style={{...S.tag(C.orangeD,C.orange),marginTop:4,display:"inline-block"}}>⏳ {pend}</div>}</div><div style={{textAlign:"right"}}>{debt>0?<div style={{fontSize:16,fontWeight:800,color:C.red}}>-{debt}g <span style={{fontSize:10,fontWeight:600}}>borç</span></div>:<div style={{fontSize:16,fontWeight:800,color:rD>0?C.green:C.muted}}>{rD}g <span style={{fontSize:10,fontWeight:600,color:C.dim}}>mesai</span></div>}<div style={{fontSize:12,fontWeight:700,color:aR>3?C.teal:aR>0?C.orange:C.red,marginTop:2}}>🌴 {aR}/{aT}g</div></div></div></div>);})}
     </div>);
@@ -2955,7 +3150,7 @@ function AppInner(){
           return(<>
             <div style={S.sec}><span>🏖</span> İzin Talepleri {future.length>0&&<span style={{color:C.orange,fontSize:12}}>({future.length})</span>}</div>
             {future.length===0&&<div style={S.emp}>Bekleyen veya gelecek izin yok</div>}
-            {future.map(l=>{const p=getU(l.personnel_id);const dates=Array.isArray(l.dates)?l.dates:[];const isHourly=l.leave_type==="hourly";return(<div key={l.id} style={S.crd} onClick={()=>setSelLV(l)}><div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}><div>{!isPerso&&<div style={{fontSize:13,fontWeight:600,marginBottom:4}}>{p?.full_name}</div>}{isHourly?<div><div style={{...S.tag(C.blueD,C.blue),marginBottom:4}}>🕐 Saatlik İzin</div><div style={{fontSize:12,color:C.text}}>{fDS(dates[0])} • {l.leave_start_time?.slice(0,5)}-{l.leave_end_time?.slice(0,5)}</div></div>:<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{dates.map(d=><span key={d} style={S.tag(l.status==="approved"?C.greenD:C.orangeD,l.status==="approved"?C.green:C.orange)}>{fDS(d)}</span>)}</div>}{l.reason&&<div style={{fontSize:10,color:l.reason.includes("borc")?C.red:C.dim,marginTop:4}}>{l.reason.length>50?l.reason.slice(0,50)+"...":l.reason}</div>}</div><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:700}}>{isHourly?l.total_hours+"s":dates.length+"g"}</div><div style={S.tag(sColor(l.status)+"22",sColor(l.status))}>{sIcon(l.status)}</div>{l.leave_doc_url&&<div style={{fontSize:10,color:C.green,marginTop:2}}>📄</div>}</div></div>{!isHourly&&(isPerso||isAdmin)&&l.status!=="approved"&&<button style={{...S.btnS(C.orangeD,C.orange),marginTop:8,fontSize:11}} onClick={e=>{e.stopPropagation();startModLV(l);}}>🔄 Tarihleri Değiştir</button>}</div>);})}
+            {future.map(l=>{const p=getU(l.personnel_id);const dates=Array.isArray(l.dates)?l.dates:[];const isHourly=l.leave_type==="hourly";return(<div key={l.id} style={S.crd} onClick={()=>setSelLV(l)}><div style={{display:"flex",justifyContent:"space-between",alignItems:"start"}}><div>{!isPerso&&<div style={{fontSize:13,fontWeight:600,marginBottom:4}}>{p?.full_name}</div>}{isHourly?<div><div style={{...S.tag(C.blueD,C.blue),marginBottom:4}}>🕐 Saatlik İzin</div><div style={{fontSize:12,color:C.text}}>{fDS(dates[0])} • {l.leave_start_time?.slice(0,5)}-{l.leave_end_time?.slice(0,5)}</div></div>:<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{dates.map(d=><span key={d} style={S.tag(l.status==="approved"?C.greenD:C.orangeD,l.status==="approved"?C.green:C.orange)}>{fDS(d)}</span>)}</div>}{l.reason&&<div style={{fontSize:10,color:l.reason.includes("borc")?C.red:C.dim,marginTop:4}}>{l.reason.length>50?l.reason.slice(0,50)+"...":l.reason}</div>}</div><div style={{textAlign:"right"}}><div style={{fontSize:16,fontWeight:700}}>{isHourly?l.total_hours+"s":dates.length+"g"}</div><div style={S.tag(sColor(l.status)+"22",sColor(l.status))}>{sIcon(l.status)}</div>{l.leave_doc_url&&<div style={{fontSize:10,color:C.green,marginTop:2}}>📄</div>}</div></div>{!isHourly&&(isPerso||isAdmin)&&l.status!=="approved"&&(isAdmin||(l.status!=="rejected"&&!String(l.reason||"").includes("[Sözlü izin]")))&&<button style={{...S.btnS(C.orangeD,C.orange),marginTop:8,fontSize:11}} onClick={e=>{e.stopPropagation();startModLV(l);}}>🔄 Tarihleri Değiştir</button>}</div>);})}
 
             {past.length>0&&<>
               <div style={{...S.sec,marginTop:20}}><span>✅</span> İzin Kullananlar <span style={{color:C.green,fontSize:12}}>({Object.keys(pastByPerson).length} kişi)</span></div>
@@ -3291,6 +3486,7 @@ function AppInner(){
       {renderPlanNew()}
       {renderNightPick()}
       {renderShSub()}
+      {renderAbsSheet()}
       {showMtDP&&<CustomDatePicker value={mtForm.done_date||todayStr()} onChange={v=>setMtForm(p=>({...p,done_date:v}))} onClose={()=>setShowMtDP(false)}/>}
       {showDatePicker&&<CustomDatePicker value={otForm.date||todayStr()} onChange={v=>setOtForm(p=>({...p,date:v}))} onClose={()=>setShowDatePicker(false)}/>}
       {showStartTP&&<CustomTimePicker value={otForm.startTime||"17:00"} onChange={v=>setOtForm(p=>({...p,startTime:v}))} onClose={()=>setShowStartTP(false)} label="Başlangıç Saati"/>}
@@ -3305,8 +3501,10 @@ function AppInner(){
           <div style={{overflowY:"auto",maxHeight:"calc(70vh - 50px)",padding:8}}>
             {notifications.length===0?<div style={{padding:30,textAlign:"center",color:C.dim,fontSize:13}}>Bildirim yok ✓</div>:
             notifications.map(n=>(
-              <div key={n.id} style={{display:"flex",gap:10,padding:"10px 8px",borderBottom:`1px solid ${C.border}`,cursor:["review","stock","pend","mtlate","mtnow","pjnight","fmwait","shnight","shsub"].includes(n.id)?"pointer":"default"}} onClick={()=>{
+              <div key={n.id} style={{display:"flex",gap:10,padding:"10px 8px",borderBottom:`1px solid ${C.border}`,cursor:["review","stock","pend","mtlate","mtnow","pjnight","fmwait","shnight","shsub","absflag","absmgr"].includes(n.id)?"pointer":"default"}} onClick={()=>{
                 if(n.id==="review"){setPage("faults");setFaultTab("active");setShowNotifs(false);}
+                else if(n.id==="absflag"&&myOpenFlags[0]){openLeaveFor(myOpenFlags[0].flag_date);}
+                else if(n.id==="absmgr"){setPage("dashboard");setShowNotifs(false);}
                 else if(n.id==="shnight"||n.id==="shsub"){setPage("calendar");setCalTab("shift");setShScope("me");setShowNotifs(false);}
                 else if(n.id==="stock"){setPage("depo");setDepoTab("purchase");setShowNotifs(false);}
                 else if(n.id==="pend"){setPage("approvals");setShowNotifs(false);}
@@ -3320,7 +3518,7 @@ function AppInner(){
                   <div style={{fontSize:13,fontWeight:600,color:n.type==="error"?C.red:n.type==="warning"?C.orange:C.green}}>{n.text}</div>
                   {n.time&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>{(()=>{try{const d=new Date(n.time);const diff=Math.round((Date.now()-d.getTime())/60000);if(diff<60)return diff+" dk önce";if(diff<1440)return Math.round(diff/60)+" saat önce";return Math.round(diff/1440)+" gün önce";}catch(e){return"";}})()}</div>}
                 </div>
-                {["review","stock","pend","mtlate","mtnow","pjnight","fmwait","shnight","shsub"].includes(n.id)&&<div style={{color:C.accent,fontSize:16,alignSelf:"center"}}>›</div>}
+                {["review","stock","pend","mtlate","mtnow","pjnight","fmwait","shnight","shsub","absflag","absmgr"].includes(n.id)&&<div style={{color:C.accent,fontSize:16,alignSelf:"center"}}>›</div>}
               </div>
             ))}
           </div>
