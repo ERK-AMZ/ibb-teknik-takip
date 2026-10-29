@@ -14,9 +14,9 @@ export default defineConfig({
       manifest: {
         name: 'İBB Teknik Takip',
         short_name: 'Teknik Takip',
-        description: 'Fazla Mesai & İzin Yönetim Sistemi',
-        theme_color: '#0c0e14',
-        background_color: '#0c0e14',
+        description: 'Arıza, bakım, mesai ve izin takibi',
+        theme_color: '#FFFFFF',
+        background_color: '#F4F6F8',
         display: 'standalone',
         orientation: 'portrait',
         start_url: '/',
