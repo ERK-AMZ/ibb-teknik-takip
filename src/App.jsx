@@ -5,7 +5,7 @@ import { supabase, signIn, signOut, getProfiles, createOvertime, updateOvertime,
 const toArr=(v)=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'&&Array.isArray(v.data))return v.data;return[];};
 // === Önbellek (stale-while-revalidate): açılışta anında veri, arkada tazeleme ===
 const CACHE_KEY='ibb_cache_v1';
-const APP_VERSION='5.36';
+const APP_VERSION='5.37';
 const VAPID_PUB='BN2YP7MOPhouxNjYjzbuOJznU5xocT3gQW3JeHUnHn3hvRCDdlIvRUDifICb_S0rc_-DqUtWRim0ehxn7UdaV3M';
 const verCmp=(a,b)=>{const pa=String(a).split(".").map(n=>Number(n)||0),pb=String(b).split(".").map(n=>Number(n)||0);
   for(let i=0;i<Math.max(pa.length,pb.length);i++){const x=pa[i]||0,y=pb[i]||0;if(x!==y)return x>y?1:-1;}return 0;};
@@ -371,7 +371,8 @@ function AppInner(){
   const[shSubNote,setShSubNote]=useState("");
   const[bugun,setBugun]=useState(todayStr());
   const[absFlags,setAbsFlags]=useState([]);
-  const[devMeta,setDevMeta]=useState({bas:null,dus:null});
+  const[devMeta,setDevMeta]=useState({bas:null,dus:null,sor:null});
+  const[shMonths,setShMonths]=useState([]);   // v5.37: aylık çizelge durumu (taslak/onaylı)
   const[absSheet,setAbsSheet]=useState(null);
   const[absSrc,setAbsSrc]=useState(false);
   const[absCloseFor,setAbsCloseFor]=useState(null);
@@ -421,6 +422,8 @@ function AppInner(){
   const[leaveDocFile,setLeaveDocFile]=useState(null);
   const[pendingJobs,setPendingJobs]=useState([]);
   const[attendance,setAttendance]=useState([]);
+  const[attPrev,setAttPrev]=useState([]);     // v5.37: dün gece nöbeti satırları (08:30 teyidi)
+  const[gnSheet,setGnSheet]=useState(null);
   const[pjForm,setPjForm]=useState({title:"",desc:"",loc:"",pri:"normal",asg:"",dept:""});
   const[modAssign,setModAssign]=useState(null);
   const[jobTick,setJobTick]=useState(0);
@@ -459,7 +462,9 @@ function AppInner(){
   const fetchStockMovements=useCallback(async()=>{try{const{data}=await supabase.from('stock_movements').select('*').order('movement_date',{ascending:false});if(Array.isArray(data))setStockMovements(data);}catch(e){console.error(e);}},[]);
   const fetchBuildings=useCallback(async()=>{try{const{data}=await supabase.from('buildings').select('*').order('name');if(Array.isArray(data))setBuildings(data);}catch(e){console.error(e);}},[]);
   const fetchPendingJobs=useCallback(async()=>{try{const{data}=await supabase.from('pending_jobs').select('*').order('created_at',{ascending:false}).limit(300);if(Array.isArray(data)){setPendingJobs(data);cacheSave({pendingJobs:data});}}catch(e){console.error(e);}},[]);
-  const fetchAttendance=useCallback(async()=>{try{const x=new Date();const ds=x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");const{data}=await supabase.from('attendance').select('*').eq('att_date',ds);if(Array.isArray(data))setAttendance(data);}catch(e){console.error(e);}},[]);
+  const fetchAttendance=useCallback(async()=>{try{const x=new Date();const ds=x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");const{data}=await supabase.from('attendance').select('*').eq('att_date',ds);if(Array.isArray(data))setAttendance(data);
+    const y=new Date(x.getFullYear(),x.getMonth(),x.getDate()-1);const dy=y.getFullYear()+"-"+String(y.getMonth()+1).padStart(2,"0")+"-"+String(y.getDate()).padStart(2,"0");
+    const r2=await supabase.from('attendance').select('*').eq('att_date',dy).eq('shift','night');if(Array.isArray(r2.data))setAttPrev(r2.data);}catch(e){console.error(e);}},[]);
   const fetchElevators=useCallback(async()=>{try{const{data}=await supabase.from('elevators').select('*').order('sort');if(Array.isArray(data)){setElevators(data);cacheSave({elevators:data});}}catch(e){console.error(e);}},[]);
   const fetchElevatorFaults=useCallback(async()=>{try{const{data}=await supabase.from('elevator_faults').select('*').order('created_at',{ascending:false}).limit(200);if(Array.isArray(data)){setElevatorFaults(data);cacheSave({elevatorFaults:data});}}catch(e){console.error(e);}},[]);
   const fetchMaintPlans=useCallback(async()=>{try{const{data}=await supabase.from('maintenance_plans').select('*').order('provider').order('system_name');if(Array.isArray(data)){setMaintPlans(data);cacheSave({maintPlans:data});}}catch(e){console.error(e);}},[]);
@@ -467,7 +472,9 @@ function AppInner(){
   // Cizelge: gecen ayin 1'inden itibaren — gecmis sisip onbellegi doldurmasin
   // Kayit disi devamsizlik kayitlari + sistem ayarlari (bos = kapali)
   const fetchAbsFlags=useCallback(async()=>{try{const{data}=await supabase.from('absence_flags').select('*').order('flag_date',{ascending:false}).limit(300);if(Array.isArray(data)){setAbsFlags(data);cacheSave({absFlags:data});}}catch(e){console.error(e);}},[]);
-  const fetchDevMeta=useCallback(async()=>{try{const{data}=await supabase.from('app_meta').select('key,value').in('key',['devamsizlik_baslangic','devamsizlik_dusum_baslangic']);if(Array.isArray(data)){const g=k=>(data.find(r=>r.key===k)?.value)||null;setDevMeta({bas:g('devamsizlik_baslangic'),dus:g('devamsizlik_dusum_baslangic')});}}catch(e){}},[]);
+  const fetchDevMeta=useCallback(async()=>{try{const{data}=await supabase.from('app_meta').select('key,value').in('key',['devamsizlik_baslangic','devamsizlik_dusum_baslangic','yoklama_sorumlusu']);if(Array.isArray(data)){const g=k=>(data.find(r=>r.key===k)?.value)||null;setDevMeta({bas:g('devamsizlik_baslangic'),dus:g('devamsizlik_dusum_baslangic'),sor:g('yoklama_sorumlusu')});}}catch(e){}},[]);
+  useEffect(()=>{if(session)fetchAttendance();},[bugun,session,fetchAttendance]);
+  const fetchShiftMonths=useCallback(async()=>{try{const{data,error}=await supabase.from('shift_months').select('*');if(!error&&Array.isArray(data))setShMonths(data);}catch(e){}},[]);
   // Gece yarisini gecen oturumlarda "bugun" donup kalmasin
   useEffect(()=>{const c=()=>{const t=todayStr();setBugun(p=>p===t?p:t);};
     const iv=setInterval(c,60000);document.addEventListener("visibilitychange",c);
@@ -623,6 +630,8 @@ function AppInner(){
     return()=>{m=false;try{sub?.unsubscribe();}catch(e){}};
   },[loadData,silentRefresh]);
 
+  const debRef=useRef({});
+  const deb=(k,fn,ms=1500)=>{clearTimeout(debRef.current[k]);debRef.current[k]=setTimeout(fn,ms);};
   useEffect(()=>{
     if(!session)return;let subs=[],m=true;
     const s=async()=>{
@@ -634,18 +643,19 @@ function AppInner(){
       try{const c=await subscribeToChanges('materials',()=>{if(m)fetchMaterials();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('stock_movements',()=>{if(m){fetchStockMovements();fetchMaterials();}});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('pending_jobs',()=>{if(m)fetchPendingJobs();});if(c)subs.push(c);}catch(e){}
-      try{const c=await subscribeToChanges('attendance',()=>{if(m)fetchAttendance();});if(c)subs.push(c);}catch(e){}
+      try{const c=await subscribeToChanges('attendance',()=>{if(m)deb('att',()=>{if(m)fetchAttendance();},600);});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('elevators',()=>{if(m)fetchElevators();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('elevator_faults',()=>{if(m)fetchElevatorFaults();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('maintenance_plans',()=>{if(m)fetchMaintPlans();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('maintenance_logs',()=>{if(m)fetchMaintLogs();});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('fault_materials',()=>{if(m)fetchFaultMaterials();});if(c)subs.push(c);}catch(e){}
-      try{const c=await subscribeToChanges('shift_schedule',()=>{if(m)fetchShifts();});if(c)subs.push(c);}catch(e){}
+      try{const c=await subscribeToChanges('shift_schedule',()=>{if(m)deb('sh',()=>{if(m)fetchShifts();});});if(c)subs.push(c);}catch(e){}
       try{const c=await subscribeToChanges('absence_flags',()=>{if(m)fetchAbsFlags();});if(c)subs.push(c);}catch(e){}
-    };s();return()=>{m=false;subs.forEach(s=>{try{s?.unsubscribe();}catch(e){}});};
+      try{const c=await subscribeToChanges('shift_months',()=>{if(m)fetchShiftMonths();});if(c)subs.push(c);}catch(e){}
+    };s();return()=>{m=false;Object.values(debRef.current).forEach(clearTimeout);debRef.current={};subs.forEach(s=>{try{s?.unsubscribe();}catch(e){}});};
   },[session,fetchOvertimes,fetchLeaves,fetchProfiles,fetchFaults,fetchFaultServices,fetchMaterials,fetchStockMovements,fetchPendingJobs,fetchAttendance]);
 
-  useEffect(()=>{if(session){fetchPendingJobs();fetchAttendance();fetchElevators();fetchElevatorFaults();fetchMaintPlans();fetchMaintLogs();fetchFaultMaterials();fetchShifts();fetchAbsFlags();fetchDevMeta();}},[session,fetchPendingJobs,fetchAttendance,fetchElevators,fetchElevatorFaults,fetchMaintPlans,fetchMaintLogs,fetchFaultMaterials,fetchShifts,fetchAbsFlags,fetchDevMeta]);
+  useEffect(()=>{if(session){fetchPendingJobs();fetchAttendance();fetchElevators();fetchElevatorFaults();fetchMaintPlans();fetchMaintLogs();fetchFaultMaterials();fetchShifts();fetchAbsFlags();fetchDevMeta();fetchShiftMonths();}},[session,fetchPendingJobs,fetchAttendance,fetchElevators,fetchElevatorFaults,fetchMaintPlans,fetchMaintLogs,fetchFaultMaterials,fetchShifts,fetchAbsFlags,fetchDevMeta,fetchShiftMonths]);
 
   const isAdmin=profile?.user_role==="admin";
   const isChef=profile?.user_role==="chef";
@@ -1148,14 +1158,48 @@ function AppInner(){
   async function markAttendance(pid,st,sh){
     const x=new Date();const td=x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");
     try{
-      await supabase.from("attendance").upsert({att_date:td,personnel_id:pid,status:st,...(st==="present"?{absence_reason:null}:{}),...(sh?{shift:sh}:{}),building_id:selBuilding||profile.building_id,marked_by:profile.id,marked_at:new Date().toISOString()},{onConflict:"att_date,personnel_id"});
+      const{error}=await supabase.from("attendance").upsert({att_date:td,personnel_id:pid,status:st,...(st==="present"?{absence_reason:null}:{}),...(sh?{shift:sh}:{}),building_id:selBuilding||profile.building_id,marked_by:profile.id,marked_at:new Date().toISOString()},{onConflict:"att_date,personnel_id"});
+      if(error)throw error;
       await fetchAttendance();
     }catch(e){setToast("Hata: "+(e?.message||""));}
+  }
+  // v5.37: 08:30'da çizelgeden dolan yoklamayı teknik şef tek dokunuşla teyit eder
+  async function confirmAttendance(){
+    setSubmitting(true);
+    try{
+      const{data,error}=await supabase.rpc("attendance_confirm",{p_date:todayStr(),p_building:selBuilding||profile.building_id});
+      if(error)throw error;
+      await fetchAttendance();
+      setToast(`✅ Yoklama teyit edildi${data?.teyit?` (${data.teyit} kişi)`:""}`);
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+  // Dün gecenin nöbetçisi: 08:30 listesinde "nöbeti tuttu" varsayılır; tutmadıysa şef buradan düzeltir
+  async function markNightPrev(pid,st,reason){
+    setSubmitting(true);
+    try{
+      const{error}=await supabase.from("attendance").upsert({att_date:shAddDays(todayStr(),-1),personnel_id:pid,status:st,absence_reason:st==="present"?null:reason,shift:"night",building_id:selBuilding||profile.building_id,marked_by:profile.id,marked_at:new Date().toISOString()},{onConflict:"att_date,personnel_id"});
+      if(error)throw error;
+      setGnSheet(null);await fetchAttendance();
+      setToast(st==="present"?"✅ Nöbet tutuldu olarak işaretlendi":"❌ Dün gece nöbeti: gelmedi olarak işaretlendi");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+  async function setShiftMonth(ay,durum){
+    setSubmitting(true);
+    try{
+      const{error}=await supabase.rpc("shift_month_set",{p_month:ay,p_status:durum,p_building:selBuilding||profile.building_id});
+      if(error)throw error;
+      await fetchShiftMonths();
+      setToast(durum==="onayli"?"✅ Ay çizelgesi onaylandı":"📝 Ay çizelgesi taslağa alındı");
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
   }
   async function toggleShift(pid,newShift){
     const x=new Date();const td=x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");
     try{
-      await supabase.from("attendance").upsert({att_date:td,personnel_id:pid,shift:newShift,building_id:selBuilding||profile.building_id,marked_by:profile.id,marked_at:new Date().toISOString()},{onConflict:"att_date,personnel_id"});
+      const{error}=await supabase.from("attendance").upsert({att_date:td,personnel_id:pid,shift:newShift,building_id:selBuilding||profile.building_id,marked_by:profile.id,marked_at:new Date().toISOString()},{onConflict:"att_date,personnel_id"});
+      if(error)throw error;
       await fetchAttendance();
     }catch(e){setToast("Hata: "+(e?.message||""));}
   }
@@ -1438,6 +1482,9 @@ function AppInner(){
   const shTomorrow=useMemo(()=>shMine[shAddDays(bugun,1)]||null,[shMine,bugun]);
   const shTonight=useMemo(()=>(shByDate[bugun]||[]).filter(s=>s.shift_type==="night"),[shByDate,bugun]);
   const shMineVar=useMemo(()=>Object.keys(shMine).length>0,[shMine]);
+  const ayAnahtar=(y,m)=>`${y}-${String(m+1).padStart(2,"0")}-01`;
+  const ayDurum=k=>{const b=selBuilding||profile?.building_id;return shMonths.find(r=>r.month===k&&(!b||r.building_id===b))||null;};
+  const sonrakiAy=useMemo(()=>{const[y,m]=bugun.split("-").map(Number);return m===12?ayAnahtar(y+1,0):ayAnahtar(y,m);},[bugun]);
   const canShiftEdit=isAdmin||isChef;
   // Yerine gecebilecekler — engel sebebiyle birlikte, engelsizler once
   const shCandidates=useCallback((row)=>{
@@ -3034,13 +3081,35 @@ function AppInner(){
           <div style={{fontSize:24}}>🛠</div>
         </div>
       </div>}
+      {(isChef||isAdmin)&&Number(bugun.slice(8,10))>=20&&ayDurum(sonrakiAy)?.status==="taslak"&&<div onClick={()=>{setPage("calendar");setCalTab("shift");setShScope("team");setShDay(sonrakiAy);}} style={{...S.crd,border:`2px solid ${C.orange}`,marginBottom:12,cursor:"pointer"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:C.orange}}>📝 {MONTHS[Number(sonrakiAy.slice(5,7))-1]} çizelgesi taslak</div>
+            <div style={{fontSize:11,color:C.dim,marginTop:4}}>Gece nöbetleri ve izinleri kontrol edip onayla. Dokun → Vardiya</div>
+          </div>
+          <div style={{fontSize:24}}>📝</div>
+        </div>
+      </div>}
       {canSeeBothDepts&&<div style={{display:"flex",gap:8,marginBottom:10}}>{[["mekanik","⚙️ Mekanik"],["elektrik","⚡ Elektrik"]].map(([k,lbl])=>(<button key={k} onClick={()=>setSumDept(k)} style={{flex:1,padding:"11px",borderRadius:10,border:"1px solid "+(sumDept===k?C.accent:C.border),background:sumDept===k?C.accent:"transparent",color:sumDept===k?"#fff":C.text,fontWeight:700,fontSize:13,cursor:"pointer"}}>{lbl}</button>))}</div>}
       {(isChef||isAdmin||isViewer)&&(()=>{
-        const x=new Date();const td=x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");
-        const attList=bProfiles.filter(u=>u.active&&(u.department||"mekanik")===effDept&&(u.user_role==="personnel"||u.user_role==="viewer"));
+        const td=bugun,dun=shAddDays(bugun,-1);
+        // Teyit eden kişi (yoklama sorumlusu) ve yönetici tüm binayı tek listede görür; izleyici/diğer şef departman sekmesine göre
+        const isYokSor=!!devMeta.sor&&devMeta.sor===profile?.id;
+        const yokDept=(isYokSor||isAdmin)?null:effDept;
+        const deptOK=u=>!yokDept||(u.department||"mekanik")===yokDept;
+        const gunSh=shByDate[td]||[],dunSh=shByDate[dun]||[];
+        const planOf=id=>gunSh.find(s=>s.personnel_id===id)?.shift_type;
+        const schedIds=new Set(gunSh.map(s=>s.personnel_id));
         const onLeave=new Set(leavesState.filter(l=>l.status==="approved"&&Array.isArray(l.dates)&&l.dates.includes(td)&&l.leave_type!=="hourly").map(l=>l.personnel_id));
-        const rec=id=>attendance.find(a=>a.personnel_id===id);
-        const planOf=id=>(shByDate[td]||[]).find(s=>s.personnel_id===id)?.shift_type;
+        const recRaw=id=>attendance.find(a=>a.personnel_id===id&&(!a.att_date||a.att_date===td));
+        // Çizelgeyle artık çelişen (gün içinde vardiyası devredilen / izni sonradan onaylanan) teyitsiz otomatik satır yok sayılır
+        const rec=id=>{const r=recRaw(id);if(!r||r.status==null)return null;
+          if(r.source==="auto"&&!r.confirmed_at&&(onLeave.has(id)||(planOf(id)&&!["day","weekend_day"].includes(planOf(id)))))return null;return r;};
+        const isPers=u=>u.user_role==="personnel"||u.user_role==="viewer";
+        // Çizelge varsa liste çizelgeden gelir (kadrosu pasif görünen elektrikçiler dahil)
+        const attList=bProfiles.filter(u=>isPers(u)&&deptOK(u)&&(schedIds.size>0?(schedIds.has(u.id)||!!rec(u.id)):u.active));
+        // Çizelge dışında kalan aktif personel (yeni başlayan, başka binaya geçmiş ama kaydı duran) ayrıca görünsün
+        const disi=schedIds.size>0?bProfiles.filter(u=>isPers(u)&&deptOK(u)&&u.active&&!schedIds.has(u.id)&&!rec(u.id)):[];
         // Cizelge varsa vardiya cizelgeden (attendance.shift varsayilani "day" oldugu icin sefin
         // secimiyle ayirt edilemiyor); cizelgesi olmayan kiside sefin ☀️/🌙 secimi gecerli
         const hasPlan=id=>!!planOf(id);
@@ -3052,52 +3121,103 @@ function AppInner(){
         const dayL=working.filter(u=>shiftOf(u.id)==="day");
         const nightL=working.filter(u=>shiftOf(u.id)==="night");
         const leaveL=attList.filter(u=>onLeave.has(u.id));
+        // Dün gecenin nöbetçileri: sabah 08:00'de nöbeti devreden ikili, 08:30 listesinde teyit edilir
+        const prevRec=id=>attPrev.find(a=>a.personnel_id===id&&a.att_date===dun&&a.status!=null);
+        const prevL=bProfiles.filter(u=>isPers(u)&&deptOK(u)&&dunSh.some(s=>s.personnel_id===u.id&&s.shift_type==="night"));
         const pres=working.filter(u=>rec(u.id)?.status==="present").length;
         const abs=working.filter(u=>rec(u.id)?.status==="absent").length;
-        const unm=working.length-pres-abs;
+        const unm=dayL.filter(u=>!rec(u.id)).length;
         const dPres=dayL.filter(u=>rec(u.id)?.status==="present").length;
         const nPres=nightL.filter(u=>rec(u.id)?.status==="present").length;
         const YOKLAMA_YETKILI={
           mekanik:["5372cbf9-823a-47fd-8bf5-a78565c31ce3","ba25a89a-060a-4b8d-afdc-7d7c401a316d"], // Eyub + Fatih Sufraci
-          elektrik:["47f4e76b-3a89-4805-816f-b2e1f6e260a1","d0b43af5-cdbe-4ebe-a1f7-6cc6692e8391"]  // Arif + Muhammed
+          elektrik:["47f4e76b-3a89-4805-816f-b2e1f6e260a1","d0b43af5-cdbe-4ebe-a1f7-6cc6692e8391","ba25a89a-060a-4b8d-afdc-7d7c401a316d"]  // Arif + Muhammed + Fatih (tüm ekibi teyit eder)
         };
-        const canMark=(YOKLAMA_YETKILI[effDept]||[]).includes(profile?.id);
+        const canMarkU=u=>isYokSor||(YOKLAMA_YETKILI[u.department||"mekanik"]||[]).includes(profile?.id);
+        const canMark=isYokSor||(YOKLAMA_YETKILI[yokDept||"mekanik"]||[]).includes(profile?.id);
+        // Teyit: bugünün gündüz listesi + dün gece nöbeti (sunucudaki attendance_confirm ile aynı kapsam)
+        const otoGun=dayL.map(u=>rec(u.id)).filter(r=>r&&r.source==="auto");
+        const otoGece=prevL.map(u=>prevRec(u.id)).filter(r=>r&&r.source==="auto");
+        const otoHepsi=[...otoGun,...otoGece];
+        const bekleyen=otoHepsi.filter(r=>!r.confirmed_at);
+        const sonTeyit=otoHepsi.filter(r=>r.confirmed_at&&r.confirmed_by).sort((a,b)=>String(b.confirmed_at).localeCompare(String(a.confirmed_at)))[0];
+        const canConfirm=!isViewer&&(isAdmin||isYokSor||(isChef&&canMark));
+        const saatNow=new Date().getHours()*60+new Date().getMinutes();
+        const geceAcik=saatNow>=17*60;
+        const elk=u=>!yokDept&&(u.department||"mekanik")==="elektrik"?" ⚡":"";
         const chip=u=>{
-          const r=rec(u.id);const st=r?r.status:null;const isN=shiftOf(u.id)==="night";
+          const r=rec(u.id);const st=r?r.status:null;const isN=shiftOf(u.id)==="night";const cm=canMarkU(u)&&(!isN||geceAcik);
+          const oto=r&&r.source==="auto"&&!r.confirmed_at;
+          const bg=st==="present"?C.greenD:st==="absent"?C.redD:C.bg;
+          const cl=st==="present"?C.green:st==="absent"?C.red:C.dim;
+          const ic=st==="present"?"✅":st==="absent"?((ABS_RSN[r?.absence_reason]||["❌"])[0]):(isN&&!geceAcik?"🕔":"⬜");
+          return(<div key={u.id} style={{display:"flex",alignItems:"center",gap:0,borderRadius:16,overflow:"hidden",border:`1px ${oto?"dashed":"solid"} ${cl}${oto?"88":"44"}`}}>
+            {canMarkU(u)&&!hasPlan(u.id)&&<span onClick={(e)=>{e.stopPropagation();toggleShift(u.id,isN?"day":"night");}} title="Gündüz/Gece" style={{padding:"6px 8px",background:isN?C.blueD:C.orangeD,color:isN?C.blue:C.orange,fontSize:13,cursor:"pointer",borderRight:`1px solid ${cl}44`}}>{isN?"🌙":"☀️"}</span>}
+            <span onClick={()=>{if(!cm)return;if(st==="present"){setAbsSrc(false);setAbsSheet(u);}else markAttendance(u.id,"present",shiftOf(u.id));}} style={{padding:"6px 10px",background:bg,color:cl,fontSize:12,fontWeight:600,cursor:cm?"pointer":"default"}}>{ic} {u.full_name}{elk(u)}</span>
+          </div>);
+        };
+        const chipDun=u=>{
+          const r=prevRec(u.id);const st=r?r.status:null;const cm=canMarkU(u);const oto=r&&r.source==="auto"&&!r.confirmed_at;
           const bg=st==="present"?C.greenD:st==="absent"?C.redD:C.bg;
           const cl=st==="present"?C.green:st==="absent"?C.red:C.dim;
           const ic=st==="present"?"✅":st==="absent"?((ABS_RSN[r?.absence_reason]||["❌"])[0]):"⬜";
-          return(<div key={u.id} style={{display:"flex",alignItems:"center",gap:0,borderRadius:16,overflow:"hidden",border:`1px solid ${cl}44`}}>
-            {canMark&&!hasPlan(u.id)&&<span onClick={(e)=>{e.stopPropagation();toggleShift(u.id,isN?"day":"night");}} title="Gündüz/Gece" style={{padding:"6px 8px",background:isN?C.blueD:C.orangeD,color:isN?C.blue:C.orange,fontSize:13,cursor:"pointer",borderRight:`1px solid ${cl}44`}}>{isN?"🌙":"☀️"}</span>}
-            <span onClick={()=>{if(!canMark)return;if(st==="present"){setAbsSrc(false);setAbsSheet(u);}else markAttendance(u.id,"present",shiftOf(u.id));}} style={{padding:"6px 10px",background:bg,color:cl,fontSize:12,fontWeight:600,cursor:canMark?"pointer":"default"}}>{ic} {u.full_name}</span>
-          </div>);
+          return(<span key={u.id} onClick={()=>{if(cm)setGnSheet(u);}} style={{padding:"6px 10px",borderRadius:16,background:bg,color:cl,fontSize:12,fontWeight:600,border:`1px ${oto?"dashed":"solid"} ${cl}${oto?"88":"44"}`,cursor:cm?"pointer":"default"}}>{ic} {u.full_name}{elk(u)}</span>);
         };
         return(<div style={{...S.crd,marginBottom:12}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
             <div style={{fontSize:13,fontWeight:700}}>📋 Günlük Yoklama</div>
             <div style={{fontSize:12,fontWeight:700}}><span style={{color:C.green}}>✅{pres}</span> <span style={{color:C.red}}>❌{abs}</span> <span style={{color:C.orange}}>🌴{leaveL.length}</span>{unm>0&&<span style={{color:C.dim}}> ⬜{unm}</span>}</div>
           </div>
-          {canMark&&<div style={{fontSize:10,color:C.dim,marginBottom:8}}>İsme dokun: ⬜ → ✅ mesaide. ✅ olana dokun → yok sebebini seç. Gündüz/gece vardiya çizelgesinden gelir; değişiklik için Takvim → Vardiya → Yerine ata.</div>}
+          {bekleyen.length>0?<div style={{background:C.orangeD,border:`1px solid ${C.orange}44`,borderRadius:12,padding:"10px 12px",marginBottom:10}}>
+            <div style={{fontSize:12,fontWeight:800,color:C.orange}}>{"🤖 Liste 08:30'da çizelgeden dolduruldu · "+bekleyen.length+" kişi teyit bekliyor"}</div>
+            <div style={{fontSize:11,color:C.dim,marginTop:3}}>Servisi kaçıran, hasta olan ya da gelmeyen varsa ismine dokunup sebebini seç. Dün gece nöbetini tutmayan varsa onu da işaretle. Sonra listeyi teyit et.</div>
+            {canConfirm&&<button disabled={submitting} onClick={confirmAttendance} style={{...S.btnS(C.green,"#fff"),width:"100%",marginTop:8,padding:"11px"}}>✓ Listeyi teyit et</button>}
+          </div>
+          :sonTeyit?<div style={{fontSize:11,color:C.green,fontWeight:700,marginBottom:8}}>✅ Teyit edildi · {getU(sonTeyit.confirmed_by)?.full_name||"—"} · {new Date(sonTeyit.confirmed_at).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}</div>
+          :otoHepsi.length===0&&schedIds.size>0&&saatNow<8*60+35?<div style={{fontSize:11,color:C.dim,marginBottom:8}}>{"🤖 Liste 08:30'da çizelgeden otomatik dolacak, teyit bildirimi teknik şefe gidecek."}</div>:null}
+          {canMark&&<div style={{fontSize:10,color:C.dim,marginBottom:8}}>✅ olana dokun → gelmediyse sebebini seç. ⬜ olana dokun → geldi. Gündüz/gece vardiya çizelgesinden gelir; değişiklik için Takvim → Vardiya → Yerine ata.</div>}
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
             <span style={{fontSize:11,fontWeight:700,color:C.orange}}>☀️ Gündüz</span>
             <span style={{fontSize:10,color:C.dim}}>{dayL.length} kişi · {dPres} mesaide</span>
           </div>
           <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{dayL.length>0?dayL.map(chip):<span style={{fontSize:11,color:C.muted}}>—</span>}</div>
+          {prevL.length>0&&<div style={{borderTop:`1px solid ${C.border}`,marginTop:10,paddingTop:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+              <span style={{fontSize:11,fontWeight:700,color:C.purple}}>🌙 Dün gece nöbeti</span>
+              <span style={{fontSize:10,color:C.dim}}>{fDS(dun)} 17:00 → bugün 08:00</span>
+            </div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{prevL.map(chipDun)}</div>
+          </div>}
           <div style={{borderTop:`1px solid ${C.border}`,marginTop:10,paddingTop:8}}>
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
-              <span style={{fontSize:11,fontWeight:700,color:C.blue}}>🌙 Gece</span>
-              <span style={{fontSize:10,color:C.dim}}>{nightL.length>0?`${nPres}/${nightL.length} geldi`:(canMark?"☀️'e basıp gece ata":"atanmadı")}</span>
+              <span style={{fontSize:11,fontWeight:700,color:C.blue}}>🌙 Bu gece</span>
+              <span style={{fontSize:10,color:C.dim}}>{nightL.length>0?(!geceAcik?`${nightL.length} kişi · 17:00'de başlar`:`${nPres}/${nightL.length} geldi`):(canMark?"☀️'e basıp gece ata":"atanmadı")}</span>
             </div>
             {nightL.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6}}>{nightL.map(chip)}</div>}
           </div>
           {leaveL.length>0&&<div style={{fontSize:11,color:C.orange,marginTop:10,borderTop:`1px solid ${C.border}`,paddingTop:8}}>🌴 İzinli ({leaveL.length}): {leaveL.map(u=>u.full_name).join(", ")}</div>}
           {offPlan.length>0&&<div style={{marginTop:10,borderTop:`1px solid ${C.border}`,paddingTop:8}}>
             <div style={{fontSize:11,color:C.muted,marginBottom:6}}>💤 Çizelgeye göre bugün çalışmıyor ({offPlan.length}){canMark?" — geldiyse dokun":""}</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{offPlan.map(u=>(<span key={u.id} onClick={()=>{if(canMark)markAttendance(u.id,"present","day");}}
-              style={{padding:"5px 9px",borderRadius:14,fontSize:11,color:C.muted,border:`1px dashed ${C.border}`,cursor:canMark?"pointer":"default"}}>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{offPlan.map(u=>(<span key={u.id} onClick={()=>{if(canMarkU(u))markAttendance(u.id,"present","day");}}
+              style={{padding:"5px 9px",borderRadius:14,fontSize:11,color:C.muted,border:`1px dashed ${C.border}`,cursor:canMarkU(u)?"pointer":"default"}}>
               {(SH_LBL[planOf(u.id)]||["","","—"])[2]} {u.full_name}</span>))}</div>
           </div>}
-          {(isAdmin||canMark)&&working.length>0&&pres+abs===0&&<div style={{fontSize:12,fontWeight:700,color:C.red,marginTop:8}}>⚠ Bugün bu departmanda yoklama henüz alınmadı{devAktif?" — kayıt dışı devamsızlık tespiti yoklamaya bağlı":""}</div>}
+          {disi.length>0&&<div style={{marginTop:10,borderTop:`1px solid ${C.border}`,paddingTop:8}}>
+            <div style={{fontSize:11,color:C.muted,marginBottom:6}}>📋 Çizelgede yok ({disi.length}){canMark?" — geldiyse dokun":""}</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{disi.map(u=>(<span key={u.id} onClick={()=>{if(canMarkU(u))markAttendance(u.id,"present","day");}}
+              style={{padding:"5px 9px",borderRadius:14,fontSize:11,color:C.muted,border:`1px dashed ${C.border}`,cursor:canMarkU(u)?"pointer":"default"}}>{u.full_name}{elk(u)}</span>))}</div>
+          </div>}
+          {(isAdmin||canMark)&&working.length>0&&pres+abs===0&&otoHepsi.length===0&&saatNow>=9*60&&<div style={{fontSize:12,fontWeight:700,color:C.red,marginTop:8}}>⚠ Bugün yoklama henüz alınmadı{devAktif?" — kayıt dışı devamsızlık tespiti yoklamaya bağlı":""}</div>}
+          {gnSheet&&<div onClick={()=>setGnSheet(null)} style={{position:"fixed",inset:0,background:"rgba(11,18,32,0.45)",zIndex:300,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+            <div onClick={e=>e.stopPropagation()} style={{background:C.card,width:"100%",maxWidth:480,borderRadius:"18px 18px 0 0",padding:"18px 16px calc(18px + env(safe-area-inset-bottom))"}}>
+              <div style={{fontSize:15,fontWeight:800}}>{gnSheet.full_name}</div>
+              <div style={{fontSize:12,color:C.dim,marginTop:2,marginBottom:12}}>Dün gece nöbeti · {fDS(dun)} 17:00 → bugün 08:00</div>
+              {[["present",null,"✅ Nöbeti tuttu",C.green],["absent","raporlu","🏥 Raporlu",C.orange],["absent","habersiz","❓ Gelmedi / erken ayrıldı",C.red]].map(([st,rs,lbl,col])=>(
+                <button key={lbl} disabled={submitting} onClick={()=>markNightPrev(gnSheet.id,st,rs)} style={{...S.btnS(col+"1a",col),width:"100%",padding:"12px",marginBottom:8,fontSize:14}}>{lbl}</button>))}
+              <div style={{fontSize:10,color:C.muted,marginTop:2}}>Sözlü izin verdiysen vardiyayı önceden Takvim → Vardiya → Yerine ata ile devretmek gerekir.</div>
+              <button onClick={()=>setGnSheet(null)} style={{...S.btnS(C.bg,C.dim),width:"100%",padding:"11px",marginTop:8}}>Vazgeç</button>
+            </div>
+          </div>}
         </div>);
       })()}
       {renderMgrAbs()}
@@ -3281,6 +3401,17 @@ function AppInner(){
     function prev(){calM===0?(setCalY(calY-1),setCalM(11)):setCalM(calM-1);}
     function next(){calM===11?(setCalY(calY+1),setCalM(0)):setCalM(calM+1);}
     const gun=shDay||today;
+    // v5.37: ayın durumu — taslak aylar onaylanana kadar "değişebilir" diye işaretlenir
+    const ayBandi=(k)=>{const d=ayDurum(k);if(!d)return null;const adi=MONTHS[Number(k.slice(5,7))-1];
+      if(d.status==="taslak")return(<div style={{background:C.orangeD,border:`1px solid ${C.orange}44`,borderRadius:12,padding:"10px 12px",marginBottom:12}}>
+        <div style={{fontSize:12,fontWeight:800,color:C.orange}}>📝 {adi} çizelgesi TASLAK</div>
+        <div style={{fontSize:11,color:C.dim,marginTop:3}}>{canShiftEdit?(d.note?d.note+". ":"")+"Gece nöbetlerini ve izinleri kontrol et, gerekirse \"Yerine ata\" ile düzelt, sonra onayla.":"Şef onaylayana kadar değişebilir."}</div>
+        {canShiftEdit&&<button disabled={submitting} onClick={()=>setShiftMonth(k,"onayli")} style={{...S.btnS(C.green,"#fff"),width:"100%",marginTop:8,padding:"10px"}}>✓ {adi} çizelgesini onayla</button>}
+      </div>);
+      return(<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,fontSize:11,color:C.green,fontWeight:700,marginBottom:10}}>
+        <span>✅ {adi} onaylı{d.approved_by?` · ${getU(d.approved_by)?.full_name||"—"} · ${fDS(String(d.approved_at||"").slice(0,10))}`:d.note?` · ${d.note}`:""}</span>
+        {isAdmin&&<span onClick={()=>{if(!submitting)setShiftMonth(k,"taslak");}} style={{color:C.muted,fontWeight:600,cursor:"pointer",textDecoration:"underline"}}>taslağa al</span>}
+      </div>);};
 
     const kapsam=(<div style={{display:"flex",gap:6,marginBottom:12}}>
       <button style={{flex:1,...S.btnS(shScope==="me"?C.purple:C.bg,shScope==="me"?"#fff":C.muted),padding:"9px"}}
@@ -3320,7 +3451,7 @@ function AppInner(){
           <div style={{fontSize:13,fontWeight:700,marginBottom:3}}>Vardiya çizelgesinde kaydınız yok</div>
           <div style={{fontSize:11,color:C.dim,marginBottom:12}}>Puantaja dahil değilsiniz. Ekibin çizelgesini görebilirsiniz.</div>
           <button style={S.btnS(C.purple,"#fff")} onClick={()=>{setShScope("team");setShDay(today);}}>Tüm ekibi göster</button>
-        </div>:<>{nav}
+        </div>:<>{nav}{ayBandi(ayAnahtar(calY,calM))}
         <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4,marginBottom:4}}>{DAYS_TR.map(d=><div key={d} style={{textAlign:"center",fontSize:11,color:C.muted,fontWeight:600,padding:"4px 0"}}>{d}</div>)}</div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>{cells}</div>
         <div style={{...S.lawBox,marginTop:14}}>
@@ -3374,14 +3505,15 @@ function AppInner(){
         </div>
         <button onClick={()=>setShDay(shAddDays(gun,1))} style={{background:C.accentD,border:"none",color:C.accent,width:40,height:40,borderRadius:10,cursor:"pointer",fontSize:18,fontWeight:700,WebkitAppearance:"none"}}>&#8250;</button>
       </div>
+      {ayBandi(gun.slice(0,7)+"-01")}
       {liste.length===0?<div style={{...S.crd,padding:18,textAlign:"center",fontSize:13,color:C.dim}}>Bu tarih için çizelge yok</div>
         :<>{["night","weekend_day","day"].map(blok)}
           {izinli.length>0&&<div style={{...S.lawBox,borderColor:C.red+"33"}}>
-            <div style={{fontSize:12,fontWeight:700,color:C.red,marginBottom:4}}>İZ Vardiyası devredilenler</div>
-            {izinli.map(s=><div key={s.id} style={{fontSize:11,color:C.dim,padding:"2px 0"}}>{getU(s.personnel_id)?.full_name||"—"}{s.note?" — "+s.note:""}</div>)}
+            <div style={{fontSize:12,fontWeight:700,color:C.red,marginBottom:4}}>🌴 İzinli / vardiyası devredilen</div>
+            {izinli.map(s=><div key={s.id} style={{fontSize:11,color:C.dim,padding:"2px 0"}}>{getU(s.personnel_id)?.full_name||"—"} — {s.source==="manual"?"vardiyası devredildi":"yıllık izin (çizelge)"}{s.note?" · "+s.note:""}</div>)}
           </div>}
           <div style={{fontSize:10,color:C.dim,textAlign:"center",marginTop:10}}>
-            Nİ/H/RT olanlar listelenmez — sadece o gün görevli olanlar görünür
+            Nİ/H/RT olanlar listelenmez — sadece o gün görevli ve izinli olanlar görünür
           </div></>}
     </div>);
   };
