@@ -5,7 +5,7 @@ import { supabase, signIn, signOut, getProfiles, createOvertime, updateOvertime,
 const toArr=(v)=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'&&Array.isArray(v.data))return v.data;return[];};
 // === Önbellek (stale-while-revalidate): açılışta anında veri, arkada tazeleme ===
 const CACHE_KEY='ibb_cache_v1';
-const APP_VERSION='5.37';
+const APP_VERSION='5.38';
 const VAPID_PUB='BN2YP7MOPhouxNjYjzbuOJznU5xocT3gQW3JeHUnHn3hvRCDdlIvRUDifICb_S0rc_-DqUtWRim0ehxn7UdaV3M';
 const verCmp=(a,b)=>{const pa=String(a).split(".").map(n=>Number(n)||0),pb=String(b).split(".").map(n=>Number(n)||0);
   for(let i=0;i<Math.max(pa.length,pb.length);i++){const x=pa[i]||0,y=pb[i]||0;if(x!==y)return x>y?1:-1;}return 0;};
@@ -424,7 +424,10 @@ function AppInner(){
   const[attendance,setAttendance]=useState([]);
   const[attPrev,setAttPrev]=useState([]);     // v5.37: dün gece nöbeti satırları (08:30 teyidi)
   const[gnSheet,setGnSheet]=useState(null);
-  const[pjForm,setPjForm]=useState({title:"",desc:"",loc:"",pri:"normal",asg:"",dept:""});
+  const[pjForm,setPjForm]=useState({title:"",desc:"",loc:"",pri:"normal",asgs:[],dept:""});
+  const[asgSel,setAsgSel]=useState([]);      // v5.38: Ata ekranında seçilenler (ilk = sorumlu)
+  const[nightSel,setNightSel]=useState([]);  // v5.38: Geceye devirde seçilenler
+  const[pushIds,setPushIds]=useState(null);  // v5.38: bildirimi açık olanlar (şef/yönetici görür)
   const[modAssign,setModAssign]=useState(null);
   const[jobTick,setJobTick]=useState(0);
   const[pjShowDone,setPjShowDone]=useState(false);
@@ -461,7 +464,11 @@ function AppInner(){
   const fetchMaterials=useCallback(async()=>{try{const{data}=await supabase.from('materials').select('*').order('name');if(Array.isArray(data))setMaterials(data);}catch(e){console.error(e);}},[]);
   const fetchStockMovements=useCallback(async()=>{try{const{data}=await supabase.from('stock_movements').select('*').order('movement_date',{ascending:false});if(Array.isArray(data))setStockMovements(data);}catch(e){console.error(e);}},[]);
   const fetchBuildings=useCallback(async()=>{try{const{data}=await supabase.from('buildings').select('*').order('name');if(Array.isArray(data))setBuildings(data);}catch(e){console.error(e);}},[]);
-  const fetchPendingJobs=useCallback(async()=>{try{const{data}=await supabase.from('pending_jobs').select('*').order('created_at',{ascending:false}).limit(300);if(Array.isArray(data)){setPendingJobs(data);cacheSave({pendingJobs:data});}}catch(e){console.error(e);}},[]);
+  const fetchPendingJobs=useCallback(async()=>{try{
+    let r=await supabase.from('pending_jobs').select('*').is('deleted_at',null).order('created_at',{ascending:false}).limit(300);
+    if(r.error)r=await supabase.from('pending_jobs').select('*').order('created_at',{ascending:false}).limit(300);
+    const data=r.data;if(Array.isArray(data)){setPendingJobs(data);cacheSave({pendingJobs:data});}}catch(e){console.error(e);}},[]);
+  const fetchPushIds=useCallback(async()=>{try{const{data,error}=await supabase.rpc('push_durum');if(!error&&Array.isArray(data))setPushIds(data);}catch(e){}},[]);
   const fetchAttendance=useCallback(async()=>{try{const x=new Date();const ds=x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");const{data}=await supabase.from('attendance').select('*').eq('att_date',ds);if(Array.isArray(data))setAttendance(data);
     const y=new Date(x.getFullYear(),x.getMonth(),x.getDate()-1);const dy=y.getFullYear()+"-"+String(y.getMonth()+1).padStart(2,"0")+"-"+String(y.getDate()).padStart(2,"0");
     const r2=await supabase.from('attendance').select('*').eq('att_date',dy).eq('shift','night');if(Array.isArray(r2.data))setAttPrev(r2.data);}catch(e){console.error(e);}},[]);
@@ -677,11 +684,14 @@ function AppInner(){
   const bPJobs=useMemo(()=>pendingJobs.filter(j=>!selBuilding||j.building_id===selBuilding),[pendingJobs,selBuilding]);
   // Süresi geçen iş emirleri (son süre sunucuda hesaplanır)
   const pjOverdue=useMemo(()=>bPJobs.filter(j=>j.status==="open"&&j.due_at&&new Date(j.due_at).getTime()<Date.now()),[bPJobs,jobTick]);
+  // v5.38: işte yer alan = sorumlu, üstlenen ya da ekip üyesi
+  const inJob=(j,id)=>!!id&&(j.assigned_to===id||j.claimed_by===id||(Array.isArray(j.team)&&j.team.includes(id)));
+  const jobNames=j=>[j.assigned_to,...(Array.isArray(j.team)?j.team:[])].filter(Boolean).map(id=>getU(id)?.full_name||"?");
   // Bana atanan / üstlendiğim açık işler
-  const jobMine=useMemo(()=>bPJobs.filter(j=>j.status==="open"&&profile&&(j.assigned_to===profile.id||j.claimed_by===profile.id)).sort(jobSort),[bPJobs,profile]);
+  const jobMine=useMemo(()=>bPJobs.filter(j=>j.status==="open"&&profile&&inJob(j,profile.id)).sort(jobSort),[bPJobs,profile]);
   // Üstlenilmeyi bekleyen aciller: bana atanmış ya da birimime "ekip" olarak açılmış
   const jobAcilBekleyen=useMemo(()=>bPJobs.filter(j=>j.status==="open"&&j.priority==="acil"&&!j.claimed_by&&profile&&!isAmir
-    &&(j.assigned_to===profile.id||(!j.assigned_to&&(j.department||"mekanik")===(profile.department||"mekanik")
+    &&(inJob(j,profile.id)||(!j.assigned_to&&(j.department||"mekanik")===(profile.department||"mekanik")
       &&(!j.claim_from||new Date(j.claim_from).getTime()<=Date.now())))),[bPJobs,profile,isAmir,jobTick]);
   // Son 7 gün ölçümü: zamanında kapanan / açılan
   const jobKpi=useMemo(()=>{const s=Date.now()-7*86400000,nw=Date.now();
@@ -906,13 +916,14 @@ function AppInner(){
   // ═══ Gunduz/Gece is devri aksiyonlari ═══
   function pjOpenNightPick(job){
     if(nightCrew.length===0){setToast("⚠ Bugün gece nöbetçisi atanmamış — Özet > Günlük Yoklama'dan ☀️ tuşuyla ata");return;}
-    setModNightPick(job);
+    setNightSel([]);setModNightPick(job);
   }
-  async function pjToNight(job,personId){
+  async function pjToNight(job,sel){
+    if(!Array.isArray(sel)||sel.length===0){setToast("⚠ En az bir kişi seç");return;}
     setSubmitting(true);
     try{
-      const up={shift:"night",assigned_to:personId,job_date:nightDateStr()};
-      if(job.claimed_by&&job.claimed_by!==personId){up.claimed_by=null;up.claimed_at=null;}
+      const up={shift:"night",assigned_to:sel[0],team:sel.slice(1),job_date:nightDateStr()};
+      if(job.claimed_by&&!sel.includes(job.claimed_by)){up.claimed_by=null;up.claimed_at=null;}
       const{data,error}=await supabase.from("pending_jobs").update(up).eq("id",job.id).select().maybeSingle();
       if(error)throw error;
       await fetchPendingJobs();setModNightPick(null);setPjTab("night");setToast("🌙 Geceye devredildi"+(data?.due_at?` — son: ${fDue(data.due_at)}`:""));
@@ -1064,17 +1075,18 @@ function AppInner(){
     const pri=pjForm.pri==="acil"?"acil":"normal";
     const dept=isAdmin?(pjForm.dept||profile.department||"mekanik"):(profile.department||"mekanik");
     const gece=pri==="acil"&&jobDuePreview(pri).getHours()===8;
-    if(pjForm.asg&&!(gece?nightCrew:dayCrew).some(u=>u.id===pjForm.asg)){
-      setPjForm({...pjForm,asg:""});setToast(`⚠ Seçtiğin kişi bu vardiyada değil (iş ${gece?"geceye":"gündüze"} düştü) — tekrar seç`);return;}
+    const asgs=Array.isArray(pjForm.asgs)?pjForm.asgs:[];
+    if(asgs.some(id=>!(gece?nightCrew:dayCrew).some(u=>u.id===id))){
+      setPjForm({...pjForm,asgs:[]});setToast(`⚠ Seçtiğin kişilerden biri bu vardiyada değil (iş ${gece?"geceye":"gündüze"} düştü) — tekrar seç`);return;}
     setSubmitting(true);
     try{
       const{data,error}=await supabase.from("pending_jobs").insert({building_id:selBuilding||profile.building_id,title:t,
         description:pjForm.desc.trim(),location:pjForm.loc.trim()||null,priority:pri,department:dept,
-        assigned_to:pjForm.asg||null,created_by:profile.id,shift:"day",job_date:todayStr()}).select().single();
+        assigned_to:asgs[0]||null,team:asgs.slice(1),created_by:profile.id,shift:"day",job_date:todayStr()}).select().single();
       if(error)throw error;
-      setPjForm({title:"",desc:"",loc:"",pri:"normal",asg:"",dept:""});await fetchPendingJobs();
+      setPjForm({title:"",desc:"",loc:"",pri:"normal",asgs:[],dept:""});await fetchPendingJobs();
       setPjTab(data?.shift==="night"?"night":"day");
-      setToast(`${pri==="acil"?"🔴 Acil iş emri":"🟡 İş emri"} açıldı — son: ${fDue(data?.due_at)}`);
+      setToast(`${pri==="acil"?"🔴 Acil iş emri":"🟡 İş emri"} açıldı${asgs.length>1?` (${asgs.length} kişi)`:""} — son: ${fDue(data?.due_at)}`);
     }catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
   }
@@ -1132,15 +1144,29 @@ function AppInner(){
     }catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
   }
-  // Atama / yeniden atama (şef/yönetici). Başkasına atanınca eski üstlenme düşer.
-  async function assignJob(j,pid){
+  // Atama / yeniden atama (şef/yönetici). İlk seçilen sorumlu, diğerleri ekip. Seçilmeyen üstlenen düşer.
+  async function saveAssign(j,sel){
     setSubmitting(true);
     try{
-      const up={assigned_to:pid};
-      if(j.claimed_by&&j.claimed_by!==pid){up.claimed_by=null;up.claimed_at=null;}
+      const up={assigned_to:sel[0]||null,team:sel.slice(1)};
+      if(j.claimed_by&&!sel.includes(j.claimed_by)){up.claimed_by=null;up.claimed_at=null;}
       const{error}=await supabase.from("pending_jobs").update(up).eq("id",j.id);
       if(error)throw error;
-      await fetchPendingJobs();setModAssign(null);setToast("👤 "+(getU(pid)?.full_name||"")+" atandı — bildirim gitti");
+      await fetchPendingJobs();setModAssign(null);
+      setToast(sel.length===0?"👥 Ekip işine çevrildi — ilk üstlenen alır":sel.length===1?`👤 ${getU(sel[0])?.full_name||""} atandı — bildirim gitti`:`👥 ${sel.length} kişi atandı — hepsine bildirim gitti`);
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+  // v5.38: iş emrini sil (kayıt tutulur, listelerden kalkar; atananlara iptal bildirimi gider)
+  async function deleteJob(j){
+    const r=window.prompt(`"${j.title}" iş emri silinsin mi?\nSebep (opsiyonel):`,"");
+    if(r===null)return;
+    setSubmitting(true);
+    try{
+      const{data,error}=await supabase.rpc("job_delete",{p_id:j.id,p_reason:(r||"").trim()||null});
+      if(error)throw error;
+      if(!data?.ok){setToast("⚠ "+(data?.hata||"Silinemedi"));setSubmitting(false);return;}
+      await fetchPendingJobs();setToast("🗑 İş emri silindi"+(j.assigned_to?" — atananlara iptal bildirimi gitti":""));
     }catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
   }
@@ -1582,6 +1608,8 @@ function AppInner(){
   // ═══ Bakim Takip turetilmis veriler ═══
   const isJobMgr=!!profile?.job_manager;
   const canJobAct=isAdmin||isChef||isJobMgr;
+  useEffect(()=>{if(session&&canJobAct)fetchPushIds();},[session,canJobAct,fetchPushIds]);
+  const pushOff=id=>Array.isArray(pushIds)&&!pushIds.includes(id);
   const deptLock=canSeeBothDepts?null:(profile?.department||"mekanik"); // sef kendi departmanina kilitli
   const bMaintPlans=useMemo(()=>maintPlans.filter(p=>p.active!==false
     &&(!p.building_id||p.building_id===selBuilding)
@@ -1611,19 +1639,19 @@ function AppInner(){
   const pjOpen=useMemo(()=>bPJobs.filter(j=>j.status==="open"),[bPJobs]);
   const pjDay=useMemo(()=>pjOpen.filter(j=>(j.shift||"day")==="day").sort(jobSort),[pjOpen]);
   const pjNight=useMemo(()=>pjOpen.filter(j=>(j.shift||"day")==="night").sort(jobSort),[pjOpen]);
-  const pjMine=useMemo(()=>pjNight.filter(j=>j.assigned_to===profile?.id),[pjNight,profile]);
+  const pjMine=useMemo(()=>pjNight.filter(j=>inJob(j,profile?.id)),[pjNight,profile]);
   useEffect(()=>{if(pjOpen.length===0)return;const iv=setInterval(()=>setJobTick(t=>t+1),60000);return()=>clearInterval(iv);},[pjOpen.length]);
   // Gece ekibi: 08:00'den önce dün akşam başlayan gece, sonrası bu akşamki gece (çizelge; yoksa bugünkü yoklama)
   const nightKey=nightDateStr(),dayKey=dayDateStr();
   const nightCrew=useMemo(()=>{
     const plan=(shByDate[nightKey]||[]).filter(s=>s.shift_type==="night").map(s=>s.personnel_id);
     const ids=plan.length>0?plan:(nightKey===todayStr()?attendance.filter(a=>a.shift==="night").map(a=>a.personnel_id):[]);
-    return bProfiles.filter(u=>u.active&&ids.includes(u.id)&&(!deptLock||(u.department||"mekanik")===deptLock));},[attendance,bProfiles,deptLock,shByDate,nightKey]);
+    return bProfiles.filter(u=>ids.includes(u.id)&&(u.active||plan.length>0)&&(!deptLock||(u.department||"mekanik")===deptLock));},[attendance,bProfiles,deptLock,shByDate,nightKey]);
   // Gündüz ekibi: sıradaki gündüz vardiyası (17:00 sonrası yarın); çizelge yoksa birimdeki aktif personel
   const dayCrew=useMemo(()=>{
     const plan=(shByDate[dayKey]||[]).filter(s=>s.shift_type==="day"||s.shift_type==="weekend_day").map(s=>s.personnel_id);
-    return bProfiles.filter(u=>u.active&&(u.user_role==="personnel"||u.user_role==="viewer"||u.job_manager)
-      &&(plan.length===0||plan.includes(u.id))&&(!deptLock||(u.department||"mekanik")===deptLock));},[bProfiles,deptLock,shByDate,dayKey]);
+    return bProfiles.filter(u=>(plan.length>0?plan.includes(u.id):u.active)&&(u.user_role==="personnel"||u.user_role==="viewer"||u.job_manager)
+      &&(!deptLock||(u.department||"mekanik")===deptLock));},[bProfiles,deptLock,shByDate,dayKey]);
 
   // Notification system
   const notifTimes=useRef({});
@@ -1868,9 +1896,11 @@ function AppInner(){
       const cb=getU(j.created_by),asg=getU(j.assigned_to),clm=getU(j.claimed_by);
       const rs=Array.isArray(j.reasons)?j.reasons:[];
       const isNight=(j.shift||"day")==="night";
-      const mine=j.assigned_to===profile?.id||j.claimed_by===profile?.id;
+      const mine=inJob(j,profile?.id);
       const canClose=canJobAct||mine;
-      const canClaim=!j.claimed_by&&!isAmir&&(j.assigned_to===profile?.id
+      const canDel=isAdmin||((isChef||isJobMgr)&&(!profile?.building_id||j.building_id===profile.building_id))||j.created_by===profile?.id;
+      const adlar=jobNames(j);
+      const canClaim=!j.claimed_by&&!isAmir&&(mine
         ||(!j.assigned_to&&(canJobAct||j.priority==="acil"||(j.department||"mekanik")===(profile?.department||"mekanik"))));
       // 30 dk saati: vardiya başından / son atamadan (sunucu: claim_from)
       const bekleDk=Math.floor((now-new Date(j.claim_from||j.created_at).getTime())/60000);
@@ -1890,7 +1920,7 @@ function AppInner(){
         </div>
         <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
           {isNight&&<div style={S.tag(C.blueD,C.blue)}>🌙 Gece</div>}
-          <div style={S.tag(C.bg,asg?C.text:C.muted)}>👤 {asg?asg.full_name:"Ekip — ilk üstlenen"}</div>
+          <div style={S.tag(C.bg,asg?C.text:C.muted)}>{adlar.length>1?"👥":"👤"} {adlar.length>0?adlar.join(" + "):"Ekip — ilk üstlenen"}</div>
           {clm?<div style={S.tag(C.greenD,C.green)}>👷 {clm.full_name} üstlendi {j.claimed_at?hmTxt(j.claimed_at):""}</div>
             :j.priority==="acil"&&(bekleDk<0
               ?<div style={S.tag(C.blueD,C.blue)}>🕔 {hmTxt(j.claim_from)}'de vardiyaya düşer</div>
@@ -1903,11 +1933,12 @@ function AppInner(){
         </div>}
         <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
           {canClaim&&<button style={{...S.btnS(j.priority==="acil"?C.red:C.accent,"#fff"),flex:"1 1 170px",padding:"10px 12px"}} disabled={submitting} onClick={()=>claimJob(j)}>👷 Üstlendim, gidiyorum</button>}
-          {canJobAct&&<button style={{...S.btnS(C.bg,C.text),flex:"1 1 70px"}} disabled={submitting} onClick={()=>setModAssign(j)}>👤 Ata</button>}
+          {canJobAct&&<button style={{...S.btnS(C.bg,C.text),flex:"1 1 70px"}} disabled={submitting} onClick={()=>{setAsgSel([j.assigned_to,...(Array.isArray(j.team)?j.team:[])].filter(Boolean));setModAssign(j);}}>👤 Ata</button>}
           {!isNight&&canJobAct&&<button style={{...S.btnS(C.blueD,C.blue),flex:"1 1 120px"}} disabled={submitting} onClick={()=>pjOpenNightPick(j)}>🌙 Geceye Devret</button>}
           {canClose&&<button style={{...S.btnS(C.greenD,C.green),flex:"1 1 100px"}} disabled={submitting} onClick={()=>completePendingJob(j)}>✅ Yapıldı</button>}
           {isNight&&canClose&&<button style={{...S.btnS(C.redD,C.red),flex:"1 1 110px"}} disabled={submitting} onClick={()=>pjNotDone(j)}>✗ Yapılamadı</button>}
           {!isNight&&<button style={{...S.btnS(C.orangeD,C.orange),flex:"1 1 90px"}} onClick={()=>addPjReason(j)}>📝 Sebep</button>}
+          {canDel&&<button style={{...S.btnS(C.bg,C.muted),flex:"0 0 auto",padding:"10px 12px"}} disabled={submitting} onClick={()=>deleteJob(j)} title="İş emrini sil">🗑 Sil</button>}
         </div>
       </div>);
     };
@@ -1959,6 +1990,14 @@ function AppInner(){
         <button style={{flex:"1 1 84px",minWidth:84,padding:"10px 6px",borderRadius:10,border:`2px solid ${faultTab==="asansor"?(evOpen.length>0?C.red:C.blue):C.border}`,background:faultTab==="asansor"?(evOpen.length>0?C.redD:C.blueD):"transparent",color:faultTab==="asansor"?(evOpen.length>0?C.red:C.blue):C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("asansor")}>🛗{evOpen.length>0?` ${evOpen.length}`:""}</button>
       </div>
       {faultTab==="jobs"&&(<div>
+        {canJobAct&&Array.isArray(pushIds)&&(()=>{const bugunEkip=new Set((shByDate[bugun]||[]).map(s=>s.personnel_id));
+          const kapali=bProfiles.filter(u=>(u.active||bugunEkip.has(u.id))&&(u.user_role==="personnel"||u.user_role==="viewer"||u.job_manager)&&pushOff(u.id));
+          if(kapali.length===0)return null;
+          return(<div style={{...S.lawBox,marginBottom:12,borderColor:C.orange+"55",background:C.orangeD}}>
+            <div style={{fontSize:12,fontWeight:800,color:C.orange}}>{"🔕 Bildirimi kapalı: "+kapali.length+" kişi — iş emri bildirimi bu kişilere ulaşmaz"}</div>
+            <div style={{fontSize:11,color:C.dim,marginTop:4}}>{kapali.map(u=>u.full_name).join(", ")}</div>
+            <div style={{fontSize:10,color:C.muted,marginTop:6}}>Her biri kendi telefonunda uygulamayı ana ekrandaki ikondan açıp Özet'teki "Bildirimleri aç" düğmesine basmalı. iPhone'da önce "Ana Ekrana Ekle" gerekir.</div>
+          </div>);})()}
         {canJobAct&&(()=>{
           const pri=pjForm.pri==="acil"?"acil":"normal";const prev=jobDuePreview(pri);
           const gece=pri==="acil"&&prev.getHours()===8;
@@ -1969,7 +2008,7 @@ function AppInner(){
             <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>➕ İş Emri Aç</div>
             <div style={{display:"flex",gap:6,marginBottom:10}}>
               {[["acil","🔴 Acil",C.red],["normal","🟡 Normal",C.orange]].map(([k,l,cl])=>(
-                <button key={k} onClick={()=>setPjForm({...pjForm,pri:k,asg:""})} style={{flex:1,padding:"10px 6px",borderRadius:10,border:`2px solid ${pri===k?cl:C.border}`,background:pri===k?cl+"22":"transparent",color:pri===k?cl:C.muted,cursor:"pointer",WebkitAppearance:"none"}}>
+                <button key={k} onClick={()=>setPjForm({...pjForm,pri:k,asgs:[]})} style={{flex:1,padding:"10px 6px",borderRadius:10,border:`2px solid ${pri===k?cl:C.border}`,background:pri===k?cl+"22":"transparent",color:pri===k?cl:C.muted,cursor:"pointer",WebkitAppearance:"none"}}>
                   <div style={{fontSize:13,fontWeight:800}}>{l}</div>
                   <div style={{fontSize:10,marginTop:2}}>{k==="acil"?"aynı gün":"5 iş günü"} · son: {fDue(jobDuePreview(k))}</div>
                 </button>))}
@@ -1979,18 +2018,22 @@ function AppInner(){
             <input style={S.inp} placeholder="Yer (örn: B Blok 3. kat, WC yanı)" value={pjForm.loc} onChange={e=>setPjForm({...pjForm,loc:e.target.value})}/>
             <textarea style={{...S.inp,minHeight:50}} placeholder="Detay / not (opsiyonel)" value={pjForm.desc} onChange={e=>setPjForm({...pjForm,desc:e.target.value})}/>
             {isAdmin&&<div style={{display:"flex",gap:6,marginBottom:8}}>{[["mekanik","⚙️ Mekanik"],["elektrik","⚡ Elektrik"]].map(([k,l])=>(
-              <button key={k} onClick={()=>setPjForm({...pjForm,dept:k,asg:""})} style={{flex:1,...S.btnS(dept===k?C.accentD:C.bg,dept===k?C.accent:C.muted)}}>{l}</button>))}</div>}
-            <div style={S.lbl}>Kime? {gece?"(bu gece nöbetçi olanlar)":(dayKey!==todayStr()?"(yarın gündüz vardiyası)":"(bugün vardiyada olanlar)")}</div>
+              <button key={k} onClick={()=>setPjForm({...pjForm,dept:k,asgs:[]})} style={{flex:1,...S.btnS(dept===k?C.accentD:C.bg,dept===k?C.accent:C.muted)}}>{l}</button>))}</div>}
+            <div style={S.lbl}>Kime? {gece?"(bu gece nöbetçi olanlar)":(dayKey!==todayStr()?"(yarın gündüz vardiyası)":"(bugün vardiyada olanlar)")} — birden fazla seçebilirsin</div>
             <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:4}}>
-              <button onClick={()=>setPjForm({...pjForm,asg:""})} style={chip(!pjForm.asg)}>👥 Ekip — ilk üstlenen</button>
-              {crew.map(u=><button key={u.id} onClick={()=>setPjForm({...pjForm,asg:u.id})} style={chip(pjForm.asg===u.id)}>{u.full_name}</button>)}
+              <button onClick={()=>setPjForm({...pjForm,asgs:[]})} style={chip((pjForm.asgs||[]).length===0)}>👥 Ekip — ilk üstlenen</button>
+              {crew.map(u=>{const sel=pjForm.asgs||[];const k=sel.indexOf(u.id);return(<button key={u.id}
+                onClick={()=>setPjForm({...pjForm,asgs:k>=0?sel.filter(x=>x!==u.id):[...sel,u.id]})} style={chip(k>=0)}>
+                {k===0&&sel.length>1?"★ ":k>0?"+ ":""}{u.full_name}{pushOff(u.id)?" 🔕":""}</button>);})}
             </div>
+            {(pjForm.asgs||[]).length>1&&<div style={{fontSize:10,color:C.dim,marginBottom:4}}>★ {getU(pjForm.asgs[0])?.full_name} sorumlu, diğerleri ekip. Hepsine bildirim gider; ekipten biri üstlenip kapatabilir.</div>}
             {crew.length===0&&<div style={{fontSize:10,color:C.orange}}>Çizelgede bu vardiyada {dept==="elektrik"?"elektrik":"mekanik"} personeli görünmüyor — "Ekip" seçilirse {pri==="acil"?"bildirim vardiyadaki diğer personele gider, ilk üstlenen alır.":"iş listede bekler; birimdeki herkes görür."}</div>}
             <button style={S.btn(pri==="acil"?C.red:C.orange)} disabled={submitting} onClick={addPendingJob}>{pri==="acil"?"🔴 Acil iş emri aç":"🟡 İş emri aç"}</button>
             <div style={{fontSize:10,color:C.dim,marginTop:6}}>{pri==="acil"
-              ?(pjForm.asg?"Atanan kişiye anında bildirim gider. 30 dk içinde üstlenmezse şefe, süre dolunca şefe ve sana bildirim gider."
+              ?((pjForm.asgs||[]).length>0?"Atananların hepsine anında bildirim gider. 30 dk içinde üstlenilmezse şefe, süre dolunca şefe ve sana bildirim gider."
                           :"Vardiyadaki herkese bildirim gider; ilk üstlenen alır. 30 dk içinde kimse üstlenmezse şefe bildirim gider.")
-              :"Son günün sabahı atanan kişiye hatırlatma gider; süre dolunca şefe ve sana bildirim gider."}</div>
+              :((pjForm.asgs||[]).length>0?"Atananların hepsine anında bildirim gider; son günün sabahı hatırlatma, süre dolunca şefe ve sana bildirim gider.":"Vardiyadaki birime bildirim gider; ilk üstlenen alır. Süre dolunca şefe ve sana bildirim gider.")}
+              {crew.some(u=>pushOff(u.id))&&<span style={{color:C.orange}}> 🔕 işaretlilerin telefonunda bildirim kapalı, onlara bildirim ulaşmaz.</span>}</div>
           </div>);})()}
         <div style={{display:"flex",gap:8,marginBottom:12}}>
           {[["day","☀️ Gündüz",pjDay.length,C.orange],["night","🌙 Gece",pjNight.length,C.blue]].map(([k,lbl,n,cl])=>(
@@ -2007,9 +2050,9 @@ function AppInner(){
             <div style={{...S.sec,fontSize:13,color:C.blue,marginBottom:8}}><span>🌙</span> Gece İşlerim ({pjMine.length})</div>
             {pjMine.map(jobCard)}
           </>}
-          {pjNight.filter(j=>j.assigned_to!==profile?.id).length>0&&<>
+          {pjNight.filter(j=>!inJob(j,profile?.id)).length>0&&<>
             <div style={{...S.sec,fontSize:13,marginTop:14,marginBottom:8}}><span>🌙</span> Diğer Gece İşleri</div>
-            {pjNight.filter(j=>j.assigned_to!==profile?.id).map(jobCard)}
+            {pjNight.filter(j=>!inJob(j,profile?.id)).map(jobCard)}
           </>}
           {pjNight.length===0&&pjNotDoneToday.length===0&&<div style={S.emp}>Geceye devredilen iş yok</div>}
           {pjNotDoneToday.length>0&&<>
@@ -3107,7 +3150,7 @@ function AppInner(){
           if(r.source==="auto"&&!r.confirmed_at&&(onLeave.has(id)||(planOf(id)&&!["day","weekend_day"].includes(planOf(id)))))return null;return r;};
         const isPers=u=>u.user_role==="personnel"||u.user_role==="viewer";
         // Çizelge varsa liste çizelgeden gelir (kadrosu pasif görünen elektrikçiler dahil)
-        const attList=bProfiles.filter(u=>isPers(u)&&deptOK(u)&&(schedIds.size>0?(schedIds.has(u.id)||!!rec(u.id)):u.active));
+        const attList=bProfiles.filter(u=>(isPers(u)||(u.user_role==="chef"&&planOf(u.id)==="night"))&&deptOK(u)&&(schedIds.size>0?(schedIds.has(u.id)||!!rec(u.id)):u.active));
         // Çizelge dışında kalan aktif personel (yeni başlayan, başka binaya geçmiş ama kaydı duran) ayrıca görünsün
         const disi=schedIds.size>0?bProfiles.filter(u=>isPers(u)&&deptOK(u)&&u.active&&!schedIds.has(u.id)&&!rec(u.id)):[];
         // Cizelge varsa vardiya cizelgeden (attendance.shift varsayilani "day" oldugu icin sefin
@@ -3123,7 +3166,7 @@ function AppInner(){
         const leaveL=attList.filter(u=>onLeave.has(u.id));
         // Dün gecenin nöbetçileri: sabah 08:00'de nöbeti devreden ikili, 08:30 listesinde teyit edilir
         const prevRec=id=>attPrev.find(a=>a.personnel_id===id&&a.att_date===dun&&a.status!=null);
-        const prevL=bProfiles.filter(u=>isPers(u)&&deptOK(u)&&dunSh.some(s=>s.personnel_id===u.id&&s.shift_type==="night"));
+        const prevL=bProfiles.filter(u=>(isPers(u)||u.user_role==="chef")&&deptOK(u)&&dunSh.some(s=>s.personnel_id===u.id&&s.shift_type==="night"));
         const pres=working.filter(u=>rec(u.id)?.status==="present").length;
         const abs=working.filter(u=>rec(u.id)?.status==="absent").length;
         const unm=dayL.filter(u=>!rec(u.id)).length;
@@ -4057,16 +4100,18 @@ function AppInner(){
     if(!modAssign)return null;const j=modAssign;const gece=(j.shift||"day")==="night";const dep=j.department||"mekanik";
     const crew=(gece?nightCrew:dayCrew).filter(u=>(u.department||"mekanik")===dep);
     const diger=bProfiles.filter(u=>u.active&&(u.department||"mekanik")===dep&&(u.user_role==="personnel"||u.user_role==="viewer"||u.job_manager)&&!crew.some(c=>c.id===u.id));
-    const kisi=(u,soluk)=>(<button key={u.id} style={{...S.btn(j.assigned_to===u.id?C.accentD:C.bg,j.assigned_to===u.id?C.accent:(soluk?C.muted:C.text)),textAlign:"left"}}
-      disabled={submitting} onClick={()=>assignJob(j,u.id)}>{u.full_name}{j.assigned_to===u.id?" (şu an atanmış)":""}</button>);
+    const kisi=(u,soluk)=>{const k=asgSel.indexOf(u.id);return(<button key={u.id} style={{...S.btn(k>=0?C.accentD:C.bg,k>=0?C.accent:(soluk?C.muted:C.text)),textAlign:"left"}}
+      disabled={submitting} onClick={()=>setAsgSel(k>=0?asgSel.filter(x=>x!==u.id):[...asgSel,u.id])}>{k>=0?(k===0?"★ ":"✓ "):"○ "}{u.full_name}{k===0&&asgSel.length>1?" (sorumlu)":""}{pushOff(u.id)?" 🔕":""}</button>);};
     return(<div style={S.mod} onClick={()=>setModAssign(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/>
-      <div style={{fontSize:17,fontWeight:700,marginBottom:4}}>👤 Kime atansın?</div>
+      <div style={{fontSize:17,fontWeight:700,marginBottom:4}}>👤 Kime atansın? <span style={{fontSize:11,fontWeight:500,color:C.dim}}>birden fazla seçebilirsin</span></div>
       <div style={{fontSize:12,color:C.dim,marginBottom:12}}>{(PRI[j.priority||"normal"]||PRI.normal)[0]} {j.title}</div>
       <div style={S.lbl}>{gece?"🌙 Bu gece nöbetçi":(dayKey!==todayStr()?"☀️ Yarın gündüz vardiyasında":"☀️ Bugün vardiyada")}</div>
       {crew.length===0&&<div style={{fontSize:11,color:C.muted,marginBottom:8}}>Çizelgede kimse görünmüyor</div>}
       {crew.map(u=>kisi(u,false))}
       {diger.length>0&&<><div style={{...S.lbl,marginTop:10}}>Diğer — bu vardiyada değil</div>{diger.map(u=>kisi(u,true))}</>}
+      <div style={{fontSize:10,color:C.dim,margin:"6px 0"}}>İlk seçilen (★) sorumlu, diğerleri ekip. Hepsine bildirim gider.</div>
+      <button style={S.btn(C.accent)} disabled={submitting} onClick={()=>saveAssign(j,asgSel)}>{asgSel.length===0?"👥 Ekip işi yap (ilk üstlenen alır)":`✓ Kaydet — ${asgSel.length} kişi`}</button>
       <button style={S.btn(C.bg,C.muted)} onClick={()=>setModAssign(null)}>Vazgeç</button>
     </div></div>);
   };
@@ -4076,8 +4121,14 @@ function AppInner(){
     return(<div style={S.mod} onClick={()=>setModNightPick(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
       <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>🌙 Geceye Devret</div>
       <div style={{fontSize:12,color:C.dim,marginBottom:14}}>{modNightPick.title}</div>
-      <div style={S.lbl}>Bu gecenin nöbetçisi — kime atansın?</div>
-      {nightCrew.map(u=>(<button key={u.id} style={{...S.btn(C.blueD,C.blue),textAlign:"left"}} disabled={submitting} onClick={()=>pjToNight(modNightPick,u.id)}>🌙 {u.full_name}</button>))}
+      <div style={S.lbl}>Bu gecenin nöbetçileri — birden fazla seçebilirsin</div>
+      {(()=>{const dep=modNightPick.department||"mekanik";
+        const diger=bProfiles.filter(u=>u.active&&(u.department||"mekanik")===dep&&(u.user_role==="personnel"||u.user_role==="viewer"||u.job_manager||u.user_role==="chef")&&!nightCrew.some(c=>c.id===u.id));
+        const kisi=(u,soluk)=>{const k=nightSel.indexOf(u.id);return(<button key={u.id} style={{...S.btn(k>=0?C.blueD:C.bg,k>=0?C.blue:(soluk?C.muted:C.text)),textAlign:"left"}} disabled={submitting}
+          onClick={()=>setNightSel(k>=0?nightSel.filter(x=>x!==u.id):[...nightSel,u.id])}>{k>=0?(k===0?"★ ":"✓ "):"○ "}🌙 {u.full_name}{pushOff(u.id)?" 🔕":""}</button>);};
+        return(<>{nightCrew.map(u=>kisi(u,false))}
+          {diger.length>0&&<><div style={{...S.lbl,marginTop:10}}>Diğer — bu gece nöbette değil</div>{diger.map(u=>kisi(u,true))}</>}</>);})()}
+      <button style={S.btn(C.blue)} disabled={submitting||nightSel.length===0} onClick={()=>pjToNight(modNightPick,nightSel)}>{nightSel.length===0?"Kişi seç":`🌙 Geceye devret — ${nightSel.length} kişi`}</button>
       <button style={S.btn(C.border,C.text)} onClick={()=>setModNightPick(null)}>İptal</button>
     </div></div>);
   };
