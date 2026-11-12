@@ -5,7 +5,7 @@ import { supabase, signIn, signOut, getProfiles, createOvertime, updateOvertime,
 const toArr=(v)=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'&&Array.isArray(v.data))return v.data;return[];};
 // === Önbellek (stale-while-revalidate): açılışta anında veri, arkada tazeleme ===
 const CACHE_KEY='ibb_cache_v1';
-const APP_VERSION='5.38';
+const APP_VERSION='5.40';
 const VAPID_PUB='BN2YP7MOPhouxNjYjzbuOJznU5xocT3gQW3JeHUnHn3hvRCDdlIvRUDifICb_S0rc_-DqUtWRim0ehxn7UdaV3M';
 const verCmp=(a,b)=>{const pa=String(a).split(".").map(n=>Number(n)||0),pb=String(b).split(".").map(n=>Number(n)||0);
   for(let i=0;i<Math.max(pa.length,pb.length);i++){const x=pa[i]||0,y=pb[i]||0;if(x!==y)return x>y?1:-1;}return 0;};
@@ -288,7 +288,146 @@ function PWAInstallGuide({onClose}){
       </div></div>);
 }
 
-export default function App(){return <ErrorBoundary><AppInner/></ErrorBoundary>;}
+// ═══ v5.39: WhatsApp metninden iş çıkarma ═══
+const trLow=s=>String(s||"").replace(/İ/g,"i").replace(/I/g,"ı").toLowerCase();
+const RX_ELEK=/(elektrik|priz|lamba|ampul|aydınlatma|aydinlatma|armatür|armatur|floresan|spot|sigorta|şalter|salter|kablo|pano|jeneratör|jenerator|ups|kısa devre|kıvılcım|kivilcim|enerji yok|ışık yanmıyor|isik yanmiyor|led)/;
+const RX_ACIL=/(acil|su bas|su akıyor|su fışkır|taşıyor|tasiyor|yangın|yangin|duman|kıvılcım|kivilcim|mahsur|patladı|patladi|elektrik yok|elektrikler gitti|kesinti|gaz kokusu|tehlike)/;
+const RX_KAPAT=/^(tamam|ok\b|okey|tşk|tsk|teşekkür|tesekkur|sağol|sagol|eyvallah|geliyorum|geliyoruz|bakıyoruz|bakiyoruz|bakılıyor|hallettik|halledildi|yapıldı|yapildi|tamamlandı|👍|🙏)/;
+function deptGuess(t){return RX_ELEK.test(trLow(t))?"elektrik":"mekanik";}
+function priGuess(t){return RX_ACIL.test(trLow(t))?"acil":"normal";}
+function locGuess(t){const s=String(t||"");
+  const m=s.match(/((?:zemin|bodrum|çatı|cati|giriş|giris|asma|\d{1,2}\s*\.?)\s*kat(?:\s+[^\s,.;!?]+){0,2})/i)
+    ||s.match(/((?:[A-Z]\s*blok|oda\s*\d+|\d+\s*(?:no'?lu|nolu|numaralı)\s*oda|toplantı salon|yemekhane|mutfak|otopark|kazan dairesi|çay ocağı|lobi)[a-zçğıöşü]*)/i);
+  return m?m[1].trim().replace(/\s+/g," ").slice(0,60):"";}
+function titleOf(t){const s=String(t||"").replace(/\s+/g," ").trim();const i=s.search(/[.!?]\s/);const f=i>=4?s.slice(0,i+1):s;return f.length>90?f.slice(0,87)+"…":f;}
+// iPhone: "[12.11.2026 09:14:22] Ahmet: mesaj" · Android: "12.11.2026 09:14 - Ahmet: mesaj" · tek mesaj kopyası başlıksız gelir
+const RX_WA=/^‎?\[?(\d{1,2}[./]\d{1,2}[./]\d{2,4})[,\s]+(\d{1,2}[:.]\d{2})(?:[:.]\d{2})?\]?\s*(?:-\s*)?([^:\n]{1,40}?):\s?(.*)$/;
+// Android çoklu kopya: "[09:14, 12.11.2026] Ahmet: mesaj"
+const RX_WA2=/^‎?\[(\d{1,2}[:.]\d{2})(?:[:.]\d{2})?,\s*(\d{1,2}[./]\d{1,2}[./]\d{2,4})\]\s*([^:\n]{1,40}?):\s?(.*)$/;
+function parseWa(text){const out=[];let cur=null;
+  String(text||"").replace(/\r/g,"").split("\n").forEach(line=>{let m=line.match(RX_WA);
+    if(!m){const m2=line.match(RX_WA2);if(m2)m=[m2[0],m2[2],m2[1],m2[3],m2[4]];}
+    if(m){cur={tarih:m[1],saat:m[2].replace(".",":"),kim:m[3].replace(/^[~‎\s]+/,"").trim(),metin:m[4].trim()};out.push(cur);}
+    else if(line.trim()){if(cur)cur.metin+=(cur.metin?"\n":"")+line.trim();else{cur={tarih:"",saat:"",kim:"",metin:line.trim()};out.push(cur);}}});
+  return out.filter(x=>x.metin&&!/^<?(medya|media)\b/i.test(x.metin)&&!/(bu mesaj silindi|this message was deleted)/i.test(x.metin));}
+
+// ═══ v5.39: girişsiz sayfalar — ?talep=<bina> (iş talebi formu) ve ?takip=<kod> (talep durumu) ═══
+const RX_UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function publicRoute(){try{const q=new URLSearchParams(window.location.search);const k=q.get("takip"),t=q.get("talep");
+  if(k&&RX_UUID.test(k))return{tip:"takip",id:k};if(t&&RX_UUID.test(t))return{tip:"talep",id:t};}catch(e){}return null;}
+const TALEP_LS="ibb_taleplerim_v1",TALEP_KISI_LS="ibb_talep_kisi_v1";
+const lsGet=(k,d)=>{try{const v=JSON.parse(localStorage.getItem(k)||"null");return v==null?d:v;}catch(e){return d;}};
+const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}};
+const pubHm=x=>x?new Date(x).toLocaleString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):"";
+function PublicPage({r}){
+  const s={
+    box:{background:C.card,borderRadius:16,border:`1px solid ${C.border}`,padding:16,marginBottom:12},
+    inp:{width:"100%",padding:"12px 14px",borderRadius:12,border:"1px solid #D0D5DD",background:C.card,color:C.text,fontSize:16,outline:"none",boxSizing:"border-box",marginBottom:10,WebkitAppearance:"none",fontFamily:"inherit"},
+    lbl:{fontSize:13,color:"#344054",marginBottom:6,display:"block",fontWeight:600},
+    btn:(bg,cl)=>({display:"block",boxSizing:"border-box",textAlign:"center",textDecoration:"none",minHeight:48,padding:"13px 20px",border:"none",borderRadius:14,background:bg,color:cl||"#fff",fontSize:15,fontWeight:700,cursor:"pointer",width:"100%",marginTop:8,WebkitAppearance:"none",fontFamily:"inherit"})};
+  return(<div style={{fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Inter,Helvetica,Arial,sans-serif",background:C.bg,color:C.text,minHeight:"100vh",maxWidth:480,margin:"0 auto",padding:"20px 16px calc(32px + env(safe-area-inset-bottom,0px))",boxSizing:"border-box"}}>
+    {r.tip==="talep"?<TalepForm bina={r.id} s={s}/>:<TakipView token={r.id} s={s}/>}
+  </div>);
+}
+function TalepForm({bina,s}){
+  const[f,setF]=useState(()=>{const k=lsGet(TALEP_KISI_LS,{});return{ad:k.ad||"",birim:k.birim||"",tel:k.tel||"",konum:"",acik:"",tur:"",acil:false};});
+  const[bAd,setBAd]=useState("");const[hata,setHata]=useState("");const[gonder,setGonder]=useState(false);const[ok,setOk]=useState(null);
+  const[liste,setListe]=useState(()=>{const l=lsGet(TALEP_LS,[]);return Array.isArray(l)?l.filter(x=>x&&RX_UUID.test(String(x.t||""))).slice(0,10):[];});
+  useEffect(()=>{let m=true;document.title="İş Talebi · Teknik Takip";
+    supabase.rpc("talep_bina",{p_bina:bina}).then(({data})=>{if(m&&data?.ok)setBAd(data.ad);},()=>{});return()=>{m=false;};},[bina]);
+  const takipUrl=t=>`${window.location.origin}/?takip=${t}`;
+  async function yolla(){setHata("");
+    if(f.acik.trim().length<5){setHata("Sorunu kısaca yazın");return;}
+    if(f.konum.trim().length<2){setHata("Yeri yazın (kat, oda, birim)");return;}
+    if(f.ad.trim().length<2){setHata("Adınızı yazın");return;}
+    setGonder(true);
+    try{const{data,error}=await supabase.rpc("talep_ac",{p_bina:bina,p_ad:f.ad,p_birim:f.birim,p_tel:f.tel,p_konum:f.konum,p_aciklama:f.acik,p_acil:!!f.acil,p_tur:f.tur||null});
+      if(error)throw error;
+      if(!data?.ok){setHata(data?.hata||"Gönderilemedi");setGonder(false);return;}
+      lsSet(TALEP_KISI_LS,{ad:f.ad.trim(),birim:f.birim.trim(),tel:f.tel.trim()});
+      const yeni=[{t:data.token,b:titleOf(f.acik),z:Date.now(),bina},...liste.filter(x=>x.t!==data.token)].slice(0,10);
+      lsSet(TALEP_LS,yeni);setListe(yeni);setOk({token:data.token,tekrar:!!data.tekrar});
+      setF(x=>({...x,konum:"",acik:"",tur:"",acil:false}));
+    }catch(e){const m=String(e?.message||"");setHata(/fetch|load failed|network/i.test(m)?"Bağlantı hatası — internetinizi kontrol edip tekrar deneyin":"Hata: "+m);}
+    setGonder(false);}
+  const chip=on=>({padding:"8px 12px",borderRadius:14,border:`1px solid ${on?C.accent:C.border}`,background:on?C.accentD:"transparent",color:on?C.accent:C.dim,fontSize:13,fontWeight:600,cursor:"pointer",WebkitAppearance:"none",fontFamily:"inherit",textAlign:"left"});
+  if(ok)return(<div style={{...s.box,textAlign:"center",marginTop:30}}>
+    <div style={{fontSize:44}}>✅</div>
+    <div style={{fontSize:19,fontWeight:800,marginTop:6}}>{ok.tekrar?"Bu talep zaten alınmıştı":"Talebiniz alındı"}</div>
+    <div style={{fontSize:13,color:C.dim,marginTop:8,lineHeight:1.5}}>Vardiyadaki uygun teknik personele otomatik iletildi. Kim geldi, ne zaman bitti — aşağıdaki linkten takip edebilirsiniz.</div>
+    <a href={takipUrl(ok.token)} style={s.btn(C.accent)}>📍 Durumu takip et</a>
+    <button style={{...s.btn(C.card,C.text),border:`1px solid ${C.border}`}} onClick={()=>setOk(null)}>➕ Yeni talep</button>
+  </div>);
+  return(<div>
+    <div style={{marginBottom:14}}>
+      <div style={{fontSize:22,fontWeight:800}}>🔧 Teknik İş Talebi</div>
+      <div style={{fontSize:13,color:C.dim,marginTop:4}}>{bAd||"İBB"} · Teknik Ekip</div>
+    </div>
+    <div style={s.box}>
+      <label style={s.lbl}>Sorun nedir? *</label>
+      <textarea style={{...s.inp,minHeight:90}} placeholder="Örn: Erkek WC'de lavabo tıkandı, su taşıyor" value={f.acik} maxLength={600} onChange={e=>setF({...f,acik:e.target.value})}/>
+      <label style={s.lbl}>Nerede? *</label>
+      <input style={s.inp} placeholder="Örn: 3. kat, oda 305" value={f.konum} maxLength={120} onChange={e=>setF({...f,konum:e.target.value})}/>
+      <label style={s.lbl}>Tür</label>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+        {[["mekanik","⚙️ Mekanik","su, tesisat, klima, kapı"],["elektrik","⚡ Elektrik","priz, aydınlatma, sigorta"],["","❔ Bilmiyorum",""]].map(([k,l,a])=>(
+          <button key={k||"x"} onClick={()=>setF({...f,tur:k})} style={chip(f.tur===k)}>{l}{a?<span style={{fontWeight:400,fontSize:11}}> · {a}</span>:null}</button>))}
+      </div>
+      <label style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:12,border:`1px solid ${f.acil?C.red:C.border}`,background:f.acil?C.redD:"transparent",cursor:"pointer"}}>
+        <input type="checkbox" checked={f.acil} onChange={e=>setF({...f,acil:e.target.checked})} style={{width:20,height:20,flexShrink:0}}/>
+        <span><b style={{color:f.acil?C.red:C.text}}>🔴 Acil</b><span style={{fontSize:12,color:C.dim}}> — su basması, elektrik kesintisi, güvenlik riski</span></span>
+      </label>
+    </div>
+    <div style={s.box}>
+      <label style={s.lbl}>Adınız Soyadınız *</label>
+      <input style={s.inp} value={f.ad} maxLength={60} autoComplete="name" onChange={e=>setF({...f,ad:e.target.value})}/>
+      <label style={s.lbl}>Birim / Müdürlük</label>
+      <input style={s.inp} value={f.birim} maxLength={80} onChange={e=>setF({...f,birim:e.target.value})}/>
+      <label style={s.lbl}>Telefon (isteğe bağlı)</label>
+      <input style={s.inp} type="tel" inputMode="tel" autoComplete="tel" placeholder="Ekip gerekirse arar" value={f.tel} maxLength={20} onChange={e=>setF({...f,tel:e.target.value})}/>
+      <div style={{fontSize:11,color:C.muted}}>Bilgileriniz yalnızca bu talebin takibi için teknik ekip tarafından görülür.</div>
+    </div>
+    {hata&&<div style={{color:C.red,fontSize:13,fontWeight:700,margin:"4px 0 6px",textAlign:"center"}}>{hata}</div>}
+    <button style={{...s.btn(f.acil?C.red:C.accent),opacity:gonder?0.6:1}} disabled={gonder} onClick={yolla}>{gonder?"Gönderiliyor…":"📨 Talebi gönder"}</button>
+    {liste.length>0&&<div style={{...s.box,marginTop:16}}>
+      <div style={{fontSize:13,fontWeight:700,marginBottom:4}}>Taleplerim (bu telefonda)</div>
+      {liste.map(x=>(<a key={x.t} href={takipUrl(x.t)} style={{display:"block",padding:"9px 0",borderTop:`1px solid ${C.border}`,color:C.text,textDecoration:"none",fontSize:13}}>📍 {x.b||"Talep"} <span style={{color:C.muted,fontSize:11}}>· {pubHm(x.z)}</span></a>))}
+    </div>}
+  </div>);
+}
+function TakipView({token,s}){
+  const[d,setD]=useState(null);const[hata,setHata]=useState("");
+  const yukle=useCallback(async()=>{try{const{data,error}=await supabase.rpc("talep_durum",{p_token:token});if(error)throw error;
+    if(data?.ok){setD(data);setHata("");}else setHata(data?.hata||"Talep bulunamadı");}catch(e){setHata("Bağlantı hatası — tekrar deneniyor…");}},[token]);
+  useEffect(()=>{document.title="Talep Takibi · Teknik Takip";yukle();const iv=setInterval(()=>{if(!document.hidden)yukle();},30000);return()=>clearInterval(iv);},[yukle]);
+  const kayit=(()=>{const l=lsGet(TALEP_LS,[]);return Array.isArray(l)?l.find(x=>x&&x.t===token):null;})();
+  const binaId=kayit&&RX_UUID.test(String(kayit.bina||""))?kayit.bina:null;
+  const st=d?.durum;
+  const son=st==="not_done"?["✗","Yapılamadı"+(d?.yapilamadi?` — ${d.yapilamadi}`:""),null,true,C.redD]
+    :st==="iptal"?["🗑","İptal edildi",null,true,C.bg]
+    :["✅","Tamamlandı"+(d?.not?` — ${d.not}`:""),d?.bitti,st==="done",C.greenD];
+  const adimlar=d?[["📨","Talep alındı",d.acildi,true,C.accentD],
+    ["👤",d.atanan?`Atandı: ${d.atanan}`:"Uygun personel bekleniyor",null,!!d.atanan,C.accentD],
+    ["🚶","Ekip yolda",d.ustlendi,!!d.ustlendi,C.accentD],
+    ["📍","Ekip sahada",d.vardi,!!d.vardi,C.accentD],son]:[];
+  return(<div>
+    <div style={{marginBottom:14}}><div style={{fontSize:22,fontWeight:800}}>📍 Talep Takibi</div>
+      <div style={{fontSize:13,color:C.dim,marginTop:4}}>{d?.bina||"İBB"} · Teknik Ekip</div></div>
+    {hata&&!d&&<div style={{...s.box,color:C.red,fontWeight:700,textAlign:"center"}}>{hata}</div>}
+    {!d&&!hata&&<div style={{...s.box,textAlign:"center",color:C.muted}}>Yükleniyor…</div>}
+    {d&&<div style={s.box}>
+      <div style={{fontSize:16,fontWeight:800,lineHeight:1.3}}>{d.acil?"🔴 ":""}{d.baslik}</div>
+      {d.konum&&<div style={{fontSize:13,color:C.dim,marginTop:4}}>📍 {d.konum}</div>}
+      <div style={{marginTop:12}}>{adimlar.map(([ic,t,z,on,bg],i)=>(<div key={i} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"8px 0",opacity:on?1:0.38}}>
+        <div style={{width:32,height:32,borderRadius:16,background:on?bg:C.bg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:15}}>{ic}</div>
+        <div style={{paddingTop:2}}><div style={{fontSize:14,fontWeight:on?700:500}}>{t}</div>{z&&<div style={{fontSize:11,color:C.muted}}>{pubHm(z)}</div>}</div></div>))}</div>
+      {st==="open"&&<div style={{fontSize:11,color:C.muted,marginTop:6}}>{d.son?`Hedef bitiş: ${pubHm(d.son)} · `:""}Sayfa kendini yeniler</div>}
+    </div>}
+    {binaId&&<a href={`${window.location.origin}/?talep=${binaId}`} style={{...s.btn(C.card,C.text),border:`1px solid ${C.border}`}}>➕ Yeni talep</a>}
+  </div>);
+}
+
+export default function App(){const pr=publicRoute();return <ErrorBoundary>{pr?<PublicPage r={pr}/>:<AppInner/>}</ErrorBoundary>;}
 function AppInner(){
   const[session,setSession]=useState(null);
   const[profile,setProfile]=useState(null);
@@ -333,6 +472,9 @@ function AppInner(){
   const[showPWA,setShowPWA]=useState(false);
   const[showNotifs,setShowNotifs]=useState(false);
   const[showMe,setShowMe]=useState(false); // profil paneli: bildirim, ana ekrana ekle, çıkış
+  const[tgDurum,setTgDurum]=useState(null);  // v5.40: Telegram bağlantı durumu (tg_durum)
+  const[tgPanel,setTgPanel]=useState(false); // v5.40: şef paneli
+  const[tgGizle,setTgGizle]=useState(()=>{try{return Number(localStorage.getItem("tg_banner_gizle")||0)>Date.now();}catch(e){return false;}});
   const[topInset,setTopInset]=useState(0);
   const hdrRef=useRef(null);
   // Görünüm: açık zemin, tema rengi, sistem yazı tipi, iOS güvenli alan
@@ -424,7 +566,13 @@ function AppInner(){
   const[attendance,setAttendance]=useState([]);
   const[attPrev,setAttPrev]=useState([]);     // v5.37: dün gece nöbeti satırları (08:30 teyidi)
   const[gnSheet,setGnSheet]=useState(null);
-  const[pjForm,setPjForm]=useState({title:"",desc:"",loc:"",pri:"normal",asgs:[],dept:""});
+  const PJ_BOS={title:"",desc:"",loc:"",pri:"normal",asgs:[],dept:"",mode:"auto",src:"app",req:""};
+  const[pjForm,setPjForm]=useState(PJ_BOS);
+  const[modDone,setModDone]=useState(null);   // v5.39: işi kapatma (not + fotoğraf)
+  const[modPaste,setModPaste]=useState(null); // v5.39: WhatsApp'tan yapıştır {txt, items}
+  const[rapor,setRapor]=useState({acik:false,gun:7,veri:null,yuk:false}); // v5.39: performans
+  const[otoDk,setOtoDk]=useState({acil:10,normal:60}); // v5.39: otomatik devir süreleri (app_meta)
+  const[talepLink,setTalepLink]=useState(false);
   const[asgSel,setAsgSel]=useState([]);      // v5.38: Ata ekranında seçilenler (ilk = sorumlu)
   const[nightSel,setNightSel]=useState([]);  // v5.38: Geceye devirde seçilenler
   const[pushIds,setPushIds]=useState(null);  // v5.38: bildirimi açık olanlar (şef/yönetici görür)
@@ -1082,24 +1230,49 @@ function AppInner(){
     try{
       const{data,error}=await supabase.from("pending_jobs").insert({building_id:selBuilding||profile.building_id,title:t,
         description:pjForm.desc.trim(),location:pjForm.loc.trim()||null,priority:pri,department:dept,
-        assigned_to:asgs[0]||null,team:asgs.slice(1),created_by:profile.id,shift:"day",job_date:todayStr()}).select().single();
+        assigned_to:asgs[0]||null,team:asgs.slice(1),created_by:profile.id,shift:"day",job_date:todayStr(),
+        assign_mode:asgs.length>0?"manual":(pjForm.mode==="team"?"team":"auto"),source:pjForm.src==="paste"?"paste":"app",
+        requester:(pjForm.req||"").trim()||null}).select().single();
       if(error)throw error;
-      setPjForm({title:"",desc:"",loc:"",pri:"normal",asgs:[],dept:""});await fetchPendingJobs();
+      setPjForm(PJ_BOS);await fetchPendingJobs();
       setPjTab(data?.shift==="night"?"night":"day");
-      setToast(`${pri==="acil"?"🔴 Acil iş emri":"🟡 İş emri"} açıldı${asgs.length>1?` (${asgs.length} kişi)`:""} — son: ${fDue(data?.due_at)}`);
+      setToast(`${pri==="acil"?"🔴 Acil iş emri":"🟡 İş emri"} açıldı${asgs.length>1?` (${asgs.length} kişi)`:""}${data?.assign_mode==="auto"&&data?.assigned_to?` — 🤖 ${getU(data.assigned_to)?.full_name||""} atandı`:data?.assign_mode==="team"&&asgs.length===0&&pjForm.mode!=="team"?" — vardiyada uygun kimse yok, ekip işi oldu":""} · son: ${fDue(data?.due_at)}`);
     }catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
   }
-  async function completePendingJob(j){
-    const note=window.prompt("Yapılan işlem / not (opsiyonel):","");
-    if(note===null)return;
+  function completePendingJob(j){setModDone({j,note:"",file:null});}
+  // v5.39: bitiş fotoğrafı (küçültülür; çözülemeyen biçimde dosya olduğu gibi yüklenir)
+  async function uploadJobPhoto(file,jobId){
+    let body=file,url;
+    try{url=URL.createObjectURL(file);
+      const img=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=()=>rej(new Error("decode"));i.src=url;setTimeout(()=>rej(new Error("timeout")),9000);});
+      const iw=img.naturalWidth||img.width||1,ih=img.naturalHeight||img.height||1,sc=Math.min(1,1400/Math.max(iw,ih));
+      const cv=document.createElement("canvas");cv.width=Math.max(1,Math.round(iw*sc));cv.height=Math.max(1,Math.round(ih*sc));
+      cv.getContext("2d").drawImage(img,0,0,cv.width,cv.height);
+      const blob=await new Promise(r=>cv.toBlob(r,"image/jpeg",0.75));
+      if(blob&&blob.size>1024)body=blob;
+    }catch(e){}finally{if(url){try{URL.revokeObjectURL(url);}catch(_){}}}
+    const ext=body===file?(((file.name||"").split(".").pop()||"jpg").toLowerCase().replace(/[^a-z0-9]/g,"").slice(0,5)||"jpg"):"jpg";
+    const path=`jobs/${jobId}/${Date.now()}.${ext}`;
+    const{error}=await supabase.storage.from("photos").upload(path,body,{contentType:body.type||"image/jpeg"});
+    if(error)throw new Error("Fotoğraf yüklenemedi: "+(error.message||error));
+    return supabase.storage.from("photos").getPublicUrl(path).data.publicUrl;
+  }
+  async function submitDone(){
+    const md=modDone;if(!md?.j)return;const j=md.j;
+    setSubmitting(true);
     try{
-      const{error}=await supabase.from("pending_jobs").update({status:"done",completed_by:profile.id,completed_at:new Date().toISOString(),completed_note:(note||"").trim()}).eq("id",j.id);
+      let foto=null;
+      if(md.file){setToast("📷 Fotoğraf yükleniyor…");foto=await uploadJobPhoto(md.file,j.id);}
+      const up={status:"done",completed_by:profile.id,completed_at:new Date().toISOString(),completed_note:(md.note||"").trim()};
+      if(foto)up.done_photo=foto;
+      const{error}=await supabase.from("pending_jobs").update(up).eq("id",j.id);
       if(error)throw error;
-      await fetchPendingJobs();
+      setModDone(null);await fetchPendingJobs();
       const gec=j.due_at&&Date.now()>new Date(j.due_at).getTime();
       setToast(gec?"✅ İş tamamlandı (süre aşımıyla)":"✅ İş zamanında tamamlandı");
     }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
   }
   // ═══ Mesai ücreti ödendi (admin): izin hakkı bakiyeden düşülür ═══
   async function otRefresh(ids){
@@ -1143,6 +1316,66 @@ function AppInner(){
       await fetchPendingJobs();
     }catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
+  }
+  // v5.39: "Vardım, başladım" — sahaya varış saati (üstlenmemişse aynı anda üstlenir)
+  async function arriveJob(j){
+    setSubmitting(true);
+    try{const{data,error}=await supabase.rpc("job_step",{p_id:j.id,p_step:"vardim"});if(error)throw error;
+      if(!data?.ok)setToast("⚠ "+(data?.hata||"Kaydedilemedi"));else setToast("📍 Varış kaydedildi — kolay gelsin");
+      await fetchPendingJobs();}catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+  // v5.39: şef/yönetici — işi en az işi olana otomatik ata
+  async function autoAssignJob(j){
+    setSubmitting(true);
+    try{const{data,error}=await supabase.rpc("job_autoassign",{p_id:j.id});if(error)throw error;
+      if(!data?.ok)setToast("⚠ "+(data?.hata||"Atanamadı"));else{setModAssign(null);setToast(`🤖 ${data.ad||""} otomatik atandı — bildirim gitti`);}
+      await fetchPendingJobs();}catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+  // v5.39: WhatsApp'tan kopyalanan mesaj(lar)dan iş
+  function openPaste(){
+    setModPaste({txt:"",items:null});
+    try{if(navigator.clipboard&&navigator.clipboard.readText)navigator.clipboard.readText().then(t=>{if(t&&t.trim())setModPaste(m=>m&&!m.txt&&!m.items?{...m,txt:t}:m);},()=>{});}catch(e){}
+  }
+  function pasteParse(txt){
+    const ilkAd=n=>trLow(n).split(" ")[0];
+    const ekip=new Set(bProfiles.map(u=>ilkAd(u.full_name)).filter(Boolean));
+    const acikB=new Set(pjOpen.map(j=>trLow(j.title)));
+    const dSabit=isAdmin||isChef||isJobMgr?null:(profile?.department||"mekanik");
+    const items=parseWa(txt).map((m,i)=>{const metin=m.metin.replace(/[ 	]+/g," ").trim();const title=titleOf(metin);
+      const ekipten=!!(m.kim&&ekip.has(ilkAd(m.kim)));const benzer=acikB.has(trLow(title));
+      return{k:i,kim:m.kim,saat:m.saat,metin,title,loc:locGuess(metin),dept:dSabit||deptGuess(metin),pri:priGuess(metin),
+        ekipten,benzer,sec:metin.length>=10&&!RX_KAPAT.test(trLow(metin))&&!ekipten&&!benzer};});
+    if(items.length===0){setToast("⚠ Metinde mesaj bulunamadı");return;}
+    if(items.length===1){const x=items[0];
+      setPjForm({...PJ_BOS,title:x.title,desc:x.metin!==x.title?x.metin:"",loc:x.loc,pri:x.pri,dept:x.dept,src:"paste",req:x.kim||""});
+      setModPaste(null);setToast("📋 Mesaj forma aktarıldı — kontrol edip iş emrini aç");return;}
+    setModPaste({txt,items});
+  }
+  async function createPasted(){
+    const items=(modPaste?.items||[]).filter(x=>x.sec);if(items.length===0)return;
+    setSubmitting(true);let n=0,hata="";const adlar=[];
+    for(const x of items){
+      try{const{data,error}=await supabase.from("pending_jobs").insert({building_id:selBuilding||profile.building_id,
+          title:x.title.length>=5?x.title:x.metin.slice(0,90),description:x.metin!==x.title?x.metin:"",location:x.loc||null,
+          priority:x.pri==="acil"?"acil":"normal",department:x.dept,assigned_to:null,team:[],created_by:profile.id,shift:"day",
+          job_date:todayStr(),assign_mode:"auto",source:"paste",requester:x.kim||null}).select().single();
+        if(error)throw error;n++;
+        if(data?.assigned_to)adlar.push((getU(data.assigned_to)?.full_name||"").split(" ")[0]);
+      }catch(e){hata=e?.message||"hata";}
+    }
+    await fetchPendingJobs();setSubmitting(false);
+    if(n>0)setModPaste(null);
+    setToast(n>0?`🤖 ${n} iş açıldı${adlar.length?" → "+[...new Set(adlar)].join(", "):""}${n<items.length?` · ${items.length-n} tanesi açılamadı: ${hata}`:""}`:"Hata: "+hata);
+  }
+  async function fetchRapor(gun){
+    const bid=selBuilding||profile?.building_id;if(!bid)return;
+    setRapor(r=>({...r,yuk:true}));
+    try{const{data,error}=await supabase.rpc("job_rapor",{p_bina:bid,p_gun:gun});if(error)throw error;
+      if(!data?.ok){setToast("⚠ "+(data?.hata||"Rapor alınamadı"));setRapor(r=>({...r,yuk:false}));return;}
+      setRapor(r=>({...r,veri:data,yuk:false}));
+    }catch(e){setToast("Hata: "+(e?.message||""));setRapor(r=>({...r,yuk:false}));}
   }
   // Atama / yeniden atama (şef/yönetici). İlk seçilen sorumlu, diğerleri ekip. Seçilmeyen üstlenen düşer.
   async function saveAssign(j,sel){
@@ -1609,6 +1842,37 @@ function AppInner(){
   const isJobMgr=!!profile?.job_manager;
   const canJobAct=isAdmin||isChef||isJobMgr;
   useEffect(()=>{if(session&&canJobAct)fetchPushIds();},[session,canJobAct,fetchPushIds]);
+  // v5.40: Telegram
+  const fetchTg=useCallback(async()=>{try{const{data,error}=await supabase.rpc('tg_durum',{p_bina:selBuilding||null});if(!error&&data&&data.ok)setTgDurum(data);}catch(e){}},[selBuilding]);
+  useEffect(()=>{if(!session)return;fetchTg();
+    const f=()=>{if(!document.hidden){fetchTg();if(canJobAct)fetchPushIds();}};
+    document.addEventListener("visibilitychange",f);return()=>document.removeEventListener("visibilitychange",f);},[session,fetchTg,canJobAct,fetchPushIds]);
+  const acTg=url=>{let w=null;try{w=window.open(url,"_blank");}catch(e){}if(!w)window.location.href=url;};
+  async function linkTelegram(){
+    setSubmitting(true);
+    try{const{data,error}=await supabase.rpc('tg_link_code');if(error)throw error;
+      if(!data?.ok)setToast("⚠ "+(data?.hata||"Bağlantı linki alınamadı"));
+      else{setToast("📲 Telegram açılıyor — botta \"Başlat\"a dokun");acTg(data.url);}
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+  async function unlinkTelegram(){
+    if(!window.confirm("Telegram bağlantısı kaldırılsın mı? İş bildirimleri artık Telegram'a gelmez."))return;
+    try{await supabase.rpc('tg_cikar');await fetchTg();setToast("Telegram bağlantısı kaldırıldı");}catch(e){setToast("Hata: "+(e?.message||""));}
+  }
+  async function linkTgGroup(){
+    setSubmitting(true);
+    try{const{data,error}=await supabase.rpc('tg_group_code',{p_bina:selBuilding||null});if(error)throw error;
+      if(!data?.ok)setToast("⚠ "+(data?.hata||"Grup linki alınamadı"));
+      else{setToast("👥 Telegram'da ekip grubunu seç — bot gruba eklenip bağlanır");acTg(data.url);}
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+  useEffect(()=>{if(!session)return;let m=true;
+    supabase.from('app_meta').select('key,value').in('key',['oto_atama_acil_dk','oto_atama_normal_dk']).then(({data})=>{
+      if(!m||!Array.isArray(data))return;const g=k=>{const n=parseInt((data.find(x=>x.key===k)||{}).value,10);return n>0?n:null;};
+      setOtoDk({acil:g('oto_atama_acil_dk')||10,normal:g('oto_atama_normal_dk')||60});},()=>{});
+    return()=>{m=false;};},[session]);
   const pushOff=id=>Array.isArray(pushIds)&&!pushIds.includes(id);
   const deptLock=canSeeBothDepts?null:(profile?.department||"mekanik"); // sef kendi departmanina kilitli
   const bMaintPlans=useMemo(()=>maintPlans.filter(p=>p.active!==false
@@ -1652,6 +1916,18 @@ function AppInner(){
     const plan=(shByDate[dayKey]||[]).filter(s=>s.shift_type==="day"||s.shift_type==="weekend_day").map(s=>s.personnel_id);
     return bProfiles.filter(u=>(plan.length>0?plan.includes(u.id):u.active)&&(u.user_role==="personnel"||u.user_role==="viewer"||u.job_manager)
       &&(!deptLock||(u.department||"mekanik")===deptLock));},[bProfiles,deptLock,shByDate,dayKey]);
+
+  // v5.39: "Otomatik" seçiliyken sıradaki kişi tahmini (kesin seçimi sunucu yapar: job_pick)
+  const otoAday=(crew,gece)=>{
+    const bugun=todayStr();
+    const uygun=crew.filter(u=>u.active&&u.user_role!=="admin"&&u.user_role!=="amir"&&(gece||u.user_role!=="chef")
+      &&!attendance.some(a=>a.personnel_id===u.id&&a.status==="absent"&&String(a.att_date)===bugun&&(a.shift||"day")===(gece?"night":"day"))
+      &&!leavesState.some(l=>l.personnel_id===u.id&&l.status==="approved"&&l.leave_type!=="hourly"&&Array.isArray(l.dates)&&l.dates.includes(bugun)));
+    if(uygun.length===0)return null;
+    const son=id=>{let m=0;bPJobs.forEach(j=>{if(j.assigned_to===id){const t=new Date(j.claim_from||j.created_at).getTime();if(t>m)m=t;}});return m;};
+    return uygun.map(u=>({u,n:pjOpen.filter(j=>inJob(j,u.id)).length,p:pushOff(u.id)?1:0,s:son(u.id)}))
+      .sort((a,b)=>a.n-b.n||a.p-b.p||a.s-b.s)[0];
+  };
 
   // Notification system
   const notifTimes=useRef({});
@@ -1904,13 +2180,18 @@ function AppInner(){
         ||(!j.assigned_to&&(canJobAct||j.priority==="acil"||(j.department||"mekanik")===(profile?.department||"mekanik"))));
       // 30 dk saati: vardiya başından / son atamadan (sunucu: claim_from)
       const bekleDk=Math.floor((now-new Date(j.claim_from||j.created_at).getTime())/60000);
+      // v5.39: otomatik işte devire kalan süre; adım saatleri
+      const otoKalan=j.assign_mode==="auto"&&!j.claimed_at&&j.assigned_to&&(j.reassigns||0)<2?(j.priority==="acil"?otoDk.acil:otoDk.normal)-bekleDk:null;
+      const pas=Array.isArray(j.passed_over)?j.passed_over:[];
+      const dkA=(a,b)=>Math.max(0,Math.round((new Date(b).getTime()-new Date(a).getTime())/60000));
       return(<div key={j.id} style={{...S.crd,cursor:"default",border:over?`2px solid ${C.red}`:`1px solid ${C.border}`,borderLeft:`4px solid ${pr[2]}`}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"start",gap:8}}>
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:14,fontWeight:700}}>{j.title}</div>
             {j.location&&<div style={{fontSize:11,color:C.text,marginTop:2}}>📍 {j.location}</div>}
-            {j.description&&<div style={{fontSize:12,color:C.dim,marginTop:2}}>{j.description}</div>}
-            <div style={{fontSize:10,color:C.muted,marginTop:4}}>{cb?.full_name||"—"} • {tsTxt(j.created_at)}</div>
+            {j.description&&<div style={{fontSize:12,color:C.dim,marginTop:2,whiteSpace:"pre-wrap"}}>{j.description}</div>}
+            {j.requester&&<div style={{fontSize:11,color:C.text,marginTop:4}}>🙋 {j.requester}{j.requester_unit?` · ${j.requester_unit}`:""}{j.requester_phone?<> · <a href={`tel:${j.requester_phone}`} style={{color:C.accent,textDecoration:"none"}}>📞 {j.requester_phone}</a></>:null}</div>}
+            <div style={{fontSize:10,color:C.muted,marginTop:4}}>{j.source==="form"?"🧾 Talep formu":j.source==="paste"?`📲 WhatsApp · ${cb?.full_name||"—"}`:(cb?.full_name||"—")} • {tsTxt(j.created_at)}</div>
           </div>
           <div style={{textAlign:"right",flexShrink:0}}>
             <div style={S.tag(pr[2]+"22",pr[2])}>{pr[0]} {pr[1]}</div>
@@ -1921,11 +2202,16 @@ function AppInner(){
         <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
           {isNight&&<div style={S.tag(C.blueD,C.blue)}>🌙 Gece</div>}
           <div style={S.tag(C.bg,asg?C.text:C.muted)}>{adlar.length>1?"👥":"👤"} {adlar.length>0?adlar.join(" + "):"Ekip — ilk üstlenen"}</div>
+          {j.assign_mode==="auto"&&<div style={S.tag(C.purpleD,C.purple)}>🤖 Otomatik</div>}
+          {pas.length>0&&<div style={S.tag(C.orangeD,C.orange)}>↪ {pas.length} kez devredildi{canJobAct?`: ${pas.map(id=>(getU(id)?.full_name||"?").split(" ")[0]).join(", ")}`:""}</div>}
+          {j.arrived_at&&<div style={S.tag(C.tealD,C.teal)}>📍 Sahada {hmTxt(j.arrived_at)}</div>}
           {clm?<div style={S.tag(C.greenD,C.green)}>👷 {clm.full_name} üstlendi {j.claimed_at?hmTxt(j.claimed_at):""}</div>
+            :otoKalan!==null&&bekleDk>=0?<div style={S.tag(otoKalan<=3||mine?C.redD:C.orangeD,otoKalan<=3||mine?C.red:C.orange)}>⏱ {otoKalan>0?`${otoKalan} dk içinde üstlenilmezse sıradakine geçer`:"sıradakine geçiyor"}</div>
             :j.priority==="acil"&&(bekleDk<0
               ?<div style={S.tag(C.blueD,C.blue)}>🕔 {hmTxt(j.claim_from)}'de vardiyaya düşer</div>
               :<div style={S.tag(bekleDk>=30?C.redD:C.orangeD,bekleDk>=30?C.red:C.orange)}>⚠ {bekleDk} dk'dır üstlenilmedi</div>)}
         </div>
+        {j.claimed_at&&<div style={{fontSize:10,color:C.muted,marginTop:6}}>🕒 Açıldı {hmTxt(j.created_at)} → Üstlendi {hmTxt(j.claimed_at)} ({dkA(j.claim_from&&new Date(j.claim_from)>new Date(j.created_at)?j.claim_from:j.created_at,j.claimed_at)} dk){j.arrived_at?` → Vardı ${hmTxt(j.arrived_at)} (${dkA(j.claimed_at,j.arrived_at)} dk)`:""}</div>}
         {j.carried_from&&<div style={{background:C.bg,borderRadius:8,padding:"6px 9px",marginTop:8,fontSize:11,color:C.orange,border:`1px solid ${C.orange}33`}}>↩ Geceden aktarıldı: {j.not_done_reason||"—"}</div>}
         {rs.length>0&&<div style={{background:C.bg,borderRadius:8,padding:8,marginTop:8}}>
           <div style={{fontSize:10,fontWeight:700,color:C.orange,marginBottom:4}}>📝 YAPILAMAMA SEBEPLERİ</div>
@@ -1933,6 +2219,7 @@ function AppInner(){
         </div>}
         <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
           {canClaim&&<button style={{...S.btnS(j.priority==="acil"?C.red:C.accent,"#fff"),flex:"1 1 170px",padding:"10px 12px"}} disabled={submitting} onClick={()=>claimJob(j)}>👷 Üstlendim, gidiyorum</button>}
+          {mine&&!isAmir&&j.claimed_by&&!j.arrived_at&&<button style={{...S.btnS(C.teal,"#fff"),flex:"1 1 150px",padding:"10px 12px"}} disabled={submitting} onClick={()=>arriveJob(j)}>📍 Vardım, başladım</button>}
           {canJobAct&&<button style={{...S.btnS(C.bg,C.text),flex:"1 1 70px"}} disabled={submitting} onClick={()=>{setAsgSel([j.assigned_to,...(Array.isArray(j.team)?j.team:[])].filter(Boolean));setModAssign(j);}}>👤 Ata</button>}
           {!isNight&&canJobAct&&<button style={{...S.btnS(C.blueD,C.blue),flex:"1 1 120px"}} disabled={submitting} onClick={()=>pjOpenNightPick(j)}>🌙 Geceye Devret</button>}
           {canClose&&<button style={{...S.btnS(C.greenD,C.green),flex:"1 1 100px"}} disabled={submitting} onClick={()=>completePendingJob(j)}>✅ Yapıldı</button>}
@@ -1990,22 +2277,79 @@ function AppInner(){
         <button style={{flex:"1 1 84px",minWidth:84,padding:"10px 6px",borderRadius:10,border:`2px solid ${faultTab==="asansor"?(evOpen.length>0?C.red:C.blue):C.border}`,background:faultTab==="asansor"?(evOpen.length>0?C.redD:C.blueD):"transparent",color:faultTab==="asansor"?(evOpen.length>0?C.red:C.blue):C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}} onClick={()=>setFaultTab("asansor")}>🛗{evOpen.length>0?` ${evOpen.length}`:""}</button>
       </div>
       {faultTab==="jobs"&&(<div>
+        {(canJobAct||isAmir)&&(()=>{const bid=selBuilding||profile?.building_id;const link=bid?`${window.location.origin}/?talep=${bid}`:"";
+          const R=rapor.veri,T=R?.toplam;const sure=m=>m==null?"—":m>=120?`${Math.round(m/60)} sa`:`${m} dk`;
+          const td={padding:"5px 3px",whiteSpace:"nowrap"};
+          return(<div style={{...S.crd,cursor:"default"}}>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              <button style={{...S.btnS(rapor.acik?C.accent:C.bg,rapor.acik?"#fff":C.text),flex:"1 1 130px"}} onClick={()=>{const ac=!rapor.acik;setRapor(r=>({...r,acik:ac}));if(ac)fetchRapor(rapor.gun);}}>📊 İş performansı</button>
+              {canJobAct&&<button style={{...S.btnS(talepLink?C.accent:C.bg,talepLink?"#fff":C.text),flex:"1 1 130px"}} onClick={()=>setTalepLink(!talepLink)}>🧾 Talep formu linki</button>}
+              {canJobAct&&<button style={{...S.btnS(tgPanel?"#229ED9":C.bg,tgPanel?"#fff":C.text),flex:"1 1 130px"}} onClick={()=>{setTgPanel(!tgPanel);if(!tgPanel)fetchTg();}}>📲 Telegram</button>}
+            </div>
+            {tgPanel&&canJobAct&&(()=>{
+              const bagli=new Set(Array.isArray(tgDurum?.bagli_ids)?tgDurum.bagli_ids:[]);
+              const ekip=bProfiles.filter(u=>u.active&&u.user_role!=="admin"&&u.user_role!=="amir");
+              const yok=ekip.filter(u=>!bagli.has(u.id));
+              const gruplar=Array.isArray(tgDurum?.gruplar)?tgDurum.gruplar:[];
+              if(!tgDurum?.bot)return(<div style={{marginTop:10,fontSize:12,color:C.orange}}>Telegram botu henüz kurulmadı (yönetici kurulumu bekleniyor).</div>);
+              return(<div style={{marginTop:10}}>
+                <div style={{fontSize:12,fontWeight:700}}>Bot: @{tgDurum.bot} · Bağlı: {ekip.length-yok.length}/{ekip.length} kişi</div>
+                {yok.length>0&&<div style={{fontSize:11,color:C.dim,marginTop:4}}>Bağlı olmayan: {yok.map(u=>u.full_name).join(", ")}</div>}
+                <div style={{fontSize:11,color:C.muted,marginTop:4}}>Herkes kendi telefonunda uygulamayı açıp üstteki "📲 Bağla"ya ya da Hesabım → Telegram'a basar, Telegram'da "Başlat"a dokunur.</div>
+                <div style={{fontSize:12,fontWeight:700,marginTop:10}}>Ekip grubu {gruplar.length>0?`✅ ${gruplar.join(", ")}`:"— bağlı değil"}</div>
+                <div style={{fontSize:11,color:C.muted,marginTop:2}}>Grupta her iş tek mesaj olur; atanan, üstlenme, varış ve bitiş süreleri aynı mesajda güncellenir. Mesai sonunda (17:05) günün özeti gelir. Grupta /bosta ile kimin boşta olduğu görülür.</div>
+                <button style={{...S.btnS("#229ED9","#fff"),width:"100%",marginTop:8}} disabled={submitting} onClick={linkTgGroup}>👥 {gruplar.length>0?"Başka grup bağla":"Ekip grubunu bağla"}</button>
+              </div>);})()}
+            {talepLink&&link&&<div style={{marginTop:10}}>
+              <div style={{fontSize:11,color:C.dim,marginBottom:6}}>Bina personeli bu linkten girişsiz iş bildirir. İş en az işi olana otomatik gider; talep eden kim geldiğini ve ne zaman bittiğini linkten izler. WhatsApp grubunun açıklamasına sabitle, QR afişini panolara as.</div>
+              <div style={{fontSize:11,background:C.bg,borderRadius:8,padding:8,wordBreak:"break-all",userSelect:"all",WebkitUserSelect:"all"}}>{link}</div>
+              <button style={{...S.btnS(C.green,"#fff"),width:"100%",marginTop:6}} onClick={()=>{try{navigator.clipboard.writeText(link).then(()=>setToast("🔗 Link kopyalandı"),()=>setToast("Linke basılı tutup kopyala"));}catch(e){setToast("Linke basılı tutup kopyala");}}}>🔗 Linki kopyala</button>
+            </div>}
+            {rapor.acik&&<div style={{marginTop:10}}>
+              <div style={{display:"flex",gap:6,marginBottom:8}}>{[7,30].map(g=>(<button key={g} style={{...S.btnS(rapor.gun===g?C.accentD:C.bg,rapor.gun===g?C.accent:C.muted),flex:1}} onClick={()=>{setRapor(r=>({...r,gun:g}));fetchRapor(g);}}>Son {g} gün</button>))}</div>
+              {rapor.yuk&&<div style={{fontSize:12,color:C.muted,marginBottom:6}}>Yükleniyor…</div>}
+              {T&&<>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6,marginBottom:8}}>
+                  {[["İş",T.is],["Biten",T.biten],["Açık",T.acik],["Ort. üstlenme",sure(T.ust_dk)],["Ort. varış",sure(T.var_dk)],["Ort. kapanış",sure(T.bit_dk)]].map(([k,v])=>(
+                    <div key={k} style={{background:C.bg,borderRadius:10,padding:"8px 4px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:800}}>{v??"—"}</div><div style={{fontSize:10,color:C.muted}}>{k}</div></div>))}
+                </div>
+                <div style={{fontSize:10,color:C.dim,marginBottom:8}}>Kaynak: 🧾 form {T.form} · 📲 WhatsApp {T.paste} · 📱 uygulama {T.app} · 🤖 otomatik {T.oto} · ↪ devir {T.devir} · ⏰ süresi geçen {T.gec}</div>
+                <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                  <thead><tr style={{color:C.muted,textAlign:"left"}}>{["Kişi","İş","Biten","Açık","Üstl.","Varış","Kapanış","Geç","Pas"].map(h=><th key={h} style={{...td,fontWeight:600}}>{h}</th>)}</tr></thead>
+                  <tbody>{(R.kisiler||[]).map(k=>(<tr key={k.id} style={{borderTop:`1px solid ${C.border}`}}>
+                    <td style={{...td,fontWeight:600}}>{k.full_name}</td><td style={td}>{k.is_sayisi}</td><td style={td}>{k.biten}</td><td style={td}>{k.acik}</td>
+                    <td style={{...td,color:k.ust_dk>30?C.red:C.text}}>{sure(k.ust_dk)}</td><td style={td}>{sure(k.var_dk)}</td><td style={td}>{sure(k.bit_dk)}</td>
+                    <td style={{...td,color:k.gec>0?C.red:C.text}}>{k.gec}</td><td style={{...td,color:k.pas>0?C.orange:C.text}}>{k.pas}</td></tr>))}</tbody>
+                </table></div>
+                {(R.kisiler||[]).length===0&&<div style={{fontSize:12,color:C.muted,marginTop:6}}>Bu dönemde iş yok</div>}
+                <div style={{fontSize:10,color:C.muted,marginTop:6}}>Üstlenme: atamadan "Üstlendim"e · Varış: üstlenmeden "Vardım"a · Kapanış: açılıştan bitişe · Pas: süresinde üstlenmediği için başkasına geçen iş</div>
+              </>}
+            </div>}
+          </div>);})()}
         {canJobAct&&Array.isArray(pushIds)&&(()=>{const bugunEkip=new Set((shByDate[bugun]||[]).map(s=>s.personnel_id));
           const kapali=bProfiles.filter(u=>(u.active||bugunEkip.has(u.id))&&(u.user_role==="personnel"||u.user_role==="viewer"||u.job_manager)&&pushOff(u.id));
           if(kapali.length===0)return null;
           return(<div style={{...S.lawBox,marginBottom:12,borderColor:C.orange+"55",background:C.orangeD}}>
             <div style={{fontSize:12,fontWeight:800,color:C.orange}}>{"🔕 Bildirimi kapalı: "+kapali.length+" kişi — iş emri bildirimi bu kişilere ulaşmaz"}</div>
             <div style={{fontSize:11,color:C.dim,marginTop:4}}>{kapali.map(u=>u.full_name).join(", ")}</div>
-            <div style={{fontSize:10,color:C.muted,marginTop:6}}>Her biri kendi telefonunda uygulamayı ana ekrandaki ikondan açıp Özet'teki "Bildirimleri aç" düğmesine basmalı. iPhone'da önce "Ana Ekrana Ekle" gerekir.</div>
+            <div style={{fontSize:10,color:C.muted,marginTop:6}}>Her biri ya uygulamadaki "📲 Telegram'ı bağla"ya basmalı (en kolayı) ya da ana ekrandaki ikondan açıp "Bildirimleri aç"a basmalı. iPhone'da bildirim için önce "Ana Ekrana Ekle" gerekir.</div>
           </div>);})()}
         {canJobAct&&(()=>{
           const pri=pjForm.pri==="acil"?"acil":"normal";const prev=jobDuePreview(pri);
           const gece=pri==="acil"&&prev.getHours()===8;
           const dept=isAdmin?(pjForm.dept||profile?.department||"mekanik"):(profile?.department||"mekanik");
           const crew=(gece?nightCrew:dayCrew).filter(u=>(u.department||"mekanik")===dept);
+          const oto=(pjForm.asgs||[]).length===0&&pjForm.mode!=="team";
+          const aday=oto?otoAday(crew,gece):null;
           const chip=on=>({padding:"6px 10px",borderRadius:14,border:`1px solid ${on?C.accent:C.border}`,background:on?C.accentD:"transparent",color:on?C.accent:C.muted,fontSize:11,fontWeight:600,cursor:"pointer",WebkitAppearance:"none"});
           return(<div style={S.crd}>
-            <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>➕ İş Emri Aç</div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:8}}>
+              <div style={{fontSize:13,fontWeight:700}}>➕ İş Emri Aç</div>
+              <button style={{...S.btnS(C.greenD,C.green),minHeight:32,padding:"6px 10px",fontSize:12}} disabled={submitting} onClick={openPaste}>📋 WhatsApp'tan yapıştır</button>
+            </div>
+            {pjForm.src==="paste"&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:11,color:C.green,background:C.greenD,borderRadius:8,padding:"6px 9px",marginBottom:8}}>
+              <span>📲 WhatsApp'tan{pjForm.req?` · talep eden: ${pjForm.req}`:""}</span>
+              <button style={{background:"none",border:"none",color:C.muted,fontSize:14,cursor:"pointer"}} onClick={()=>setPjForm({...pjForm,src:"app",req:""})}>✕</button></div>}
             <div style={{display:"flex",gap:6,marginBottom:10}}>
               {[["acil","🔴 Acil",C.red],["normal","🟡 Normal",C.orange]].map(([k,l,cl])=>(
                 <button key={k} onClick={()=>setPjForm({...pjForm,pri:k,asgs:[]})} style={{flex:1,padding:"10px 6px",borderRadius:10,border:`2px solid ${pri===k?cl:C.border}`,background:pri===k?cl+"22":"transparent",color:pri===k?cl:C.muted,cursor:"pointer",WebkitAppearance:"none"}}>
@@ -2021,15 +2365,18 @@ function AppInner(){
               <button key={k} onClick={()=>setPjForm({...pjForm,dept:k,asgs:[]})} style={{flex:1,...S.btnS(dept===k?C.accentD:C.bg,dept===k?C.accent:C.muted)}}>{l}</button>))}</div>}
             <div style={S.lbl}>Kime? {gece?"(bu gece nöbetçi olanlar)":(dayKey!==todayStr()?"(yarın gündüz vardiyası)":"(bugün vardiyada olanlar)")} — birden fazla seçebilirsin</div>
             <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:4}}>
-              <button onClick={()=>setPjForm({...pjForm,asgs:[]})} style={chip((pjForm.asgs||[]).length===0)}>👥 Ekip — ilk üstlenen</button>
+              <button onClick={()=>setPjForm({...pjForm,asgs:[],mode:"auto"})} style={chip(oto)}>🤖 Otomatik — en az işi olan</button>
+              <button onClick={()=>setPjForm({...pjForm,asgs:[],mode:"team"})} style={chip((pjForm.asgs||[]).length===0&&pjForm.mode==="team")}>👥 Ekip — ilk üstlenen</button>
               {crew.map(u=>{const sel=pjForm.asgs||[];const k=sel.indexOf(u.id);return(<button key={u.id}
                 onClick={()=>setPjForm({...pjForm,asgs:k>=0?sel.filter(x=>x!==u.id):[...sel,u.id]})} style={chip(k>=0)}>
                 {k===0&&sel.length>1?"★ ":k>0?"+ ":""}{u.full_name}{pushOff(u.id)?" 🔕":""}</button>);})}
             </div>
             {(pjForm.asgs||[]).length>1&&<div style={{fontSize:10,color:C.dim,marginBottom:4}}>★ {getU(pjForm.asgs[0])?.full_name} sorumlu, diğerleri ekip. Hepsine bildirim gider; ekipten biri üstlenip kapatabilir.</div>}
+            {oto&&<div style={{fontSize:11,color:C.purple,marginBottom:4}}>{aday?<>🤖 Sıradaki: <b>{aday.u.full_name}</b> · açık işi {aday.n}{pushOff(aday.u.id)?" · 🔕 bildirimi kapalı":""}</>:"🤖 Vardiyada bu birimden uygun kimse görünmüyor — iş ekip işi olarak açılır"}</div>}
             {crew.length===0&&<div style={{fontSize:10,color:C.orange}}>Çizelgede bu vardiyada {dept==="elektrik"?"elektrik":"mekanik"} personeli görünmüyor — "Ekip" seçilirse {pri==="acil"?"bildirim vardiyadaki diğer personele gider, ilk üstlenen alır.":"iş listede bekler; birimdeki herkes görür."}</div>}
             <button style={S.btn(pri==="acil"?C.red:C.orange)} disabled={submitting} onClick={addPendingJob}>{pri==="acil"?"🔴 Acil iş emri aç":"🟡 İş emri aç"}</button>
-            <div style={{fontSize:10,color:C.dim,marginTop:6}}>{pri==="acil"
+            <div style={{fontSize:10,color:C.dim,marginTop:6}}>{oto?`En az açık işi olana atanır ve ona bildirim gider. ${pri==="acil"?otoDk.acil:otoDk.normal} dk içinde üstlenmezse sıradakine geçer (en fazla 2 kez), sonra şefe haber gider.`
+              :pri==="acil"
               ?((pjForm.asgs||[]).length>0?"Atananların hepsine anında bildirim gider. 30 dk içinde üstlenilmezse şefe, süre dolunca şefe ve sana bildirim gider."
                           :"Vardiyadaki herkese bildirim gider; ilk üstlenen alır. 30 dk içinde kimse üstlenmezse şefe bildirim gider.")
               :((pjForm.asgs||[]).length>0?"Atananların hepsine anında bildirim gider; son günün sabahı hatırlatma, süre dolunca şefe ve sana bildirim gider.":"Vardiyadaki birime bildirim gider; ilk üstlenen alır. Süre dolunca şefe ve sana bildirim gider.")}
@@ -2068,7 +2415,8 @@ function AppInner(){
           <button style={{...S.btnS(C.bg,C.dim),width:"100%"}} onClick={()=>setPjShowDone(!pjShowDone)}>{pjShowDone?"▲ Tamamlananları gizle":`▼ Tamamlananlar (${doneJobs.length})`}</button>
           {pjShowDone&&doneJobs.map(j=>{const cp=getU(j.completed_by);return(<div key={j.id} style={{...S.crd,opacity:.75,marginTop:8,cursor:"default"}}>
             <div style={{fontSize:13,fontWeight:600,textDecoration:"line-through",color:C.dim}}>{j.title}</div>
-            <div style={{fontSize:10,color:C.green,marginTop:4}}>✅ {cp?.full_name||"—"} • {j.completed_at?new Date(j.completed_at).toLocaleString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):""}{j.completed_note?` — ${j.completed_note}`:""}</div>
+            <div style={{fontSize:10,color:C.green,marginTop:4}}>✅ {cp?.full_name||"—"} • {j.completed_at?new Date(j.completed_at).toLocaleString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):""}{j.completed_note?` — ${j.completed_note}`:""}{j.done_photo?<> · <a href={j.done_photo} target="_blank" rel="noreferrer" style={{color:C.accent}}>📷 Fotoğraf</a></>:null}</div>
+            {j.requester&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>🙋 {j.requester}{j.requester_unit?` · ${j.requester_unit}`:""}</div>}
           </div>);})}
         </div>}
       </div>)}
@@ -4111,8 +4459,59 @@ function AppInner(){
       {crew.map(u=>kisi(u,false))}
       {diger.length>0&&<><div style={{...S.lbl,marginTop:10}}>Diğer — bu vardiyada değil</div>{diger.map(u=>kisi(u,true))}</>}
       <div style={{fontSize:10,color:C.dim,margin:"6px 0"}}>İlk seçilen (★) sorumlu, diğerleri ekip. Hepsine bildirim gider.</div>
+      <button style={S.btn(C.purpleD,C.purple)} disabled={submitting} onClick={()=>autoAssignJob(j)}>🤖 Otomatik ata — en az işi olana</button>
       <button style={S.btn(C.accent)} disabled={submitting} onClick={()=>saveAssign(j,asgSel)}>{asgSel.length===0?"👥 Ekip işi yap (ilk üstlenen alır)":`✓ Kaydet — ${asgSel.length} kişi`}</button>
       <button style={S.btn(C.bg,C.muted)} onClick={()=>setModAssign(null)}>Vazgeç</button>
+    </div></div>);
+  };
+
+  const renderDone=()=>{
+    if(!modDone)return null;const j=modDone.j;
+    return(<div style={S.mod} onClick={()=>{if(!submitting)setModDone(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
+      <div style={{fontSize:17,fontWeight:700,marginBottom:4}}>✅ İşi kapat</div>
+      <div style={{fontSize:12,color:C.dim,marginBottom:12}}>{j.title}{j.location?` · 📍 ${j.location}`:""}</div>
+      <div style={S.lbl}>Yapılan işlem / not</div>
+      <textarea style={{...S.inp,minHeight:70}} placeholder="Örn: Sifon değiştirildi" value={modDone.note} onChange={e=>setModDone({...modDone,note:e.target.value})}/>
+      <div style={S.lbl}>Fotoğraf (isteğe bağlı)</div>
+      <label style={{...S.btn(C.bg,C.text),display:"block",textAlign:"center",border:`1px dashed ${C.muted}`,marginTop:0}}>
+        {modDone.file?`📷 ${modDone.file.name||"fotoğraf"} — değiştir`:"📷 Fotoğraf çek / seç"}
+        <input type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)setModDone(m=>m?{...m,file:f}:m);}}/>
+      </label>
+      <button style={S.btn(C.green)} disabled={submitting} onClick={submitDone}>{submitting?"Kaydediliyor…":"✅ Tamamlandı olarak kapat"}</button>
+      <button style={S.btn(C.bg,C.muted)} disabled={submitting} onClick={()=>setModDone(null)}>Vazgeç</button>
+    </div></div>);
+  };
+
+  const renderPaste=()=>{
+    if(!modPaste)return null;const items=modPaste.items;
+    const set=(k,p)=>setModPaste(m=>m&&m.items?{...m,items:m.items.map(x=>x.k===k?{...x,...p}:x)}:m);
+    const nSec=(items||[]).filter(x=>x.sec).length;
+    const mini=(on,bg)=>({...S.btnS(on?bg:C.bg,on?"#fff":C.muted),minHeight:30,padding:"4px 10px",fontSize:11});
+    return(<div style={S.mod} onClick={()=>{if(!submitting)setModPaste(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
+      <div style={{fontSize:17,fontWeight:700,marginBottom:4}}>📋 WhatsApp'tan iş aç</div>
+      {!items&&<>
+        <div style={{fontSize:12,color:C.dim,marginBottom:10}}>WhatsApp'ta mesaja basılı tut → Kopyala. Birden fazla mesajı seçip birlikte kopyalayabilirsin. Her mesaj ayrı iş olur ve en az işi olana otomatik atanır.</div>
+        <textarea style={{...S.inp,minHeight:150}} placeholder="Mesajları buraya yapıştır" value={modPaste.txt} onChange={e=>setModPaste({...modPaste,txt:e.target.value})}/>
+        <button style={S.btn(C.accent)} disabled={!modPaste.txt.trim()} onClick={()=>pasteParse(modPaste.txt)}>Mesajları ayır →</button>
+      </>}
+      {items&&<>
+        <div style={{fontSize:12,color:C.dim,marginBottom:10}}>{items.length} mesaj bulundu. İş olmayanların (teşekkür, ekipten cevap, açıkta benzeri olan) işareti kaldırıldı — kontrol et.</div>
+        {items.map(x=>(<div key={x.k} style={{border:`1px solid ${x.sec?C.accent:C.border}`,borderRadius:12,padding:10,marginBottom:8,background:x.sec?C.accentD:"transparent"}}>
+          <label style={{display:"flex",gap:8,alignItems:"flex-start",cursor:"pointer"}}>
+            <input type="checkbox" checked={x.sec} onChange={e=>set(x.k,{sec:e.target.checked})} style={{width:20,height:20,marginTop:2,flexShrink:0}}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:600,wordBreak:"break-word",whiteSpace:"pre-wrap"}}>{x.metin}</div>
+              <div style={{fontSize:10,color:C.muted,marginTop:2}}>{x.kim||"—"}{x.saat?` · ${x.saat}`:""}{x.loc?` · 📍 ${x.loc}`:""}{x.ekipten?" · ekipten":""}{x.benzer?" · ⚠ benzer iş açık":""}</div>
+            </div></label>
+          {x.sec&&<div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
+            {[["mekanik","⚙️ Mekanik"],["elektrik","⚡ Elektrik"]].map(([k,l])=>(<button key={k} onClick={()=>set(x.k,{dept:k})} style={mini(x.dept===k,C.accent)}>{l}</button>))}
+            <button onClick={()=>set(x.k,{pri:x.pri==="acil"?"normal":"acil"})} style={mini(x.pri==="acil",C.red)}>{x.pri==="acil"?"🔴 Acil":"🟡 Normal"}</button>
+          </div>}
+        </div>))}
+        <button style={S.btn(C.accent)} disabled={submitting||nSec===0} onClick={createPasted}>{submitting?"Açılıyor…":`🤖 ${nSec} iş aç — otomatik dağıt`}</button>
+        <button style={S.btn(C.bg,C.muted)} disabled={submitting} onClick={()=>setModPaste({txt:modPaste.txt,items:null})}>← Metne dön</button>
+      </>}
+      <button style={S.btn(C.bg,C.muted)} disabled={submitting} onClick={()=>setModPaste(null)}>Kapat</button>
     </div></div>);
   };
 
@@ -4169,6 +4568,7 @@ function AppInner(){
       </div>
       <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:"0 12px"}}>
         <button style={row} disabled={pushReady||!pushChecked} onClick={()=>{if(!pushReady&&pushChecked)enablePush();}}><span style={lft}><Ico n="bell" s={20}/>Bildirimler</span><span style={{fontSize:13,fontWeight:600,color:pushReady?C.green:C.accent}}>{!pushChecked?"…":pushReady?"Açık":pushOther?"Bu telefona al":"Aç"}</span></button>
+        {tgDurum&&tgDurum.bot&&<button style={row} disabled={submitting} onClick={()=>{if(tgDurum.bagli)unlinkTelegram();else linkTelegram();}}><span style={lft}><span style={{fontSize:18,width:20,textAlign:"center"}}>📲</span>Telegram</span><span style={{fontSize:13,fontWeight:600,color:tgDurum.bagli?C.green:"#229ED9"}}>{tgDurum.bagli?`Bağlı${tgDurum.kullanici?" · @"+tgDurum.kullanici:""}`:"Bağla"}</span></button>}
         <button style={row} onClick={()=>{setShowMe(false);setShowPWA(true);}}><span style={lft}><Ico n="phone" s={20}/>Ana ekrana ekle</span><span style={{color:C.muted}}><Ico n="chev" s={18}/></span></button>
         <button style={{...row,borderBottom:"none",color:C.red}} onClick={()=>{setShowMe(false);doLogout();}}><span style={lft}><Ico n="logout" s={20}/>Çıkış yap</span></button>
       </div>
@@ -4199,6 +4599,12 @@ function AppInner(){
       <div style={S.cnt}>
         {updateAvailable&&<div style={{display:"flex",alignItems:"center",gap:10,background:C.greenD,border:`1px solid ${C.green}33`,borderRadius:14,padding:"10px 12px",marginBottom:12}}><span style={{fontSize:13,color:C.text,flex:1,fontWeight:600}}>Yeni sürüm hazır</span><button onClick={forceUpdate} style={{...S.btnS(C.green,"#fff"),whiteSpace:"nowrap"}}>Güncelle</button></div>}
         {pushChecked&&!pushReady&&profile&&<div style={{display:"flex",alignItems:"center",gap:10,background:C.accentD,border:`1px solid ${C.accent}33`,borderRadius:14,padding:"10px 12px",marginBottom:12,color:C.accent}}><Ico n="bell" s={20}/><span style={{fontSize:13,color:C.text,flex:1}}>{pushOther?"Bildirimlerin şu an bu telefona gelmiyor":"Onay, arıza ve iş uyarıları telefonuna düşsün"}</span><button onClick={enablePush} style={{...S.btnS(C.accent,"#fff"),whiteSpace:"nowrap"}}>{pushOther?"Bu telefona al":"Aç"}</button></div>}
+        {tgDurum&&tgDurum.bot&&!tgDurum.bagli&&!tgGizle&&profile&&!isAmir&&<div style={{display:"flex",alignItems:"center",gap:10,background:"#E8F4FB",border:"1px solid #229ED933",borderRadius:14,padding:"10px 12px",marginBottom:12}}>
+          <span style={{fontSize:20}}>📲</span>
+          <span style={{fontSize:13,color:C.text,flex:1}}>Atanan işler Telegram'a düşsün, düğmeyle üstlen/bitir</span>
+          <button onClick={linkTelegram} disabled={submitting} style={{...S.btnS("#229ED9","#fff"),whiteSpace:"nowrap"}}>Bağla</button>
+          <button aria-label="Gizle" onClick={()=>{setTgGizle(true);try{localStorage.setItem("tg_banner_gizle",String(Date.now()+7*86400000));}catch(e){}}} style={{background:"none",border:"none",color:C.muted,fontSize:16,cursor:"pointer",padding:4}}>✕</button>
+        </div>}
         {page==="dashboard"&&renderDashboard()}
         {page==="person"&&renderPersonDetail()}
         {page==="faults"&&renderFaults()}
@@ -4228,6 +4634,8 @@ function AppInner(){
       {renderPlanNew()}
       {renderNightPick()}
       {renderAssignPick()}
+      {renderDone()}
+      {renderPaste()}
       {renderShSub()}
       {renderAbsSheet()}
       {showMtDP&&<CustomDatePicker value={mtForm.done_date||todayStr()} onChange={v=>setMtForm(p=>({...p,done_date:v}))} onClose={()=>setShowMtDP(false)}/>}
