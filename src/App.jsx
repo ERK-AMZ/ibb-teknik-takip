@@ -5,7 +5,7 @@ import { supabase, signIn, signOut, getProfiles, createOvertime, updateOvertime,
 const toArr=(v)=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'&&Array.isArray(v.data))return v.data;return[];};
 // === Önbellek (stale-while-revalidate): açılışta anında veri, arkada tazeleme ===
 const CACHE_KEY='ibb_cache_v1';
-const APP_VERSION='5.40';
+const APP_VERSION='5.41';
 const VAPID_PUB='BN2YP7MOPhouxNjYjzbuOJznU5xocT3gQW3JeHUnHn3hvRCDdlIvRUDifICb_S0rc_-DqUtWRim0ehxn7UdaV3M';
 const verCmp=(a,b)=>{const pa=String(a).split(".").map(n=>Number(n)||0),pb=String(b).split(".").map(n=>Number(n)||0);
   for(let i=0;i<Math.max(pa.length,pb.length);i++){const x=pa[i]||0,y=pb[i]||0;if(x!==y)return x>y?1:-1;}return 0;};
@@ -1860,6 +1860,15 @@ function AppInner(){
     if(!window.confirm("Telegram bağlantısı kaldırılsın mı? İş bildirimleri artık Telegram'a gelmez."))return;
     try{await supabase.rpc('tg_cikar');await fetchTg();setToast("Telegram bağlantısı kaldırıldı");}catch(e){setToast("Hata: "+(e?.message||""));}
   }
+  async function tgEsle(tgId,val){ // v5.41: gruptaki Telegram kişisini personele / talep sahibine eşle
+    setSubmitting(true);
+    try{const{data,error}=await supabase.rpc('tg_user_esle',{p_tg:Number(tgId),p_pid:val&&val!=="talep"?val:null,p_rol:val==="talep"?"talep":null});
+      if(error)throw error;
+      if(!data?.ok)setToast("⚠ "+(data?.hata||"Eşleştirilemedi"));
+      else{setToast(val?"✅ Eşleştirildi":"Eşleştirme kaldırıldı");await fetchTg();}
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
   async function linkTgGroup(){
     setSubmitting(true);
     try{const{data,error}=await supabase.rpc('tg_group_code',{p_bina:selBuilding||null});if(error)throw error;
@@ -2190,8 +2199,12 @@ function AppInner(){
             <div style={{fontSize:14,fontWeight:700}}>{j.title}</div>
             {j.location&&<div style={{fontSize:11,color:C.text,marginTop:2}}>📍 {j.location}</div>}
             {j.description&&<div style={{fontSize:12,color:C.dim,marginTop:2,whiteSpace:"pre-wrap"}}>{j.description}</div>}
+            {(j.request_photo||(Array.isArray(j.extra_photos)&&j.extra_photos.length>0))&&<div style={{fontSize:11,marginTop:4,display:"flex",gap:10,flexWrap:"wrap"}}>
+              {j.request_photo&&<a href={j.request_photo} target="_blank" rel="noreferrer" style={{color:C.accent}}>📷 Talep fotoğrafı</a>}
+              {(Array.isArray(j.extra_photos)?j.extra_photos:[]).map((u,i)=><a key={i} href={u} target="_blank" rel="noreferrer" style={{color:C.accent}}>📷 Ek {i+1}</a>)}
+            </div>}
             {j.requester&&<div style={{fontSize:11,color:C.text,marginTop:4}}>🙋 {j.requester}{j.requester_unit?` · ${j.requester_unit}`:""}{j.requester_phone?<> · <a href={`tel:${j.requester_phone}`} style={{color:C.accent,textDecoration:"none"}}>📞 {j.requester_phone}</a></>:null}</div>}
-            <div style={{fontSize:10,color:C.muted,marginTop:4}}>{j.source==="form"?"🧾 Talep formu":j.source==="paste"?`📲 WhatsApp · ${cb?.full_name||"—"}`:(cb?.full_name||"—")} • {tsTxt(j.created_at)}</div>
+            <div style={{fontSize:10,color:C.muted,marginTop:4}}>{j.source==="form"?"🧾 Talep formu":j.source==="paste"?`📲 WhatsApp · ${cb?.full_name||"—"}`:j.source==="telegram"?`✈️ Telegram · ${cb?.full_name||j.requester||"—"}`:(cb?.full_name||"—")} • {tsTxt(j.created_at)}</div>
           </div>
           <div style={{textAlign:"right",flexShrink:0}}>
             <div style={S.tag(pr[2]+"22",pr[2])}>{pr[0]} {pr[1]}</div>
@@ -2291,14 +2304,41 @@ function AppInner(){
               const ekip=bProfiles.filter(u=>u.active&&u.user_role!=="admin"&&u.user_role!=="amir");
               const yok=ekip.filter(u=>!bagli.has(u.id));
               const gruplar=Array.isArray(tgDurum?.gruplar)?tgDurum.gruplar:[];
+              const kisiler=Array.isArray(tgDurum?.kisiler)?tgDurum.kisiler:[];
+              const esli=new Set(kisiler.map(k=>k.pid).filter(Boolean));
+              const secenek=[...bProfiles].sort((a,b)=>(a.full_name||"").localeCompare(b.full_name||"","tr"));
+              const trN=x=>(x||"").toLocaleLowerCase("tr-TR").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/ı/g,"i");
+              const oneri=k=>{const w=new Set(trN(k.ad).split(/[^a-z0-9]+/).filter(x=>x.length>=3));if(!w.size)return null;
+                let en=null,es=0,esit=false;
+                for(const u of ekip){if(esli.has(u.id))continue;const sk=trN(u.full_name).split(/[^a-z0-9]+/).filter(x=>x.length>=3&&w.has(x)).length;
+                  if(sk>es){en=u;es=sk;esit=false;}else if(sk>0&&sk===es)esit=true;}
+                return es>0&&!esit?en:null;};
+              const eslesmemis=kisiler.filter(k=>!k.pid&&k.rol!=="talep").length;
               if(!tgDurum?.bot)return(<div style={{marginTop:10,fontSize:12,color:C.orange}}>Telegram botu henüz kurulmadı (yönetici kurulumu bekleniyor).</div>);
               return(<div style={{marginTop:10}}>
-                <div style={{fontSize:12,fontWeight:700}}>Bot: @{tgDurum.bot} · Bağlı: {ekip.length-yok.length}/{ekip.length} kişi</div>
-                {yok.length>0&&<div style={{fontSize:11,color:C.dim,marginTop:4}}>Bağlı olmayan: {yok.map(u=>u.full_name).join(", ")}</div>}
-                <div style={{fontSize:11,color:C.muted,marginTop:4}}>Herkes kendi telefonunda uygulamayı açıp üstteki "📲 Bağla"ya ya da Hesabım → Telegram'a basar, Telegram'da "Başlat"a dokunur.</div>
-                <div style={{fontSize:12,fontWeight:700,marginTop:10}}>Ekip grubu {gruplar.length>0?`✅ ${gruplar.join(", ")}`:"— bağlı değil"}</div>
-                <div style={{fontSize:11,color:C.muted,marginTop:2}}>Grupta her iş tek mesaj olur; atanan, üstlenme, varış ve bitiş süreleri aynı mesajda güncellenir. Mesai sonunda (17:05) günün özeti gelir. Grupta /bosta ile kimin boşta olduğu görülür.</div>
+                <div style={{fontSize:12,fontWeight:700}}>Ekip grubu {gruplar.length>0?`✅ ${gruplar.join(", ")}`:"— bağlı değil"}</div>
+                <div style={{fontSize:11,color:C.muted,marginTop:2}}>Gruba yazılan her arıza iş olur ve vardiyada en az işi olana atanır. "Bakıyorum" = üstlendi, "Başladım" = sahada, 📷 fotoğraf + "yapıldı" = kapandı. Atanan kişi, süreler ve fotoğraflar hem grupta hem burada görünür; 17:05'te günün özeti gelir.</div>
                 <button style={{...S.btnS("#229ED9","#fff"),width:"100%",marginTop:8}} disabled={submitting} onClick={linkTgGroup}>👥 {gruplar.length>0?"Başka grup bağla":"Ekip grubunu bağla"}</button>
+                {gruplar.length===0&&<div style={{fontSize:10,color:C.muted,marginTop:4}}>Telegram açılınca grubu seç, botun yönetici olarak eklenmesini onayla. Yönetici olmazsa yazılanları okuyamaz.</div>}
+                {gruplar.length>0&&<div style={{marginTop:12}}>
+                  <div style={{fontSize:12,fontWeight:700}}>Gruptaki kişiler ({kisiler.length}){eslesmemis>0?<span style={{color:C.orange}}> · {eslesmemis} eşleşmedi</span>:null}</div>
+                  <div style={{fontSize:11,color:C.muted,marginTop:2}}>Grupta yazan ya da /ben yazan herkes burada çıkar. Ustaları kendi adına, Hasan Bey / Ferhat Bey / telefon görevlisi gibi iş yazanları "🙋 Talep sahibi"ne eşle. Eşleşmeyen ustanın "bakıyorum / yapıldı" cevabı işe işlenmez.</div>
+                  {kisiler.length===0&&<div style={{fontSize:11,color:C.orange,marginTop:6}}>Henüz kimse görünmüyor — gruba herkes bir kez /ben yazsın.</div>}
+                  {kisiler.map(k=>{const o=!k.pid&&k.rol!=="talep"?oneri(k):null;const v=k.pid||(k.rol==="talep"?"talep":"");
+                    return(<div key={k.id} style={{display:"flex",alignItems:"center",gap:8,marginTop:6,background:C.bg,borderRadius:10,padding:"6px 8px"}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:12,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{k.ad||"?"}{k.kullanici?` · @${k.kullanici}`:""}</div>
+                        {o?<div style={{fontSize:10,color:C.orange}}>Öneri: {o.full_name}</div>:!v?<div style={{fontSize:10,color:C.orange}}>Eşleşmedi</div>:null}
+                      </div>
+                      <select aria-label={`${k.ad||"Kişi"} eşleştir`} style={{...S.sel,width:150,flexShrink:0,marginBottom:0,padding:"8px",fontSize:12}} value={v} disabled={submitting} onChange={e=>tgEsle(k.id,e.target.value)}>
+                        <option value="">— Eşleşmedi —</option>
+                        <option value="talep">🙋 Talep sahibi</option>
+                        {secenek.map(u=><option key={u.id} value={u.id}>{u.full_name}{u.active?"":" (pasif)"}</option>)}
+                      </select>
+                      {o&&<button aria-label={`${o.full_name} olarak eşleştir`} disabled={submitting} onClick={()=>tgEsle(k.id,o.id)} style={{...S.btnS(C.green,"#fff"),padding:"8px 10px",flexShrink:0}}>✓</button>}
+                    </div>);})}
+                </div>}
+                <div style={{fontSize:11,color:C.dim,marginTop:12}}>Özel bildirim (isteğe bağlı): Telegram'da tanınan {ekip.length-yok.length}/{ekip.length} kişi{yok.length>0?` · tanınmayan: ${yok.map(u=>u.full_name).join(", ")}`:""}. Atanan işin özelden de gelmesini isteyen uygulamada "📲 Bağla"ya basar.</div>
               </div>);})()}
             {talepLink&&link&&<div style={{marginTop:10}}>
               <div style={{fontSize:11,color:C.dim,marginBottom:6}}>Bina personeli bu linkten girişsiz iş bildirir. İş en az işi olana otomatik gider; talep eden kim geldiğini ve ne zaman bittiğini linkten izler. WhatsApp grubunun açıklamasına sabitle, QR afişini panolara as.</div>
@@ -2313,7 +2353,7 @@ function AppInner(){
                   {[["İş",T.is],["Biten",T.biten],["Açık",T.acik],["Ort. üstlenme",sure(T.ust_dk)],["Ort. varış",sure(T.var_dk)],["Ort. kapanış",sure(T.bit_dk)]].map(([k,v])=>(
                     <div key={k} style={{background:C.bg,borderRadius:10,padding:"8px 4px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:800}}>{v??"—"}</div><div style={{fontSize:10,color:C.muted}}>{k}</div></div>))}
                 </div>
-                <div style={{fontSize:10,color:C.dim,marginBottom:8}}>Kaynak: 🧾 form {T.form} · 📲 WhatsApp {T.paste} · 📱 uygulama {T.app} · 🤖 otomatik {T.oto} · ↪ devir {T.devir} · ⏰ süresi geçen {T.gec}</div>
+                <div style={{fontSize:10,color:C.dim,marginBottom:8}}>Kaynak: ✈️ Telegram {T.telegram??0} · 🧾 form {T.form} · 📲 WhatsApp {T.paste} · 📱 uygulama {T.app} · 🤖 otomatik {T.oto} · ↪ devir {T.devir} · ⏰ süresi geçen {T.gec}</div>
                 <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
                   <thead><tr style={{color:C.muted,textAlign:"left"}}>{["Kişi","İş","Biten","Açık","Üstl.","Varış","Kapanış","Geç","Pas"].map(h=><th key={h} style={{...td,fontWeight:600}}>{h}</th>)}</tr></thead>
                   <tbody>{(R.kisiler||[]).map(k=>(<tr key={k.id} style={{borderTop:`1px solid ${C.border}`}}>
@@ -2415,7 +2455,7 @@ function AppInner(){
           <button style={{...S.btnS(C.bg,C.dim),width:"100%"}} onClick={()=>setPjShowDone(!pjShowDone)}>{pjShowDone?"▲ Tamamlananları gizle":`▼ Tamamlananlar (${doneJobs.length})`}</button>
           {pjShowDone&&doneJobs.map(j=>{const cp=getU(j.completed_by);return(<div key={j.id} style={{...S.crd,opacity:.75,marginTop:8,cursor:"default"}}>
             <div style={{fontSize:13,fontWeight:600,textDecoration:"line-through",color:C.dim}}>{j.title}</div>
-            <div style={{fontSize:10,color:C.green,marginTop:4}}>✅ {cp?.full_name||"—"} • {j.completed_at?new Date(j.completed_at).toLocaleString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):""}{j.completed_note?` — ${j.completed_note}`:""}{j.done_photo?<> · <a href={j.done_photo} target="_blank" rel="noreferrer" style={{color:C.accent}}>📷 Fotoğraf</a></>:null}</div>
+            <div style={{fontSize:10,color:C.green,marginTop:4}}>✅ {cp?.full_name||"—"} • {j.completed_at?new Date(j.completed_at).toLocaleString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):""}{j.completed_note?` — ${j.completed_note}`:""}{j.done_photo?<> · <a href={j.done_photo} target="_blank" rel="noreferrer" style={{color:C.accent}}>📷 Fotoğraf</a></>:null}{j.request_photo?<> · <a href={j.request_photo} target="_blank" rel="noreferrer" style={{color:C.accent}}>🙋 Talep fotoğrafı</a></>:null}{(Array.isArray(j.extra_photos)?j.extra_photos:[]).map((u,i)=><span key={i}> · <a href={u} target="_blank" rel="noreferrer" style={{color:C.accent}}>📷 Ek {i+1}</a></span>)}</div>
             {j.requester&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>🙋 {j.requester}{j.requester_unit?` · ${j.requester_unit}`:""}</div>}
           </div>);})}
         </div>}
