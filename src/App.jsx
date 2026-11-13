@@ -5,7 +5,9 @@ import { supabase, signIn, signOut, getProfiles, createOvertime, updateOvertime,
 const toArr=(v)=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'&&Array.isArray(v.data))return v.data;return[];};
 // === Önbellek (stale-while-revalidate): açılışta anında veri, arkada tazeleme ===
 const CACHE_KEY='ibb_cache_v1';
-const APP_VERSION='5.41';
+const APP_VERSION='5.43';
+// v5.43: iPhone Safari / Android Chrome adres çubuğu: 100vh ekranı taşırır → destekleniyorsa dvh
+const VH=(()=>{try{return typeof CSS!=="undefined"&&CSS.supports&&CSS.supports("height","100dvh")?"dvh":"vh";}catch(e){return "vh";}})();
 const VAPID_PUB='BN2YP7MOPhouxNjYjzbuOJznU5xocT3gQW3JeHUnHn3hvRCDdlIvRUDifICb_S0rc_-DqUtWRim0ehxn7UdaV3M';
 const verCmp=(a,b)=>{const pa=String(a).split(".").map(n=>Number(n)||0),pb=String(b).split(".").map(n=>Number(n)||0);
   for(let i=0;i<Math.max(pa.length,pb.length);i++){const x=pa[i]||0,y=pb[i]||0;if(x!==y)return x>y?1:-1;}return 0;};
@@ -23,7 +25,7 @@ class ErrorBoundary extends Component {
       const errMsg=String(this.state.error?.message||this.state.error||"?");
       const stack=this.state.info?.componentStack||"";
       const diag=typeof window!=='undefined'?window.__DIAG||"yok":"yok";
-      return(<div style={{minHeight:"100vh",background:"#F4F6F8",color:"#0B1220",padding:20,fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif"}}>
+      return(<div style={{minHeight:"100"+VH,background:"#F4F6F8",color:"#0B1220",padding:20,fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif"}}>
         <div style={{textAlign:"center",marginTop:60}}>
           <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
           <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>Uygulama hatası · v{APP_VERSION}</div>
@@ -68,6 +70,16 @@ function ini(n){if(!n)return"?";try{return n.split(" ").map(x=>x[0]).slice(0,2).
 
 // v5.35 tasarım dili: açık zemin, tek vurgu (petrol mavisi); kırmızı/turuncu/yeşil yalnızca durum anlatır
 const C={bg:"#F4F6F8",card:"#FFFFFF",border:"#E4E7EC",accent:"#0B6E99",accentL:"#3A8DB5",accentD:"#E6F2F7",text:"#0B1220",dim:"#475467",muted:"#667085",green:"#067647",greenD:"#E7F6EE",orange:"#B54708",orangeD:"#FEF3E2",red:"#C0262D",redD:"#FDECEC",blue:"#175CD3",blueD:"#EAF1FD",purple:"#6941C6",purpleD:"#F1ECFB",teal:"#0E7490",tealD:"#E3F4F7"};
+// v5.43: iş zorluğu — 5 seviye (sunucu job_puan: 1/3/6/12/24; Proje'ye şef 24-200 özel puan verebilir)
+const ZR={
+  1:{ad:"Basit",p:1,sure:"~10 dk",c:"#475467",bg:"#F2F4F7",ornek:"koltuk/masa vidası, ampul, kumanda ayarı"},
+  2:{ad:"Kolay",p:3,sure:"~30 dk",c:C.blue,bg:C.blueD,ornek:"musluk contası, priz/anahtar, kilit, basit tıkanıklık"},
+  3:{ad:"Orta",p:6,sure:"~1 sa",c:C.teal,bg:C.tealD,ornek:"batarya/sifon değişimi, drenaj hattı, klima arızası"},
+  4:{ad:"Zor",p:12,sure:"~3 sa",c:C.orange,bg:C.orangeD,ornek:"VRF drenaj pompası, pompa/kombi arızası, boru patlağı"},
+  5:{ad:"Proje",p:24,sure:"1 gün+",c:C.red,bg:C.redD,ornek:"yeni sıhhi tesisat/elektrik hattı, WC komple yenileme"}};
+const jPuan=j=>{const r=j&&ZR[j.zorluk];if(!r)return 0;return j.zorluk===5&&j.puan_ozel?Number(j.puan_ozel):r.p;};
+const gunAy=x=>{try{return new Date(String(x).slice(0,10)+"T12:00:00").toLocaleDateString("tr-TR",{day:"numeric",month:"short"});}catch(e){return String(x||"");}};
+const nf1=x=>x==null||x===""||isNaN(Number(x))?"—":Number(x).toLocaleString("tr-TR",{maximumFractionDigits:1});
 // Birim yazımı: büyük rakamın yanında küçük "sa" / "gün"
 const UN={fontSize:"0.75em",fontWeight:600,marginLeft:2};
 // Tek tip çizgi ikon seti (24x24, stroke). Emoji yerine.
@@ -222,7 +234,7 @@ function CustomDatePicker({value,onChange,onClose}){
   const adjDay=Math.min(dy,maxD);
   function confirm(){onChange(`${yr}-${String(mo).padStart(2,"0")}-${String(adjDay).padStart(2,"0")}`);onClose();}
   return(
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(16,24,40,0.45)",zIndex:300,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={onClose}>
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(16,24,40,0.45)",zIndex:300,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={onClose} data-geri="1">
       <div style={{background:C.card,borderRadius:"20px 20px 0 0",padding:"16px 16px calc(20px + env(safe-area-inset-bottom,0px))",width:"100%",maxWidth:480}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
           <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,fontSize:15,cursor:"pointer",padding:8}}>İptal</button>
@@ -246,7 +258,7 @@ function CustomTimePicker({value,onChange,onClose,label}){
   const nearMn=minutes.reduce((prev,curr)=>Math.abs(curr-mn)<Math.abs(prev-mn)?curr:prev,0);
   function confirm(){onChange(`${String(hr).padStart(2,"0")}:${String(nearMn).padStart(2,"0")}`);onClose();}
   return(
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(16,24,40,0.45)",zIndex:300,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={onClose}>
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(16,24,40,0.45)",zIndex:300,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={onClose} data-geri="1">
       <div style={{background:C.card,borderRadius:"20px 20px 0 0",padding:"16px 16px calc(20px + env(safe-area-inset-bottom,0px))",width:"100%",maxWidth:480}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
           <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,fontSize:15,cursor:"pointer",padding:8}}>İptal</button>
@@ -266,7 +278,7 @@ function PWAInstallGuide({onClose}){
   const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
   const isAndroid=/Android/.test(navigator.userAgent);
   return(
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(16,24,40,0.45)",zIndex:300,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={onClose}>
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(16,24,40,0.45)",zIndex:300,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={onClose} data-geri="1">
       <div style={{background:C.card,borderRadius:"20px 20px 0 0",padding:"20px 16px calc(28px + env(safe-area-inset-bottom,0px))",width:"100%",maxWidth:480}} onClick={e=>e.stopPropagation()}>
         <div style={{width:40,height:4,borderRadius:2,background:C.border,margin:"0 auto 16px"}}/>
         <div style={{textAlign:"center",marginBottom:16}}><div style={{width:52,height:52,borderRadius:16,background:C.accentD,color:C.accent,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 10px"}}><Ico n="phone" s={26}/></div><div style={{fontSize:18,fontWeight:700}}>Ana ekrana ekle</div><div style={{fontSize:13,color:C.dim,marginTop:4}}>Uygulama gibi kullanın</div></div>
@@ -325,7 +337,7 @@ function PublicPage({r}){
     inp:{width:"100%",padding:"12px 14px",borderRadius:12,border:"1px solid #D0D5DD",background:C.card,color:C.text,fontSize:16,outline:"none",boxSizing:"border-box",marginBottom:10,WebkitAppearance:"none",fontFamily:"inherit"},
     lbl:{fontSize:13,color:"#344054",marginBottom:6,display:"block",fontWeight:600},
     btn:(bg,cl)=>({display:"block",boxSizing:"border-box",textAlign:"center",textDecoration:"none",minHeight:48,padding:"13px 20px",border:"none",borderRadius:14,background:bg,color:cl||"#fff",fontSize:15,fontWeight:700,cursor:"pointer",width:"100%",marginTop:8,WebkitAppearance:"none",fontFamily:"inherit"})};
-  return(<div style={{fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Inter,Helvetica,Arial,sans-serif",background:C.bg,color:C.text,minHeight:"100vh",maxWidth:480,margin:"0 auto",padding:"20px 16px calc(32px + env(safe-area-inset-bottom,0px))",boxSizing:"border-box"}}>
+  return(<div style={{fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Inter,Helvetica,Arial,sans-serif",background:C.bg,color:C.text,minHeight:"100"+VH,maxWidth:480,margin:"0 auto",padding:"20px 16px calc(32px + env(safe-area-inset-bottom,0px))",boxSizing:"border-box"}}>
     {r.tip==="talep"?<TalepForm bina={r.id} s={s}/>:<TakipView token={r.id} s={s}/>}
   </div>);
 }
@@ -570,7 +582,13 @@ function AppInner(){
   const[pjForm,setPjForm]=useState(PJ_BOS);
   const[modDone,setModDone]=useState(null);   // v5.39: işi kapatma (not + fotoğraf)
   const[modPaste,setModPaste]=useState(null); // v5.39: WhatsApp'tan yapıştır {txt, items}
-  const[rapor,setRapor]=useState({acik:false,gun:7,veri:null,yuk:false}); // v5.39: performans
+  const[rapor,setRapor]=useState({acik:false,donem:"bu",veri:null,verim:null,yuk:false,bas:null,bit:null}); // v5.43: performans + verim
+  const[vSec,setVSec]=useState(null);           // v5.43: verim listesinde açılan kişi
+  const[modZorluk,setModZorluk]=useState(null); // v5.43: zorluk seçimi {j,z,tip,puan}
+  const[zorOnay,setZorOnay]=useState(false);    // v5.43: şef zorluk onay listesi
+  const[zorIsl,setZorIsl]=useState({});         // v5.43: hızlı onayda işlenen işler
+  const[jobTypes,setJobTypes]=useState([]);     // v5.43: iş tipi kataloğu (job_types)
+  const[benVerim,setBenVerim]=useState(null);   // v5.43: personelin kendi haftası {v,ts}
   const[otoDk,setOtoDk]=useState({acil:10,normal:60}); // v5.39: otomatik devir süreleri (app_meta)
   const[talepLink,setTalepLink]=useState(false);
   const[asgSel,setAsgSel]=useState([]);      // v5.38: Ata ekranında seçilenler (ilk = sorumlu)
@@ -1369,13 +1387,49 @@ function AppInner(){
     if(n>0)setModPaste(null);
     setToast(n>0?`🤖 ${n} iş açıldı${adlar.length?" → "+[...new Set(adlar)].join(", "):""}${n<items.length?` · ${items.length-n} tanesi açılamadı: ${hata}`:""}`:"Hata: "+hata);
   }
-  async function fetchRapor(gun){
+  // v5.43: dönem (yerel gün): Bu hafta = Pzt→bugün, Geçen hafta = Pzt→Paz, Son 30 gün
+  function donemAralik(d){const t=new Date();t.setHours(12,0,0,0);const pzt=new Date(t);pzt.setDate(t.getDate()-((t.getDay()+6)%7));
+    if(d==="gecen"){const b=new Date(pzt);b.setDate(pzt.getDate()-7);const e=new Date(pzt);e.setDate(pzt.getDate()-1);return[ymdOf(b),ymdOf(e)];}
+    if(d==="30"){const b=new Date(t);b.setDate(t.getDate()-29);return[ymdOf(b),ymdOf(t)];}
+    return[ymdOf(pzt),ymdOf(t)];}
+  async function fetchRapor(donem){
     const bid=selBuilding||profile?.building_id;if(!bid)return;
+    const[bas,bit]=donemAralik(donem);
     setRapor(r=>({...r,yuk:true}));
-    try{const{data,error}=await supabase.rpc("job_rapor",{p_bina:bid,p_gun:gun});if(error)throw error;
-      if(!data?.ok){setToast("⚠ "+(data?.hata||"Rapor alınamadı"));setRapor(r=>({...r,yuk:false}));return;}
-      setRapor(r=>({...r,veri:data,yuk:false}));
+    try{
+      const[a,b]=await Promise.all([supabase.rpc("job_rapor",{p_bina:bid,p_bas:bas,p_bit:bit}),
+        canJobAct?supabase.rpc("personel_verim",{p_bina:bid,p_bas:bas,p_bit:bit}):Promise.resolve({data:null})]);
+      if(a.error)throw a.error;
+      if(!a.data?.ok)setToast("⚠ "+(a.data?.hata||"Rapor alınamadı"));
+      setRapor(r=>({...r,veri:a.data?.ok?a.data:null,verim:b&&b.data&&b.data.ok?b.data:null,yuk:false,bas,bit}));
     }catch(e){setToast("Hata: "+(e?.message||""));setRapor(r=>({...r,yuk:false}));}
+  }
+  // v5.43: iş zorluğu — şef/yönetici değiştirir (job_zorluk_ata), herkes görür
+  async function openZor(j){
+    setModZorluk({j,z:j.zorluk||2,tip:j.is_tipi||null,puan:j.zorluk===5&&j.puan_ozel?String(j.puan_ozel):""});
+    if(jobTypes.length===0){try{const{data}=await supabase.from("job_types").select("kod,ad,zorluk,std_dk").eq("aktif",true).order("zorluk").order("ad");if(Array.isArray(data))setJobTypes(data);}catch(e){}}
+  }
+  function zorYerel(id,z,tip,puan){setPendingJobs(L=>L.map(x=>x.id===id?{...x,zorluk:z,is_tipi:tip,puan_ozel:z===5?puan:null,zorluk_kaynak:"sef"}:x));}
+  async function zorlukKaydet(){
+    const m=modZorluk;if(!m)return;
+    let pz=null;if(m.z===5&&String(m.puan||"").trim()!==""){pz=Number(String(m.puan).replace(",","."));if(!(pz>=24&&pz<=200)){setToast("Proje puanı 24-200 arası olmalı");return;}}
+    setSubmitting(true);
+    try{const{data,error}=await supabase.rpc("job_zorluk_ata",{p_job:m.j.id,p_zorluk:m.z,p_tip:m.tip||null,p_puan:pz});
+      if(error)throw error;if(!data?.ok)throw new Error(data?.hata||"Kaydedilemedi");
+      zorYerel(m.j.id,m.z,m.tip||(m.z===m.j.zorluk?m.j.is_tipi:null),pz);
+      setModZorluk(null);setToast(`⚙️ ${ZR[m.z].ad} · ${data.puan??jPuan({zorluk:m.z,puan_ozel:pz})} puan — kaydedildi`);
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+  async function zorlukHizli(j,z){
+    if(zorIsl[j.id])return;
+    const pz=z===5&&j.zorluk===5&&j.puan_ozel?Number(j.puan_ozel):null;
+    setZorIsl(x=>({...x,[j.id]:true}));
+    try{const{data,error}=await supabase.rpc("job_zorluk_ata",{p_job:j.id,p_zorluk:z,p_tip:null,p_puan:pz});
+      if(error)throw error;if(!data?.ok)throw new Error(data?.hata||"Kaydedilemedi");
+      zorYerel(j.id,z,z===j.zorluk?(j.is_tipi||null):null,pz);
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setZorIsl(x=>{const n={...x};delete n[j.id];return n;});
   }
   // Atama / yeniden atama (şef/yönetici). İlk seçilen sorumlu, diğerleri ekip. Seçilmeyen üstlenen düşer.
   async function saveAssign(j,sel){
@@ -1673,7 +1727,7 @@ function AppInner(){
   async function doReactivateU(uid){try{await supabase.from('profiles').update({active:true}).eq('id',uid);await fetchProfiles();setToast("Aktif");}catch(e){setToast("Hata: "+e?.message);}}
 
   const S={
-    app:{fontFamily:"-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',Roboto,Inter,Helvetica,Arial,sans-serif",background:C.bg,color:C.text,minHeight:"100vh",maxWidth:480,margin:"0 auto",position:"relative",paddingTop:topInset,paddingBottom:"calc(84px + env(safe-area-inset-bottom,0px))",boxSizing:"border-box",WebkitTapHighlightColor:"transparent",WebkitTextSizeAdjust:"100%",WebkitFontSmoothing:"antialiased"},
+    app:{fontFamily:"-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',Roboto,Inter,Helvetica,Arial,sans-serif",background:C.bg,color:C.text,minHeight:"100"+VH,maxWidth:480,margin:"0 auto",position:"relative",paddingTop:topInset,paddingBottom:"calc(84px + env(safe-area-inset-bottom,0px))",boxSizing:"border-box",WebkitTapHighlightColor:"transparent",WebkitTextSizeAdjust:"100%",WebkitFontSmoothing:"antialiased"},
     hdr:{background:C.card,padding:"12px 16px",borderBottom:`1px solid ${C.border}`},
     // translateZ(0)+willChange: iOS Safari atalet kaydirmasinda fixed elementi her karede yeniden
     // konumlandirmiyor; kendi GPU katmanina alinca alt menu kaydirma boyunca yerinde kaliyor.
@@ -1689,7 +1743,7 @@ function AppInner(){
     ta:{width:"100%",padding:"12px 14px",borderRadius:12,border:"1px solid #D0D5DD",background:C.card,color:C.text,fontSize:16,outline:"none",minHeight:80,resize:"vertical",boxSizing:"border-box",marginBottom:10,fontFamily:"inherit",WebkitAppearance:"none"},
     lbl:{fontSize:13,color:"#344054",marginBottom:6,display:"block",fontWeight:600},
     mod:{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(16,24,40,0.45)",zIndex:200,display:"flex",alignItems:"flex-end",justifyContent:"center"},
-    modC:{background:C.card,borderRadius:"20px 20px 0 0",padding:"20px 16px calc(32px + env(safe-area-inset-bottom,0px))",width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch"},
+    modC:{background:C.card,borderRadius:"20px 20px 0 0",padding:"20px 16px calc(32px + env(safe-area-inset-bottom,0px))",width:"100%",maxWidth:480,maxHeight:"85"+VH,overflowY:"auto",WebkitOverflowScrolling:"touch",overscrollBehavior:"contain"},
     modH:{width:40,height:4,borderRadius:2,background:C.border,margin:"0 auto 16px"},
     tag:(bg,clr)=>({display:"inline-flex",alignItems:"center",gap:4,fontSize:11,padding:"3px 8px",borderRadius:999,background:bg,color:clr,fontWeight:700,letterSpacing:"0.02em"}),
     dv:{height:1,background:C.border,margin:"12px 0"},
@@ -1841,6 +1895,15 @@ function AppInner(){
   // ═══ Bakim Takip turetilmis veriler ═══
   const isJobMgr=!!profile?.job_manager;
   const canJobAct=isAdmin||isChef||isJobMgr;
+  // v5.43: zorluk: şef/yönetici (kendi binası) değiştirir; onay bekleyen = son 14 gün, şef onaylamamış
+  const canZor=j=>isAdmin||((isChef||isJobMgr)&&(!profile?.building_id||j?.building_id===profile.building_id));
+  const zorBek=useMemo(()=>{if(!canJobAct)return[];const bid=selBuilding||profile?.building_id;const sinir=Date.now()-14*864e5;const dp=profile?.department||"mekanik";
+    return pendingJobs.filter(j=>!j.deleted_at&&j.status!=="not_done"&&j.zorluk_kaynak!=="sef"&&(!bid||j.building_id===bid)&&(canSeeBothDepts||(j.department||"mekanik")===dp)&&new Date(j.completed_at||j.created_at).getTime()>=sinir)
+      .sort((a,b)=>((a.status==="done"?0:1)-(b.status==="done"?0:1))||(new Date(b.completed_at||b.created_at)-new Date(a.completed_at||a.created_at)));
+  },[canJobAct,selBuilding,profile,pendingJobs,canSeeBothDepts]);
+  const zChip=(j)=>{const r=ZR[j?.zorluk];if(!r)return null;const ed=canZor(j);
+    return(<span role={ed?"button":undefined} aria-label={ed?"Zorluğu değiştir":undefined} onClick={ed?(e)=>{e.stopPropagation();openZor(j);}:undefined}
+      style={{...S.tag(r.bg,r.c),cursor:ed?"pointer":"default",padding:ed?"5px 10px":"3px 8px"}}>⚙️ {r.ad} · {jPuan(j)}p{ed&&j.zorluk_kaynak!=="sef"?" ?":""}</span>);};
   useEffect(()=>{if(session&&canJobAct)fetchPushIds();},[session,canJobAct,fetchPushIds]);
   // v5.40: Telegram
   const fetchTg=useCallback(async()=>{try{const{data,error}=await supabase.rpc('tg_durum',{p_bina:selBuilding||null});if(!error&&data&&data.ok)setTgDurum(data);}catch(e){}},[selBuilding]);
@@ -2001,6 +2064,38 @@ function AppInner(){
     try{const lastSeen=localStorage.getItem("notif_seen")||"";return notifications.filter(n=>n.time>lastSeen).length;}catch(e){return notifications.length;}
   },[notifications]);
 
+  // v5.43: Android geri tuşu / iPhone kenardan kaydırma: önce en üstteki pencereyi kapatır, sonra ana sayfaya döner.
+  // Açık pencere = [data-geri] işaretli arka plan (tıklanınca pencere kapanır). Ana sayfada geri = uygulamadan çıkış.
+  const[geriTik,setGeriTik]=useState(0);
+  const geriYut=useRef(0);
+  const anaSayfa=isAmir?"faults":"dashboard";
+  useEffect(()=>{
+    try{const ac=!!document.querySelector("[data-geri]")||(!!session&&!!profile&&page!==anaSayfa);
+      const bizde=!!(window.history.state&&window.history.state.ibbGeri);
+      if(ac&&!bizde)window.history.pushState({ibbGeri:1},"");
+      else if(!ac&&bizde){geriYut.current++;window.history.back();}
+    }catch(e){}
+  });
+  useEffect(()=>{
+    const h=()=>{
+      if(geriYut.current>0){geriYut.current--;setGeriTik(t=>t+1);return;}
+      try{const els=[...document.querySelectorAll("[data-geri]")];
+        if(els.length){let ust=els[0],uz=-1;els.forEach(el=>{const z=Number(window.getComputedStyle(el).zIndex)||0;if(z>=uz){uz=z;ust=el;}});ust.click();}
+        else if(page!==anaSayfa)setPage(anaSayfa);
+      }catch(e){}
+      setGeriTik(t=>t+1);
+    };
+    window.addEventListener("popstate",h);return()=>window.removeEventListener("popstate",h);
+  },[page,anaSayfa]);
+  // v5.43: personelin kendi haftası (ana sayfa kartı) — 5 dk önbellek
+  useEffect(()=>{
+    if(!session||!(isPerso||isViewer)||page!=="dashboard")return;
+    if(benVerim&&Date.now()-benVerim.ts<5*60000)return;
+    let canli=true;const[bas,bit]=donemAralik("bu");
+    (async()=>{try{const{data}=await supabase.rpc("personel_verim",{p_bas:bas,p_bit:bit});if(canli&&data?.ok)setBenVerim({v:data,ts:Date.now()});}catch(e){}})();
+    return()=>{canli=false;};
+  },[session,isPerso,isViewer,page]);
+
   // Diagnostic: log state types so ErrorBoundary can display them
   useEffect(()=>{
     try{
@@ -2016,11 +2111,11 @@ function AppInner(){
     }catch(e){window.__DIAG="diag error: "+String(e);}
   });
 
-  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}>{band}<div style={{textAlign:"center"}}><div style={{width:56,height:56,borderRadius:16,background:C.accent,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><Ico n="wrench" s={28} w={2}/></div><div style={{color:C.dim,fontSize:14}}>Yükleniyor…</div><div style={{fontSize:12,color:C.muted,marginTop:20}}>Sürüm {APP_VERSION}</div></div></div>);
-  if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}>{band}<div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
+  if(loading)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100"+VH}}>{band}<div style={{textAlign:"center"}}><div style={{width:56,height:56,borderRadius:16,background:C.accent,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><Ico n="wrench" s={28} w={2}/></div><div style={{color:C.dim,fontSize:14}}>Yükleniyor…</div><div style={{fontSize:12,color:C.muted,marginTop:20}}>Sürüm {APP_VERSION}</div></div></div>);
+  if(loadError&&!session)return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100"+VH}}>{band}<div style={{textAlign:"center",padding:24}}><div style={{fontSize:40,marginBottom:16}}>⚠️</div><div style={{color:C.dim,marginBottom:16}}>{loadError}</div><button style={S.btn(C.accent)} onClick={()=>window.location.reload()}>Yenile</button></div></div>);
 
   if(!session)return(
-    <div style={S.app}>{band}<div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",padding:24}}>
+    <div style={S.app}>{band}<div style={{minHeight:"100"+VH,display:"flex",flexDirection:"column",justifyContent:"center",padding:24}}>
       <div style={{textAlign:"center",marginBottom:32}}>
         <div style={{width:64,height:64,borderRadius:18,background:C.accent,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><Ico n="wrench" s={30} w={2}/></div>
         <div style={{fontSize:26,fontWeight:700,letterSpacing:"-0.02em"}}>İBB Teknik Takip</div>
@@ -2048,7 +2143,7 @@ function AppInner(){
       window.__autoRetried=true;
       setTimeout(()=>{if(session?.user?.id)loadData(session.user.id);},2500);
     }
-    return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}>{band}<div style={{textAlign:"center",padding:24}}>
+    return(<div style={{...S.app,display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100"+VH}}>{band}<div style={{textAlign:"center",padding:24}}>
     <div style={{fontSize:40,marginBottom:16}}>⏳</div>
     <div style={{color:C.dim,marginBottom:8}}>Profil yükleniyor... Tekrar deneniyor.</div>
     <button style={S.btn(C.accent)} onClick={()=>{window.__autoRetried=false;if(session?.user?.id)loadData(session.user.id);else window.location.reload();}}>Tekrar Dene</button>
@@ -2196,7 +2291,7 @@ function AppInner(){
       return(<div key={j.id} style={{...S.crd,cursor:"default",border:over?`2px solid ${C.red}`:`1px solid ${C.border}`,borderLeft:`4px solid ${pr[2]}`}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"start",gap:8}}>
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:14,fontWeight:700}}>{j.title}</div>
+            <div style={{fontSize:14,fontWeight:700}}>{j.is_no?<span style={{color:C.muted,fontWeight:600,marginRight:6}}>#{j.is_no}</span>:null}{j.title}</div>
             {j.location&&<div style={{fontSize:11,color:C.text,marginTop:2}}>📍 {j.location}</div>}
             {j.description&&<div style={{fontSize:12,color:C.dim,marginTop:2,whiteSpace:"pre-wrap"}}>{j.description}</div>}
             {(j.request_photo||(Array.isArray(j.extra_photos)&&j.extra_photos.length>0))&&<div style={{fontSize:11,marginTop:4,display:"flex",gap:10,flexWrap:"wrap"}}>
@@ -2208,6 +2303,7 @@ function AppInner(){
           </div>
           <div style={{textAlign:"right",flexShrink:0}}>
             <div style={S.tag(pr[2]+"22",pr[2])}>{pr[0]} {pr[1]}</div>
+            {j.zorluk&&<div style={{marginTop:5}}>{zChip(j)}</div>}
             {due!==null&&<div style={{fontSize:11,fontWeight:700,color:over?C.red:(due-now<3600000?C.orange:C.dim),marginTop:4}}>{over?"⏰ ":"⏳ "}{kalanTxt(j.due_at,now)}</div>}
             {due!==null&&<div style={{fontSize:9,color:C.muted}}>son: {fDue(j.due_at)}</div>}
           </div>
@@ -2295,9 +2391,10 @@ function AppInner(){
           const td={padding:"5px 3px",whiteSpace:"nowrap"};
           return(<div style={{...S.crd,cursor:"default"}}>
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              <button style={{...S.btnS(rapor.acik?C.accent:C.bg,rapor.acik?"#fff":C.text),flex:"1 1 130px"}} onClick={()=>{const ac=!rapor.acik;setRapor(r=>({...r,acik:ac}));if(ac)fetchRapor(rapor.gun);}}>📊 İş performansı</button>
+              <button style={{...S.btnS(rapor.acik?C.accent:C.bg,rapor.acik?"#fff":C.text),flex:"1 1 130px"}} onClick={()=>{const ac=!rapor.acik;setRapor(r=>({...r,acik:ac}));if(ac)fetchRapor(rapor.donem);}}>📊 Performans</button>
               {canJobAct&&<button style={{...S.btnS(talepLink?C.accent:C.bg,talepLink?"#fff":C.text),flex:"1 1 130px"}} onClick={()=>setTalepLink(!talepLink)}>🧾 Talep formu linki</button>}
               {canJobAct&&<button style={{...S.btnS(tgPanel?"#229ED9":C.bg,tgPanel?"#fff":C.text),flex:"1 1 130px"}} onClick={()=>{setTgPanel(!tgPanel);if(!tgPanel)fetchTg();}}>📲 Telegram</button>}
+              {canJobAct&&zorBek.length>0&&<button style={{...S.btnS(C.orangeD,C.orange),flex:"1 1 130px"}} onClick={()=>setZorOnay(true)}>⚙️ Zorluk onayı ({zorBek.length})</button>}
             </div>
             {tgPanel&&canJobAct&&(()=>{
               const bagli=new Set(Array.isArray(tgDurum?.bagli_ids)?tgDurum.bagli_ids:[]);
@@ -2317,7 +2414,7 @@ function AppInner(){
               if(!tgDurum?.bot)return(<div style={{marginTop:10,fontSize:12,color:C.orange}}>Telegram botu henüz kurulmadı (yönetici kurulumu bekleniyor).</div>);
               return(<div style={{marginTop:10}}>
                 <div style={{fontSize:12,fontWeight:700}}>Ekip grubu {gruplar.length>0?`✅ ${gruplar.join(", ")}`:"— bağlı değil"}</div>
-                <div style={{fontSize:11,color:C.muted,marginTop:2}}>Gruba yazılan her arıza iş olur ve vardiyada en az işi olana atanır. "Bakıyorum" = üstlendi, "Başladım" = sahada, 📷 fotoğraf + "yapıldı" = kapandı. Atanan kişi, süreler ve fotoğraflar hem grupta hem burada görünür; 17:05'te günün özeti gelir.</div>
+                <div style={{fontSize:11,color:C.muted,marginTop:2}}>Gruba yazılan her arıza #numaralı iş olur ve vardiyada en az işi olana atanır. 👷 Ben alıyorum (ya da "Bakıyorum") = üstlendi, 📍 Sahadayım = vardı, ✅ Bitti + 📷 fotoğraf = kapandı; kapanınca işi yazan kişiye haber gider. Atanan kişi, süreler ve fotoğraflar hem grupta hem burada görünür; 17:05'te günün özeti gelir.</div>
                 <button style={{...S.btnS("#229ED9","#fff"),width:"100%",marginTop:8}} disabled={submitting} onClick={linkTgGroup}>👥 {gruplar.length>0?"Başka grup bağla":"Ekip grubunu bağla"}</button>
                 {gruplar.length===0&&<div style={{fontSize:10,color:C.muted,marginTop:4}}>Telegram açılınca grubu seç, botun yönetici olarak eklenmesini onayla. Yönetici olmazsa yazılanları okuyamaz.</div>}
                 {gruplar.length>0&&<div style={{marginTop:12}}>
@@ -2346,9 +2443,12 @@ function AppInner(){
               <button style={{...S.btnS(C.green,"#fff"),width:"100%",marginTop:6}} onClick={()=>{try{navigator.clipboard.writeText(link).then(()=>setToast("🔗 Link kopyalandı"),()=>setToast("Linke basılı tutup kopyala"));}catch(e){setToast("Linke basılı tutup kopyala");}}}>🔗 Linki kopyala</button>
             </div>}
             {rapor.acik&&<div style={{marginTop:10}}>
-              <div style={{display:"flex",gap:6,marginBottom:8}}>{[7,30].map(g=>(<button key={g} style={{...S.btnS(rapor.gun===g?C.accentD:C.bg,rapor.gun===g?C.accent:C.muted),flex:1}} onClick={()=>{setRapor(r=>({...r,gun:g}));fetchRapor(g);}}>Son {g} gün</button>))}</div>
+              <div style={{display:"flex",gap:6,marginBottom:4}}>{[["bu","Bu hafta"],["gecen","Geçen hafta"],["30","Son 30 gün"]].map(([k,ad])=>(<button key={k} style={{...S.btnS(rapor.donem===k?C.accentD:C.bg,rapor.donem===k?C.accent:C.muted),flex:1,padding:"8px 4px"}} onClick={()=>{setRapor(r=>({...r,donem:k}));setVSec(null);fetchRapor(k);}}>{ad}</button>))}</div>
+              {rapor.bas&&<div style={{fontSize:10,color:C.muted,textAlign:"center",marginBottom:8}}>{gunAy(rapor.bas)} – {gunAy(rapor.bit)}</div>}
               {rapor.yuk&&<div style={{fontSize:12,color:C.muted,marginBottom:6}}>Yükleniyor…</div>}
+              {rapor.verim&&renderVerim(rapor.verim)}
               {T&&<>
+                <div style={{fontSize:13,fontWeight:800,margin:"4px 0 6px"}}>⏱ İş akışı <span style={{fontSize:11,fontWeight:500,color:C.muted}}>· bu dönemde açılan işler</span></div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6,marginBottom:8}}>
                   {[["İş",T.is],["Biten",T.biten],["Açık",T.acik],["Ort. üstlenme",sure(T.ust_dk)],["Ort. varış",sure(T.var_dk)],["Ort. kapanış",sure(T.bit_dk)]].map(([k,v])=>(
                     <div key={k} style={{background:C.bg,borderRadius:10,padding:"8px 4px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:800}}>{v??"—"}</div><div style={{fontSize:10,color:C.muted}}>{k}</div></div>))}
@@ -2446,7 +2546,7 @@ function AppInner(){
             <div style={{...S.sec,fontSize:13,marginTop:14,marginBottom:8,color:C.red}}><span>✗</span> Bu Gece Yapılamayanlar ({pjNotDoneToday.length})</div>
             <div style={{fontSize:11,color:C.dim,marginBottom:8}}>Yarın sabah otomatik olarak gündüz listesine aktarılacak.</div>
             {pjNotDoneToday.map(j=>(<div key={j.id} style={{...S.crd,cursor:"default",opacity:0.75,borderLeft:`3px solid ${C.red}`}}>
-              <div style={{fontSize:13,fontWeight:600}}>{j.title}</div>
+              <div style={{fontSize:13,fontWeight:600}}>{j.is_no?<span style={{color:C.muted,fontWeight:600,marginRight:6}}>#{j.is_no}</span>:null}{j.title}</div>
               <div style={{fontSize:11,color:C.red,marginTop:4}}>✗ {j.not_done_reason||"—"}</div>
             </div>))}
           </>}
@@ -2454,9 +2554,10 @@ function AppInner(){
         {doneJobs.length>0&&<div style={{marginTop:8}}>
           <button style={{...S.btnS(C.bg,C.dim),width:"100%"}} onClick={()=>setPjShowDone(!pjShowDone)}>{pjShowDone?"▲ Tamamlananları gizle":`▼ Tamamlananlar (${doneJobs.length})`}</button>
           {pjShowDone&&doneJobs.map(j=>{const cp=getU(j.completed_by);return(<div key={j.id} style={{...S.crd,opacity:.75,marginTop:8,cursor:"default"}}>
-            <div style={{fontSize:13,fontWeight:600,textDecoration:"line-through",color:C.dim}}>{j.title}</div>
+            <div style={{fontSize:13,fontWeight:600,textDecoration:"line-through",color:C.dim}}>{j.is_no?<span style={{color:C.muted,fontWeight:600,marginRight:6}}>#{j.is_no}</span>:null}{j.title}</div>
             <div style={{fontSize:10,color:C.green,marginTop:4}}>✅ {cp?.full_name||"—"} • {j.completed_at?new Date(j.completed_at).toLocaleString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):""}{j.completed_note?` — ${j.completed_note}`:""}{j.done_photo?<> · <a href={j.done_photo} target="_blank" rel="noreferrer" style={{color:C.accent}}>📷 Fotoğraf</a></>:null}{j.request_photo?<> · <a href={j.request_photo} target="_blank" rel="noreferrer" style={{color:C.accent}}>🙋 Talep fotoğrafı</a></>:null}{(Array.isArray(j.extra_photos)?j.extra_photos:[]).map((u,i)=><span key={i}> · <a href={u} target="_blank" rel="noreferrer" style={{color:C.accent}}>📷 Ek {i+1}</a></span>)}</div>
             {j.requester&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>🙋 {j.requester}{j.requester_unit?` · ${j.requester_unit}`:""}</div>}
+            {j.zorluk&&<div style={{marginTop:5}}>{zChip(j)}</div>}
           </div>);})}
         </div>}
       </div>)}
@@ -2626,7 +2727,7 @@ function AppInner(){
     const services=faultServices.filter(s=>s.fault_id===f.id).sort((a,b)=>(b.visit_date||"").localeCompare(a.visit_date||""));
     const creator=profiles.find(p=>p.id===f.created_by);
 
-    return(<div style={S.mod} onClick={()=>{setSelFault(null);setModAddService(false);setModEditFault(null);setDeleteConfirm(null);}}><div style={{...S.modC,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+    return(<div data-geri="1" style={S.mod} onClick={()=>{setSelFault(null);setModAddService(false);setModEditFault(null);setDeleteConfirm(null);}}><div style={{...S.modC,maxHeight:"90"+VH,overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/>
       <div style={{fontSize:17,fontWeight:700,marginBottom:4}}>{f.title}</div>
       <div style={{fontSize:13,color:C.dim,marginBottom:4}}>📍 {f.location}</div>
@@ -2734,7 +2835,7 @@ function AppInner(){
 
   const renderNewFault=()=>{
     if(!modNewFault)return null;
-    return(<div style={S.mod} onClick={()=>setModNewFault(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+    return(<div data-geri="1" style={S.mod} onClick={()=>setModNewFault(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:4}}>{faultForm.editId?"✏️ Arıza Düzenle":"Yeni Arıza Kaydı"}</div><div style={{fontSize:12,color:C.dim,marginBottom:16}}>{faultForm.editId?"Arıza bilgilerini güncelleyin":"Arızalı envanter bilgilerini girin"}</div>
       <div style={S.lbl}>Arıza Başlığı</div>
       <input style={S.inp} placeholder="Örn: Bayan WC kabin camı kırık" value={faultForm.title} onChange={e=>setFaultForm(p=>({...p,title:e.target.value}))}/>
@@ -3084,7 +3185,7 @@ function AppInner(){
     if(!selMaterial)return null;const m=selMaterial;
     const mvs=stockMovements.filter(mv=>mv.material_id===m.id).slice(0,20);
     const isLow=m.current_stock<=m.min_stock&&m.min_stock>0;
-    return(<div style={S.mod} onClick={()=>setSelMaterial(null)}><div style={{...S.modC,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+    return(<div data-geri="1" style={S.mod} onClick={()=>setSelMaterial(null)}><div style={{...S.modC,maxHeight:"90"+VH,overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/>
       <div style={{fontSize:17,fontWeight:700,marginBottom:4}}>{m.name}</div>
       <div style={{fontSize:12,color:C.dim,marginBottom:12}}>{m.category} • {m.unit}</div>
@@ -3127,7 +3228,7 @@ function AppInner(){
       <span style={{flex:1}}><span style={{display:"block",fontSize:13,fontWeight:700}}>{t}</span>
         <span style={{display:"block",fontSize:10,color:C.dim,marginTop:1}}>{d}</span></span>
     </button>);
-    return(<div style={S.mod} onClick={kapat}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+    return(<div data-geri="1" style={S.mod} onClick={kapat}><div style={S.modC} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/>
       <div style={{fontSize:17,fontWeight:700,marginBottom:2}}>❌ {u.full_name} — bugün yok</div>
       <div style={{fontSize:12,color:C.dim,marginBottom:12}}>{L?`Çizelgeye göre: ${L[0]}${L[1]?" ("+L[1]+")":""}`:"Çizelgede bugün için kayıt yok"}</div>
@@ -3163,7 +3264,7 @@ function AppInner(){
     if(!shSub)return null;const row=shSub;const u=getU(row.personnel_id);const L=SH_LBL[row.shift_type];
     const adaylar=shCandidates(row);
     const uygun=adaylar.filter(a=>!a.blok).length;
-    return(<div style={S.mod} onClick={()=>setShSub(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+    return(<div data-geri="1" style={S.mod} onClick={()=>setShSub(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/>
       <div style={{fontSize:17,fontWeight:700,marginBottom:4}}>🔄 Yerine Ata</div>
       <div style={{fontSize:13,color:C.dim,marginBottom:12}}>
@@ -3173,7 +3274,7 @@ function AppInner(){
       <div style={S.lbl}>Not (isteğe bağlı)</div>
       <input style={S.inp} placeholder="Örn. raporlu, izinli, görevlendirme" value={shSubNote} onChange={e=>setShSubNote(e.target.value)}/>
       <div style={{fontSize:11,color:C.dim,margin:"12px 0 6px"}}>{uygun} kişi uygun · toplam {adaylar.length} personel</div>
-      <div style={{maxHeight:"42vh",overflowY:"auto",margin:"0 -4px",padding:"0 4px"}}>
+      <div style={{maxHeight:"42"+VH,overflowY:"auto",margin:"0 -4px",padding:"0 4px"}}>
         {adaylar.map(a=>(
           <div key={a.p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,
             padding:"9px 10px",marginBottom:6,borderRadius:9,background:a.blok?"transparent":C.bg,
@@ -3198,7 +3299,7 @@ function AppInner(){
 
   const renderStockOutModal=()=>{
     if(!modStockOut)return null;const m=modStockOut;
-    return(<div style={S.mod} onClick={()=>setModStockOut(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+    return(<div data-geri="1" style={S.mod} onClick={()=>setModStockOut(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:4}}>📤 Malzeme Çıkışı</div>
       <div style={{fontSize:13,color:C.dim,marginBottom:12}}>{m.name} • Mevcut: <b style={{color:C.accent}}>{m.current_stock} {m.unit}</b></div>
       <div style={S.lbl}>Miktar ({m.unit})</div>
@@ -3215,7 +3316,7 @@ function AppInner(){
 
   const renderStockInModal=()=>{
     if(!modStockIn)return null;const m=modStockIn;
-    return(<div style={S.mod} onClick={()=>setModStockIn(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+    return(<div data-geri="1" style={S.mod} onClick={()=>setModStockIn(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:4}}>📥 Malzeme Girişi</div>
       <div style={{fontSize:13,color:C.dim,marginBottom:12}}>{m.name} • Mevcut: <b style={{color:C.accent}}>{m.current_stock} {m.unit}</b></div>
       <div style={S.lbl}>Miktar ({m.unit})</div>
@@ -3229,7 +3330,7 @@ function AppInner(){
 
   const renderNewMatModal=()=>{
     if(!modNewMat)return null;
-    return(<div style={S.mod} onClick={()=>setModNewMat(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+    return(<div data-geri="1" style={S.mod} onClick={()=>setModNewMat(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>+ Yeni Malzeme</div>
       <div style={S.lbl}>Malzeme Adı</div>
       <input style={S.inp} placeholder="Örn: 500 lt Genleşme Tankı" value={matForm.name} onChange={e=>setMatForm(p=>({...p,name:e.target.value}))}/>
@@ -3250,7 +3351,7 @@ function AppInner(){
 
   const renderBulkUploadModal=()=>{
     if(!modBulkUpload)return null;
-    return(<div style={S.mod} onClick={()=>setModBulkUpload(false)}><div style={{...S.modC,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+    return(<div data-geri="1" style={S.mod} onClick={()=>setModBulkUpload(false)}><div style={{...S.modC,maxHeight:"90"+VH,overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:4}}>📄 CSV Toplu Yükleme</div>
       <div style={{fontSize:12,color:C.dim,marginBottom:16}}>Excel dosyanızı CSV olarak kaydedin ve yükleyin</div>
       <div style={{...S.lawBox,marginBottom:12}}><div style={{fontSize:11,color:C.muted,fontWeight:600,marginBottom:4}}>CSV Format Örneği:</div><div style={{fontSize:11,color:C.text,fontFamily:"monospace",lineHeight:1.6}}>Malzeme Adı,Kategori,Birim,Stok,Minimum<br/>Genleşme Tankı 500lt,Tesisat,Adet,2,3<br/>Bakır Boru 15mm,Tesisat,Metre,50,20<br/>Kompresör Yağı,Klima/Havalandırma,Litre,10,5</div></div>
@@ -3272,6 +3373,129 @@ function AppInner(){
   };
 
   // ═══ İş emirlerim (personel / izleyici) ═══
+  // ═══ v5.43: Personel verimi (şef/yönetici) — zorluk puanı, vardiya gününe göre ═══
+  const renderVerim=(V)=>{
+    const K=Array.isArray(V.kisiler)?V.kisiler:[];const E=V.ekip||{};const T=V.toplam||{};const dg=T.dagilim||{};
+    const topIs=[1,2,3,4,5].reduce((a,n)=>a+(Number(dg[n])||0),0);
+    const dikkat=K.filter(k=>!k.pasif&&Array.isArray(k.isaretler)&&k.isaretler.length>0);
+    const pasif=K.filter(k=>k.pasif&&(k.is>0||k.gun>0));
+    const birimler=[...new Set(K.filter(k=>!k.pasif).map(k=>k.birim||"mekanik"))];
+    const azB=birimler.filter(b=>E[b]&&!E[b].yeterli);const azVeri=azB.length>0;
+    return(<div style={{marginBottom:14}}>
+      <div style={{fontSize:13,fontWeight:800,marginBottom:6}}>🏆 Personel verimi <span style={{fontSize:11,fontWeight:500,color:C.muted}}>· zorluk puanıyla</span></div>
+      <div style={{background:C.bg,borderRadius:10,padding:"8px 10px",marginBottom:8}}>
+        <div style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:11,color:C.dim,marginBottom:5}}><span>Biten {T.is||0} iş · <b style={{color:C.text}}>{nf1(T.puan)} puan</b></span>{T.dogrulanmamis>0&&<span role="button" style={{color:C.orange,cursor:"pointer",fontWeight:700}} onClick={()=>setZorOnay(true)}>⚙️ {T.dogrulanmamis} onaysız</span>}</div>
+        {topIs>0&&<div style={{display:"flex",height:8,borderRadius:4,overflow:"hidden",background:C.border}}>{[1,2,3,4,5].map(n=>Number(dg[n])>0?<div key={n} style={{width:`${100*dg[n]/topIs}%`,background:ZR[n].c}}/>:null)}</div>}
+        <div style={{display:"flex",flexWrap:"wrap",gap:"2px 10px",fontSize:10,color:C.muted,marginTop:5}}>{[1,2,3,4,5].map(n=><span key={n}><span style={{color:ZR[n].c,fontWeight:800}}>●</span> {ZR[n].ad} {dg[n]||0}</span>)}</div>
+      </div>
+      {azVeri&&<div style={{...S.lawBox,padding:10,marginBottom:8,borderColor:C.blue+"44",background:C.blueD}}>
+        <div style={{fontSize:11,color:C.blue,fontWeight:700}}>📉 {azB.length<birimler.length?azB.map(b=>b==="elektrik"?"Elektrik":"Mekanik").join(", ")+": k":"K"}arşılaştırma için veri henüz az</div>
+        <div style={{fontSize:10,color:C.dim,marginTop:2}}>"Ekibe göre %" bölümde en az 3 aktif kişi iş kapatınca ve günlük ortalama 0,3 puanı geçince açılır. Ekip ~2 hafta işleri Telegram/uygulamadan kapatınca anlamlı olur; o zamana kadar ham sayılara bak.</div>
+      </div>}
+      {dikkat.length>0&&<div style={{...S.lawBox,padding:10,marginBottom:8,borderColor:C.red+"55",background:C.redD}}>
+        <div style={{fontSize:12,fontWeight:800,color:C.red,marginBottom:2}}>⚠ Dikkat: {dikkat.length} kişi</div>
+        {dikkat.map(k=>(<div key={k.id} style={{fontSize:11,color:C.text,marginTop:5}}><b>{k.ad}</b>{k.isaretler.map((x,i)=><div key={i} style={{color:C.dim,paddingLeft:8}}>• {x}</div>)}</div>))}
+      </div>}
+      {birimler.map(b=>{const e=E[b]||{};const L=K.filter(k=>(k.birim||"mekanik")===b&&!k.pasif);const mx=Math.max(1,...L.map(k=>Number(k.puan_gun)||0));
+        return(<div key={b} style={{marginBottom:4}}>
+          <div style={{fontSize:10,fontWeight:700,color:C.muted,margin:"6px 0 5px",letterSpacing:0.3}}>{b==="elektrik"?"⚡ ELEKTRİK":"🔧 MEKANİK"} · ekip ortası {nf1(e.puan_gun)} puan/gün{e.ust_dk!=null?` · üstlenme ${e.ust_dk} dk`:""}</div>
+          {L.map((k,i)=>{const o=k.oran;const ac=vSec===k.id;const nis=Array.isArray(k.isaretler)?k.isaretler.length:0;
+            const renk=o==null?C.accentL:o>=80?C.green:o>=50?C.orange:C.red;
+            const w=o!=null?Math.min(100,o/1.5):Math.round(100*(Number(k.puan_gun)||0)/mx);
+            return(<div key={k.id} role="button" onClick={()=>setVSec(ac?null:k.id)} style={{background:C.card,border:`1px solid ${nis>0?C.red+"55":C.border}`,borderRadius:12,padding:"9px 10px",marginBottom:6,cursor:"pointer"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8}}>
+                <div style={{fontSize:13,fontWeight:700,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{i+1}. {k.ad}{nis>0?<span style={{color:C.red}}> ⚠{nis}</span>:null}</div>
+                <div style={{fontSize:15,fontWeight:800,color:renk,whiteSpace:"nowrap"}}>{nf1(k.puan_gun)}<span style={{fontSize:10,fontWeight:600,color:C.muted}}> puan/gün{o!=null?` · %${o}`:""}</span></div>
+              </div>
+              <div style={{position:"relative",height:6,background:C.bg,borderRadius:3,marginTop:6}}>
+                <div style={{width:`${w}%`,height:"100%",background:renk,borderRadius:3}}/>
+                {o!=null&&<div style={{position:"absolute",left:`${100/1.5}%`,top:-3,width:2,height:12,background:C.text,opacity:.35}}/>}
+              </div>
+              <div style={{fontSize:10,color:C.muted,marginTop:5}}>{k.gun} gün · {k.is} iş{k.zor_is?` (${k.zor_is} zor)`:""} · {nf1(k.puan)} puan{k.ust_dk!=null?` · üstl. ${k.ust_dk} dk`:""}{k.foto_yuzde!=null?` · 📷 %${k.foto_yuzde}`:""}{k.pas?` · ↪ ${k.pas} pas`:""}</div>
+              {ac&&<div style={{fontSize:11,color:C.dim,marginTop:6,paddingTop:6,borderTop:`1px solid ${C.border}`,lineHeight:1.55}}>
+                {k.gece>0&&<div>🌙 Gece: {k.gece} nöbet · {nf1(k.puan_gece)} puan (puan/gün'e katılmaz)</div>}
+                <div>⏱ İş süresi: standart sürenin {k.sure_orani!=null?nf1(k.sure_orani)+" katı":"—"}</div>
+                <div>⏰ Süresi geçen: {k.gec||0} · ⚡ Şüpheli hızlı kapanış: {k.hizli||0}</div>
+                <div>🔁 7 günde tekrar arıza: {k.tekrar_ariza||0} · 📷 Başka işte kullanılmış foto: {k.tekrar_foto||0}</div>
+                <div>📌 1 günden uzun üzerinde bekleyen: {k.bekleyen||0}</div>
+                {nis>0&&<div style={{color:C.red,marginTop:4}}>{k.isaretler.map((x,q)=><div key={q}>⚠ {x}</div>)}</div>}
+              </div>}
+            </div>);})}
+          {L.length===0&&<div style={{fontSize:11,color:C.muted}}>Bu bölümde kayıt yok</div>}
+        </div>);})}
+      {pasif.length>0&&<div style={{fontSize:10,color:C.muted,marginTop:4}}>Pasif hesap: {pasif.map(k=>`${k.ad} (${k.is} iş)`).join(", ")} — iş kaydı tutulamıyor; hesabı açın ya da iş vermeyin.</div>}
+      <div style={{fontSize:10,color:C.muted,marginTop:6,lineHeight:1.45}}>Puan = işin zorluğu: Basit 1 · Kolay 3 · Orta 6 · Zor 12 · Proje 24+ (ekip işinde ekibe bölünür). <b>Puan/gün</b> = gündüz puanı ÷ çalıştığı gündüz vardiyası; izin ve devamsızlık günleri sayılmaz. Çizgi = ekip ortası (medyan): %80 altı turuncu, %50 altı kırmızı. Kişiye dokun → ayrıntı.</div>
+    </div>);
+  };
+  // ═══ v5.43: Zorluk seçimi (şef/yönetici) ═══
+  const renderZorluk=()=>{
+    if(!modZorluk)return null;const m=modZorluk,j=m.j;
+    const tipler=jobTypes.filter(t=>t.zorluk===m.z);
+    const kay=j.zorluk_kaynak==="sef"?"şef onaylı":j.zorluk_kaynak==="varsayilan"?"metinden çıkarılamadı (varsayılan)":"sistem tahmini";
+    const tipAd=(jobTypes.find(t=>t.kod===j.is_tipi)||{}).ad;
+    return(<div data-geri="1" style={S.mod} onClick={()=>{if(!submitting)setModZorluk(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
+      <div style={{fontSize:16,fontWeight:800}}>⚙️ İş zorluğu</div>
+      <div style={{fontSize:12,color:C.dim,marginTop:2}}>{j.is_no?`#${j.is_no} `:""}{j.title}</div>
+      <div style={{fontSize:11,color:C.muted,marginTop:4,marginBottom:10}}>Şu an: {ZR[j.zorluk]?`${ZR[j.zorluk].ad} · ${jPuan(j)} puan`:"—"} · {kay}{tipAd?` · ${tipAd}`:""}</div>
+      {[1,2,3,4,5].map(n=>{const r=ZR[n],on=m.z===n;
+        return(<button key={n} onClick={()=>setModZorluk(x=>({...x,z:n,tip:(jobTypes.find(t=>t.kod===x.tip)||{}).zorluk===n?x.tip:null}))}
+          style={{display:"flex",alignItems:"center",gap:10,width:"100%",textAlign:"left",padding:"9px 12px",marginBottom:6,borderRadius:12,border:`2px solid ${on?r.c:C.border}`,background:on?r.bg:C.card,cursor:"pointer",fontFamily:"inherit",WebkitAppearance:"none",color:C.text}}>
+          <div style={{minWidth:40,textAlign:"center"}}><div style={{fontSize:18,fontWeight:800,color:r.c,lineHeight:1.1}}>{n===5&&on&&Number(m.puan)>=24?Number(m.puan):r.p}</div><div style={{fontSize:9,color:C.muted}}>puan</div></div>
+          <div style={{flex:1,minWidth:0}}><div style={{fontSize:14,fontWeight:700}}>{r.ad} <span style={{fontSize:11,fontWeight:500,color:C.muted}}>· {r.sure}</span></div><div style={{fontSize:11,color:C.dim,marginTop:1}}>{r.ornek}</div></div>
+          {on&&<div style={{fontSize:16,color:r.c,fontWeight:800}}>✓</div>}
+        </button>);})}
+      {tipler.length>0&&<><label style={{...S.lbl,marginTop:6}}>İş tipi <span style={{fontWeight:500,color:C.muted}}>(isteğe bağlı — süre kıyası için)</span></label>
+        <select style={S.inp} value={m.tip||""} onChange={e=>{const v=e.target.value||null;setModZorluk(x=>({...x,tip:v}));}}>
+          <option value="">— seçilmedi —</option>{tipler.map(t=><option key={t.kod} value={t.kod}>{t.ad}</option>)}</select></>}
+      {m.z===5&&<><label style={{...S.lbl,marginTop:6}}>Proje puanı <span style={{fontWeight:500,color:C.muted}}>(24-200, boş = 24)</span></label>
+        <input type="number" inputMode="decimal" min={24} max={200} style={S.inp} value={m.puan} placeholder="24" onChange={e=>{const v=e.target.value;setModZorluk(x=>({...x,puan:v}));}}/>
+        <div style={{fontSize:10,color:C.muted,marginTop:-4,marginBottom:6}}>Ölçü: 1 iş günü ≈ 24 puan · 2 gün ≈ 48 · 1 hafta ≈ 120</div></>}
+      <button style={S.btn(C.accent)} disabled={submitting} onClick={zorlukKaydet}>{submitting?"Kaydediliyor…":"Kaydet"}</button>
+      <button style={S.btn(C.bg,C.text)} disabled={submitting} onClick={()=>setModZorluk(null)}>Vazgeç</button>
+    </div></div>);
+  };
+  // ═══ v5.43: Zorluk onayı — sistemin puanladığı işler, tek dokunuşla onay/düzeltme ═══
+  const renderZorOnay=()=>{
+    if(!zorOnay)return null;const L=zorBek.slice(0,40);
+    return(<div data-geri="1" style={S.mod} onClick={()=>setZorOnay(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
+      <div style={{fontSize:16,fontWeight:800}}>⚙️ Zorluk onayı <span style={{fontSize:12,color:C.muted,fontWeight:600}}>({zorBek.length})</span></div>
+      <div style={{fontSize:11,color:C.dim,marginTop:3,marginBottom:8}}>Sistem işi metinden puanladı. Doğruysa ✓ olana, değilse doğru seviyeye dokun — iş listeden düşer, verim puanı buna göre hesaplanır. Proje puanı için işin adına dokun.</div>
+      {L.length===0&&<div style={S.emp}>Onay bekleyen iş yok 👍</div>}
+      {L.map(j=>{const r=ZR[j.zorluk];const isl=!!zorIsl[j.id];const cp=getU(j.completed_by);
+        return(<div key={j.id} style={{borderTop:`1px solid ${C.border}`,padding:"10px 0",opacity:isl?0.5:1}}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"start"}}>
+            <div style={{flex:1,minWidth:0,cursor:"pointer"}} onClick={()=>openZor(j)}>
+              <div style={{fontSize:13,fontWeight:700}}>{j.is_no?<span style={{color:C.muted,marginRight:5}}>#{j.is_no}</span>:null}{j.title}</div>
+              <div style={{fontSize:10,color:C.muted,marginTop:2}}>{j.status==="done"?`✅ ${cp?.full_name||"—"}`:"⏳ açık"}{j.location?` · 📍 ${j.location}`:""}</div>
+            </div>
+            {r&&<span style={{...S.tag(r.bg,r.c),flexShrink:0}}>{j.zorluk_kaynak==="varsayilan"?"tahmin yok":"oto"} · {r.ad}</span>}
+          </div>
+          <div style={{display:"flex",gap:5,marginTop:7}}>{[1,2,3,4,5].map(n=>{const q=ZR[n],on=j.zorluk===n;
+            return(<button key={n} disabled={isl} aria-label={`${q.ad} ${q.p} puan`} onClick={()=>zorlukHizli(j,n)} style={{flex:1,minWidth:0,minHeight:44,borderRadius:10,border:`2px solid ${on?q.c:C.border}`,background:on?q.bg:C.card,color:on?q.c:C.dim,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit",WebkitAppearance:"none",padding:"4px 2px",lineHeight:1.15}}>
+              {on?"✓ ":""}{q.ad}<br/><span style={{fontSize:10,fontWeight:600,opacity:.8}}>{q.p}p</span></button>);})}</div>
+        </div>);})}
+      {zorBek.length>40&&<div style={{fontSize:11,color:C.muted,marginTop:8}}>+{zorBek.length-40} iş daha — bunları onaylayınca görünür</div>}
+      <button style={S.btn(C.bg,C.text)} onClick={()=>setZorOnay(false)}>Kapat</button>
+    </div></div>);
+  };
+  // ═══ v5.43: Personelin kendi haftası (yalnız kendi satırı; işaretler şef ekranında) ═══
+  const renderMyVerim=()=>{
+    const V=benVerim?.v;if(!V)return null;
+    const k=(Array.isArray(V.kisiler)?V.kisiler:[]).find(x=>x.id===profile?.id);if(!k)return null;
+    const e=(V.ekip||{})[profile?.department||"mekanik"]||{};const o=k.oran;
+    const renk=o==null?C.text:o>=80?C.green:o>=50?C.orange:C.red;
+    return(<div style={{...S.crd,cursor:"default",marginBottom:12}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}><div style={{fontSize:10,color:C.muted,fontWeight:700,letterSpacing:0.3}}>📈 BU HAFTAM</div><div style={{fontSize:10,color:C.muted}}>{gunAy(V.bas)} – {gunAy(V.bit)}</div></div>
+      <div style={S.stB}>
+        <div style={S.st(C.accentD)}><div style={{fontSize:16,fontWeight:800,color:C.accent}}>{nf1(k.puan)}</div><div style={{fontSize:9,color:C.dim}}>Puan</div></div>
+        <div style={S.st(C.bg)}><div style={{fontSize:16,fontWeight:800}}>{k.is}</div><div style={{fontSize:9,color:C.dim}}>İş{k.zor_is?` · ${k.zor_is} zor`:""}</div></div>
+        <div style={S.st(C.bg)}><div style={{fontSize:16,fontWeight:800}}>{nf1(k.puan_gun)}</div><div style={{fontSize:9,color:C.dim}}>Puan/gün</div></div>
+        <div style={S.st(o==null?C.bg:o>=80?C.greenD:o>=50?C.orangeD:C.redD)}><div style={{fontSize:16,fontWeight:800,color:renk}}>{o!=null?`%${o}`:"—"}</div><div style={{fontSize:9,color:C.dim}}>Ekibe göre</div></div>
+      </div>
+      <div style={{fontSize:11,color:C.dim,marginTop:8}}>{e.yeterli&&e.puan_gun!=null?`Ekip ortası ${nf1(e.puan_gun)} puan/gün. `:"Ekip karşılaştırması veri biriktikçe açılır. "}{k.ust_dk!=null?`Ort. üstlenme ${k.ust_dk} dk. `:""}{k.foto_yuzde!=null?`Fotoğraflı kapanış %${k.foto_yuzde}.`:""}</div>
+      <div style={{fontSize:10,color:C.muted,marginTop:4}}>Zor iş daha çok puan: koltuk vidası 1 · musluk contası 3 · drenaj hattı 6 · VRF drenaj pompası 12 · yeni tesisat 24+</div>
+    </div>);
+  };
   const renderMyJobs=()=>{
     // Şef/yönetici ekip acillerini kendi kartında görür; burada sadece sahadaki personele
     const ekip=canJobAct?[]:jobAcilBekleyen.filter(j=>!j.assigned_to&&!jobMine.some(m=>m.id===j.id));
@@ -3283,8 +3507,8 @@ function AppInner(){
       {liste.map(j=>{const pr=PRI[j.priority||"normal"]||PRI.normal;const over=j.due_at&&new Date(j.due_at).getTime()<Date.now();
         return(<div key={j.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,padding:"7px 0",borderTop:`1px solid ${C.border}`}}>
           <div style={{flex:1,minWidth:0,cursor:"pointer"}} onClick={()=>{setPage("faults");setFaultTab("jobs");setPjTab((j.shift||"day")==="night"?"night":"day");}}>
-            <div style={{fontSize:13,fontWeight:600}}>{pr[0]} {j.title}</div>
-            <div style={{fontSize:10,color:over?C.red:C.muted}}>{j.location?`📍 ${j.location} · `:""}{kalanTxt(j.due_at)}{!j.assigned_to?" · ekip işi":""}</div>
+            <div style={{fontSize:13,fontWeight:600}}>{pr[0]} {j.is_no?`#${j.is_no} `:""}{j.title}</div>
+            <div style={{fontSize:10,color:over?C.red:C.muted}}>{j.location?`📍 ${j.location} · `:""}{kalanTxt(j.due_at)}{!j.assigned_to?" · ekip işi":""}{ZR[j.zorluk]?` · ⚙️ ${ZR[j.zorluk].ad} ${jPuan(j)}p`:""}</div>
           </div>
           {!j.claimed_by
             ?<button style={S.btnS(j.priority==="acil"?C.red:C.accent,"#fff")} disabled={submitting} onClick={()=>claimJob(j)}>👷 Üstlen</button>
@@ -3371,6 +3595,7 @@ function AppInner(){
           {myPaidLH(profile.id)>0&&<div style={{marginTop:8,fontSize:11,color:C.dim,textAlign:"center"}}>💵 Ücreti ödenen mesai: {myPaidOTH(profile.id)} sa → izin hakkından {myPaidLH(profile.id)} sa düşüldü</div>}
         </div>
         {renderMyJobs()}
+        {renderMyVerim()}
         {renderMyAbs()}
         <button style={S.btn(C.accent)} onClick={()=>{setOtForm({date:todayStr(),startTime:"17:00",endTime:"",otType:"evening",desc:""});setOtErrors([]);setModNewOT(true);}}>+ Fazla Mesai Bildir</button>
         {(()=>{
@@ -3444,6 +3669,7 @@ function AppInner(){
         {isViewer&&vPC>0&&<div style={{fontSize:10,color:C.muted,marginTop:4}}>Sadece görüntüleme</div>}
       </div>
       {renderMyJobs()}
+      {renderMyVerim()}
       {renderMyAbs()}
       {(()=>{
         if(!shHas)return null;
@@ -3639,7 +3865,7 @@ function AppInner(){
               style={{padding:"5px 9px",borderRadius:14,fontSize:11,color:C.muted,border:`1px dashed ${C.border}`,cursor:canMarkU(u)?"pointer":"default"}}>{u.full_name}{elk(u)}</span>))}</div>
           </div>}
           {(isAdmin||canMark)&&working.length>0&&pres+abs===0&&otoHepsi.length===0&&saatNow>=9*60&&<div style={{fontSize:12,fontWeight:700,color:C.red,marginTop:8}}>⚠ Bugün yoklama henüz alınmadı{devAktif?" — kayıt dışı devamsızlık tespiti yoklamaya bağlı":""}</div>}
-          {gnSheet&&<div onClick={()=>setGnSheet(null)} style={{position:"fixed",inset:0,background:"rgba(11,18,32,0.45)",zIndex:300,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+          {gnSheet&&<div data-geri="1" onClick={()=>setGnSheet(null)} style={{position:"fixed",inset:0,background:"rgba(11,18,32,0.45)",zIndex:300,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
             <div onClick={e=>e.stopPropagation()} style={{background:C.card,width:"100%",maxWidth:480,borderRadius:"18px 18px 0 0",padding:"18px 16px calc(18px + env(safe-area-inset-bottom))"}}>
               <div style={{fontSize:15,fontWeight:800}}>{gnSheet.full_name}</div>
               <div style={{fontSize:12,color:C.dim,marginTop:2,marginBottom:12}}>Dün gece nöbeti · {fDS(dun)} 17:00 → bugün 08:00</div>
@@ -3797,7 +4023,7 @@ function AppInner(){
     const ds=selDay,hol=isHoliday(ds);
     const lvs=leavesState.filter(l=>l.status!=="rejected"&&(Array.isArray(l.dates)?l.dates:[]).includes(ds)&&(!selBuilding||profileMap.get(l.personnel_id)?.building_id===selBuilding));
     const nbs=nobetState.filter(n=>(n.nobet_date||"").slice(0,10)===ds);
-    return(<div style={S.mod} onClick={()=>setSelDay(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+    return(<div data-geri="1" style={S.mod} onClick={()=>setSelDay(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/>
       <div style={{fontSize:17,fontWeight:700,marginBottom:2}}>{fDS(ds)}</div>
       <div style={{fontSize:12,color:C.dim,marginBottom:12}}>{DAYS_TR[(new Date(ds+"T00:00:00").getDay()+6)%7]}</div>
@@ -4239,7 +4465,7 @@ function AppInner(){
               </div>
             </>:<>
               <div style={{fontSize:13,fontWeight:800,marginBottom:6}}>Bakiyelere etkisi · {secili.length} kayıt, {topH} sa</div>
-              <div style={{maxHeight:"40vh",overflowY:"auto"}}>{etki.map(g=>{const sonra=Math.round((g.once-g.d)*10)/10;return(<div key={g.pid} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:12,padding:"3px 0"}}>
+              <div style={{maxHeight:"40"+VH,overflowY:"auto"}}>{etki.map(g=>{const sonra=Math.round((g.once-g.d)*10)/10;return(<div key={g.pid} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:12,padding:"3px 0"}}>
                 <span>{g.u?.full_name||"—"}</span><span style={{color:sonra<0?C.red:C.text,fontWeight:600}}>{g.once} → {sonra} sa{sonra<0?" (borçlu)":""}</span></div>);})}</div>
               <div style={{display:"flex",gap:8,marginTop:10}}>
                 <button style={{...S.btn(C.border,C.text),flex:1,marginTop:0}} onClick={()=>setOtPayConfirm(false)}>Geri</button>
@@ -4254,7 +4480,7 @@ function AppInner(){
 
   const renderOTDetail=()=>{
     if(!selOT)return null;const o=selOT,p=getU(o.personnel_id);
-    return(<div style={S.mod} onClick={()=>{setSelOT(null);setDeleteConfirm(null);setEditOT(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+    return(<div data-geri="1" style={S.mod} onClick={()=>{setSelOT(null);setDeleteConfirm(null);setEditOT(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:4}}>Mesai Detayı</div>
       {p&&<div style={{fontSize:13,color:C.dim,marginBottom:8}}>{p.full_name}</div>}
       {o.overtime_type==="daytime"&&<div style={{...S.tag("rgba(181,71,8,0.15)",C.orange),marginBottom:12}}>☀️ Gündüz Mesai (İstirahat/Haftasonu)</div>}
@@ -4287,7 +4513,7 @@ function AppInner(){
 
   const renderLVDetail=()=>{
     if(!selLV)return null;const l=selLV,p=getU(l.personnel_id);const dates=Array.isArray(l.dates)?l.dates:[];const prevDates=Array.isArray(l.previous_dates)?l.previous_dates:[];
-    return(<div style={S.mod} onClick={()=>setSelLV(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+    return(<div data-geri="1" style={S.mod} onClick={()=>setSelLV(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:4}}>İzin detayı</div>
       {l.leave_source==="annual"&&<div style={{...S.tag(C.tealD,C.teal),marginBottom:8}}>🌴 Yıllık İzin</div>}
       {(!l.leave_source||l.leave_source==="overtime")&&l.leave_type!=="hourly"&&<div style={{...S.tag(C.accentD,C.accent),marginBottom:8}}>⏱ Mesai İzni</div>}
@@ -4313,7 +4539,7 @@ function AppInner(){
 
   const renderNewOT=()=>{
     if(!modNewOT)return null;
-    return(<div style={S.mod} onClick={()=>setModNewOT(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+    return(<div data-geri="1" style={S.mod} onClick={()=>setModNewOT(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:4}}>Fazla Mesai Bildir</div><div style={{fontSize:12,color:C.dim,marginBottom:16}}>Tüm alanlar zorunlu</div>
       <div style={S.lbl}>Mesai Türü</div>
       <div style={{display:"flex",gap:8,marginBottom:12}}>
@@ -4346,9 +4572,9 @@ function AppInner(){
     </div></div>);
   };
 
-  const renderAddUser=()=>{if(!modAddUser)return null;return(<div style={S.mod} onClick={()=>setModAddUser(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>+ Personel</div><div style={S.lbl}>Ad Soyad</div><input style={S.inp} value={nUser.name} onChange={e=>setNUser(p=>({...p,name:e.target.value}))}/><div style={S.lbl}>E-posta</div><input style={S.inp} type="email" inputMode="email" autoCapitalize="none" value={nUser.email} onChange={e=>setNUser(p=>({...p,email:e.target.value}))}/><div style={S.lbl}>Şifre</div><input style={S.inp} type="text" value={nUser.password} onChange={e=>setNUser(p=>({...p,password:e.target.value}))}/><div style={S.lbl}>Görev</div><input style={S.inp} value={nUser.role} onChange={e=>setNUser(p=>({...p,role:e.target.value}))}/><div style={S.lbl}>Bina</div><select style={S.sel} value={nUser.buildingId||selBuilding||""} onChange={e=>setNUser(p=>({...p,buildingId:e.target.value}))}>{buildings.map(b=><option key={b.id} value={b.id}>{b.short_name||b.name}</option>)}</select><div style={S.lbl}>Yetki</div><select style={S.sel} value={nUser.userRole} onChange={e=>setNUser(p=>({...p,userRole:e.target.value}))}><option value="personnel">Personel</option><option value="chef">Teknik Şef (Onay Yetkili)</option><option value="viewer">İzleyici (Tam Görüntüleme)</option></select><div style={S.lbl}>Departman</div><select style={S.sel} value={nUser.department} onChange={e=>setNUser(p=>({...p,department:e.target.value}))}><option value="mekanik">⚙️ Mekanik</option><option value="elektrik">⚡ Elektrik</option></select><button style={S.btn(C.accent)} onClick={doAddUser} disabled={submitting}>{submitting?"...":"Ekle"}</button><button style={S.btn(C.border,C.text)} onClick={()=>setModAddUser(false)}>İptal</button></div></div>);};
+  const renderAddUser=()=>{if(!modAddUser)return null;return(<div data-geri="1" style={S.mod} onClick={()=>setModAddUser(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>+ Personel</div><div style={S.lbl}>Ad Soyad</div><input style={S.inp} value={nUser.name} onChange={e=>setNUser(p=>({...p,name:e.target.value}))}/><div style={S.lbl}>E-posta</div><input style={S.inp} type="email" inputMode="email" autoCapitalize="none" value={nUser.email} onChange={e=>setNUser(p=>({...p,email:e.target.value}))}/><div style={S.lbl}>Şifre</div><input style={S.inp} type="text" value={nUser.password} onChange={e=>setNUser(p=>({...p,password:e.target.value}))}/><div style={S.lbl}>Görev</div><input style={S.inp} value={nUser.role} onChange={e=>setNUser(p=>({...p,role:e.target.value}))}/><div style={S.lbl}>Bina</div><select style={S.sel} value={nUser.buildingId||selBuilding||""} onChange={e=>setNUser(p=>({...p,buildingId:e.target.value}))}>{buildings.map(b=><option key={b.id} value={b.id}>{b.short_name||b.name}</option>)}</select><div style={S.lbl}>Yetki</div><select style={S.sel} value={nUser.userRole} onChange={e=>setNUser(p=>({...p,userRole:e.target.value}))}><option value="personnel">Personel</option><option value="chef">Teknik Şef (Onay Yetkili)</option><option value="viewer">İzleyici (Tam Görüntüleme)</option></select><div style={S.lbl}>Departman</div><select style={S.sel} value={nUser.department} onChange={e=>setNUser(p=>({...p,department:e.target.value}))}><option value="mekanik">⚙️ Mekanik</option><option value="elektrik">⚡ Elektrik</option></select><button style={S.btn(C.accent)} onClick={doAddUser} disabled={submitting}>{submitting?"...":"Ekle"}</button><button style={S.btn(C.border,C.text)} onClick={()=>setModAddUser(false)}>İptal</button></div></div>);};
 
-  const renderEditUser=()=>{if(!modEditUser)return null;const u=modEditUser;return(<div style={S.mod} onClick={()=>{setModEditUser(null);setDeleteConfirm(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>Düzenle: {u.full_name}</div><div style={S.lbl}>Görev</div><input style={S.inp} value={u.role||""} onChange={e=>setModEditUser({...u,role:e.target.value})}/><div style={S.lbl}>Bina</div><select style={S.sel} value={u.building_id||""} onChange={e=>setModEditUser({...u,building_id:e.target.value})}>{buildings.map(b=><option key={b.id} value={b.id}>{b.short_name||b.name}</option>)}</select><div style={S.lbl}>Yetki</div><select style={S.sel} value={u.user_role||"personnel"} onChange={e=>setModEditUser({...u,user_role:e.target.value})}><option value="personnel">Personel</option><option value="chef">Teknik Şef (Onay Yetkili)</option><option value="viewer">İzleyici (Tam Görüntüleme)</option></select><div style={S.lbl}>Departman</div><select style={S.sel} value={u.department||"mekanik"} onChange={e=>setModEditUser({...u,department:e.target.value})}><option value="mekanik">⚙️ Mekanik</option><option value="elektrik">⚡ Elektrik</option></select><div style={S.lbl}>İş Yöneticisi (bekleyen iş oluşturma / geceye devretme)</div><label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.text,marginBottom:12,cursor:"pointer",background:C.bg,borderRadius:10,padding:"10px 12px",border:`1px solid ${C.border}`}}><input type="checkbox" checked={!!u.job_manager} onChange={e=>setModEditUser({...u,job_manager:e.target.checked})}/><span>📋 Bekleyen iş yönetebilir</span></label><div style={S.lbl}>🌴 Yıllık İzin Hakkı (gün)</div><input style={S.inp} type="number" min="0" max="30" value={u.annual_leave_days||14} onChange={e=>setModEditUser({...u,annual_leave_days:Number(e.target.value)||0})}/><div style={{fontSize:10,color:C.dim,marginTop:-8,marginBottom:12}}>Kullanılan: {annualUsed(u.id)} gün / Kalan: {annualRemaining(u.id)} gün</div><button style={S.btn(C.accent)} onClick={async()=>{try{await supabase.from('profiles').update({role:u.role,user_role:u.user_role,building_id:u.building_id,annual_leave_days:u.annual_leave_days||14,department:u.department||"mekanik",job_manager:!!u.job_manager}).eq('id',u.id);await fetchProfiles();setModEditUser(null);setToast("Kaydedildi");}catch(e){setToast("Hata: "+e?.message);}}}>Kaydet</button><div style={S.dv}/><button style={S.btn(C.orangeD,C.orange)} onClick={()=>doDeactivateU(u.id)}>🚫 Pasif Yap</button>{deleteConfirm===u.id?<div style={{background:C.redD,borderRadius:10,padding:14,marginTop:8}}><div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:8,textAlign:"center"}}>⚠ {u.full_name} silinecek. Mesai ve izin kayıtları arşivde kalır.</div><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.red),flex:1}} onClick={()=>doDeleteUser(u.id)}>🗑 Evet, Sil</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setDeleteConfirm(null)}>İptal</button></div></div>:<button style={S.btn(C.redD,C.red)} onClick={()=>setDeleteConfirm(u.id)}>🗑 Personeli Sil</button>}<button style={S.btn(C.border,C.text)} onClick={()=>{setModEditUser(null);setDeleteConfirm(null);}}>Kapat</button></div></div>);};
+  const renderEditUser=()=>{if(!modEditUser)return null;const u=modEditUser;return(<div data-geri="1" style={S.mod} onClick={()=>{setModEditUser(null);setDeleteConfirm(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/><div style={{fontSize:17,fontWeight:700,marginBottom:16}}>Düzenle: {u.full_name}</div><div style={S.lbl}>Görev</div><input style={S.inp} value={u.role||""} onChange={e=>setModEditUser({...u,role:e.target.value})}/><div style={S.lbl}>Bina</div><select style={S.sel} value={u.building_id||""} onChange={e=>setModEditUser({...u,building_id:e.target.value})}>{buildings.map(b=><option key={b.id} value={b.id}>{b.short_name||b.name}</option>)}</select><div style={S.lbl}>Yetki</div><select style={S.sel} value={u.user_role||"personnel"} onChange={e=>setModEditUser({...u,user_role:e.target.value})}><option value="personnel">Personel</option><option value="chef">Teknik Şef (Onay Yetkili)</option><option value="viewer">İzleyici (Tam Görüntüleme)</option></select><div style={S.lbl}>Departman</div><select style={S.sel} value={u.department||"mekanik"} onChange={e=>setModEditUser({...u,department:e.target.value})}><option value="mekanik">⚙️ Mekanik</option><option value="elektrik">⚡ Elektrik</option></select><div style={S.lbl}>İş Yöneticisi (bekleyen iş oluşturma / geceye devretme)</div><label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.text,marginBottom:12,cursor:"pointer",background:C.bg,borderRadius:10,padding:"10px 12px",border:`1px solid ${C.border}`}}><input type="checkbox" checked={!!u.job_manager} onChange={e=>setModEditUser({...u,job_manager:e.target.checked})}/><span>📋 Bekleyen iş yönetebilir</span></label><div style={S.lbl}>🌴 Yıllık İzin Hakkı (gün)</div><input style={S.inp} type="number" min="0" max="30" value={u.annual_leave_days||14} onChange={e=>setModEditUser({...u,annual_leave_days:Number(e.target.value)||0})}/><div style={{fontSize:10,color:C.dim,marginTop:-8,marginBottom:12}}>Kullanılan: {annualUsed(u.id)} gün / Kalan: {annualRemaining(u.id)} gün</div><button style={S.btn(C.accent)} onClick={async()=>{try{await supabase.from('profiles').update({role:u.role,user_role:u.user_role,building_id:u.building_id,annual_leave_days:u.annual_leave_days||14,department:u.department||"mekanik",job_manager:!!u.job_manager}).eq('id',u.id);await fetchProfiles();setModEditUser(null);setToast("Kaydedildi");}catch(e){setToast("Hata: "+e?.message);}}}>Kaydet</button><div style={S.dv}/><button style={S.btn(C.orangeD,C.orange)} onClick={()=>doDeactivateU(u.id)}>🚫 Pasif Yap</button>{deleteConfirm===u.id?<div style={{background:C.redD,borderRadius:10,padding:14,marginTop:8}}><div style={{fontSize:13,fontWeight:700,color:C.red,marginBottom:8,textAlign:"center"}}>⚠ {u.full_name} silinecek. Mesai ve izin kayıtları arşivde kalır.</div><div style={{display:"flex",gap:8}}><button style={{...S.btn(C.red),flex:1}} onClick={()=>doDeleteUser(u.id)}>🗑 Evet, Sil</button><button style={{...S.btn(C.border,C.text),flex:1}} onClick={()=>setDeleteConfirm(null)}>İptal</button></div></div>:<button style={S.btn(C.redD,C.red)} onClick={()=>setDeleteConfirm(u.id)}>🗑 Personeli Sil</button>}<button style={S.btn(C.border,C.text)} onClick={()=>{setModEditUser(null);setDeleteConfirm(null);}}>Kapat</button></div></div>);};
 
   const renderAddFMat=()=>{
     if(!modAddFMat)return null;
@@ -4360,7 +4586,7 @@ function AppInner(){
     const secStok=Number.isFinite(secStokHam)?secStokHam:0;
     const istenen=Number(String(fmQty).trim().replace(/\s/g,"").replace(/,/g,"."));
     const yeter=fmSel&&Number.isFinite(istenen)&&istenen>0&&secStok>=istenen;
-    return(<div style={S.mod} onClick={()=>setModAddFMat(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+    return(<div data-geri="1" style={S.mod} onClick={()=>setModAddFMat(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/>
       <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>🧰 Gereken Malzeme Ekle</div>
       <div style={{fontSize:12,color:C.dim,marginBottom:14}}>{modAddFMat.title}</div>
@@ -4417,7 +4643,7 @@ function AppInner(){
     if(!mtAct)return null;
     const p=mtAct.plan;
     const crew=bProfiles.filter(u=>u.active);
-    return(<div style={S.mod} onClick={()=>setMtAct(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
+    return(<div data-geri="1" style={S.mod} onClick={()=>setMtAct(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
       <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>✓ Bakım Tamamlandı</div>
       <div style={{fontSize:12,color:C.dim,marginBottom:14}}>{p.system_name} — {fPer(mtAct.period)}</div>
       <div style={S.lbl}>Yapıldığı Tarih *</div>
@@ -4438,7 +4664,7 @@ function AppInner(){
   const renderPlanEdit=()=>{
     if(!modEditPlan)return null;
     const p=modEditPlan;
-    return(<div style={S.mod} onClick={()=>setModEditPlan(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
+    return(<div data-geri="1" style={S.mod} onClick={()=>setModEditPlan(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
       <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>🛠 Plan Düzenle</div>
       <div style={{fontSize:12,color:C.dim,marginBottom:14}}>{p.system_name}</div>
       <div style={S.lbl}>Cihaz Adedi (Kasımpaşa gerçek sayı)</div>
@@ -4459,7 +4685,7 @@ function AppInner(){
     if(!modNewPlan)return null;
     const opts=[];{const base=curPer();for(let i=0;i<18;i++)opts.push(perAdd(base,i));}
     const tog=(m)=>setNPlan(s=>({...s,months:s.months.includes(m)?s.months.filter(x=>x!==m):s.months.concat([m])}));
-    return(<div style={S.mod} onClick={()=>setModNewPlan(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
+    return(<div data-geri="1" style={S.mod} onClick={()=>setModNewPlan(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
       <div style={{fontSize:17,fontWeight:700,marginBottom:16}}>+ Yeni Bakım Planı</div>
       <div style={S.lbl}>Sistem Adı *</div>
       <input style={S.inp} value={nPlan.system_name} onChange={e=>setNPlan({...nPlan,system_name:e.target.value})} placeholder="örn: JENERATÖR BAKIMI"/>
@@ -4490,7 +4716,7 @@ function AppInner(){
     const diger=bProfiles.filter(u=>u.active&&(u.department||"mekanik")===dep&&(u.user_role==="personnel"||u.user_role==="viewer"||u.job_manager)&&!crew.some(c=>c.id===u.id));
     const kisi=(u,soluk)=>{const k=asgSel.indexOf(u.id);return(<button key={u.id} style={{...S.btn(k>=0?C.accentD:C.bg,k>=0?C.accent:(soluk?C.muted:C.text)),textAlign:"left"}}
       disabled={submitting} onClick={()=>setAsgSel(k>=0?asgSel.filter(x=>x!==u.id):[...asgSel,u.id])}>{k>=0?(k===0?"★ ":"✓ "):"○ "}{u.full_name}{k===0&&asgSel.length>1?" (sorumlu)":""}{pushOff(u.id)?" 🔕":""}</button>);};
-    return(<div style={S.mod} onClick={()=>setModAssign(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+    return(<div data-geri="1" style={S.mod} onClick={()=>setModAssign(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/>
       <div style={{fontSize:17,fontWeight:700,marginBottom:4}}>👤 Kime atansın? <span style={{fontSize:11,fontWeight:500,color:C.dim}}>birden fazla seçebilirsin</span></div>
       <div style={{fontSize:12,color:C.dim,marginBottom:12}}>{(PRI[j.priority||"normal"]||PRI.normal)[0]} {j.title}</div>
@@ -4507,7 +4733,7 @@ function AppInner(){
 
   const renderDone=()=>{
     if(!modDone)return null;const j=modDone.j;
-    return(<div style={S.mod} onClick={()=>{if(!submitting)setModDone(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
+    return(<div data-geri="1" style={S.mod} onClick={()=>{if(!submitting)setModDone(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
       <div style={{fontSize:17,fontWeight:700,marginBottom:4}}>✅ İşi kapat</div>
       <div style={{fontSize:12,color:C.dim,marginBottom:12}}>{j.title}{j.location?` · 📍 ${j.location}`:""}</div>
       <div style={S.lbl}>Yapılan işlem / not</div>
@@ -4527,7 +4753,7 @@ function AppInner(){
     const set=(k,p)=>setModPaste(m=>m&&m.items?{...m,items:m.items.map(x=>x.k===k?{...x,...p}:x)}:m);
     const nSec=(items||[]).filter(x=>x.sec).length;
     const mini=(on,bg)=>({...S.btnS(on?bg:C.bg,on?"#fff":C.muted),minHeight:30,padding:"4px 10px",fontSize:11});
-    return(<div style={S.mod} onClick={()=>{if(!submitting)setModPaste(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
+    return(<div data-geri="1" style={S.mod} onClick={()=>{if(!submitting)setModPaste(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
       <div style={{fontSize:17,fontWeight:700,marginBottom:4}}>📋 WhatsApp'tan iş aç</div>
       {!items&&<>
         <div style={{fontSize:12,color:C.dim,marginBottom:10}}>WhatsApp'ta mesaja basılı tut → Kopyala. Birden fazla mesajı seçip birlikte kopyalayabilirsin. Her mesaj ayrı iş olur ve en az işi olana otomatik atanır.</div>
@@ -4557,7 +4783,7 @@ function AppInner(){
 
   const renderNightPick=()=>{
     if(!modNightPick)return null;
-    return(<div style={S.mod} onClick={()=>setModNightPick(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
+    return(<div data-geri="1" style={S.mod} onClick={()=>setModNightPick(null)}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
       <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>🌙 Geceye Devret</div>
       <div style={{fontSize:12,color:C.dim,marginBottom:14}}>{modNightPick.title}</div>
       <div style={S.lbl}>Bu gecenin nöbetçileri — birden fazla seçebilirsin</div>
@@ -4597,7 +4823,7 @@ function AppInner(){
     const row={width:"100%",minHeight:52,border:"none",background:"transparent",padding:"0 4px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,fontSize:15,fontWeight:500,fontFamily:"inherit",color:C.text,borderBottom:`1px solid ${C.border}`,cursor:"pointer",textAlign:"left",WebkitAppearance:"none"};
     const lft={display:"flex",alignItems:"center",gap:12};
     const dept=profile?.department==="elektrik"?"Elektrik":profile?.department==="mekanik"?"Mekanik":"";
-    return(<div style={S.mod} onClick={()=>setShowMe(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
+    return(<div data-geri="1" style={S.mod} onClick={()=>setShowMe(false)}><div style={S.modC} onClick={e=>e.stopPropagation()}>
       <div style={S.modH}/>
       <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
         <div style={{width:52,height:52,minWidth:52,borderRadius:26,background:C.accent,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:17}}>{ini(profile.full_name)}</div>
@@ -4676,6 +4902,8 @@ function AppInner(){
       {renderAssignPick()}
       {renderDone()}
       {renderPaste()}
+      {renderZorOnay()}
+      {renderZorluk()}
       {renderShSub()}
       {renderAbsSheet()}
       {showMtDP&&<CustomDatePicker value={mtForm.done_date||todayStr()} onChange={v=>setMtForm(p=>({...p,done_date:v}))} onClose={()=>setShowMtDP(false)}/>}
@@ -4684,13 +4912,13 @@ function AppInner(){
       {showEndTP&&<CustomTimePicker value={otForm.endTime||"18:00"} onChange={v=>setOtForm(p=>({...p,endTime:v,longOk:false}))} onClose={()=>setShowEndTP(false)} label="Bitiş Saati"/>}
       {showPWA&&<PWAInstallGuide onClose={()=>setShowPWA(false)}/>}
       {renderMe()}
-      {showNotifs&&<div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(16,24,40,0.4)",zIndex:250}} onClick={()=>setShowNotifs(false)}>
-        <div style={{position:"absolute",top:Math.max(8+topInset,(hdrRef.current?hdrRef.current.getBoundingClientRect().bottom:64+topInset)+6),right:8,width:"calc(100% - 16px)",maxWidth:360,maxHeight:"70vh",background:C.card,borderRadius:16,border:`1px solid ${C.border}`,overflow:"hidden",boxShadow:"0 20px 48px rgba(16,24,40,0.16)"}} onClick={e=>e.stopPropagation()}>
+      {showNotifs&&<div data-geri="1" style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(16,24,40,0.4)",zIndex:250}} onClick={()=>setShowNotifs(false)}>
+        <div style={{position:"absolute",top:Math.max(8+topInset,(hdrRef.current?hdrRef.current.getBoundingClientRect().bottom:64+topInset)+6),right:8,width:"calc(100% - 16px)",maxWidth:360,maxHeight:"70"+VH,background:C.card,borderRadius:16,border:`1px solid ${C.border}`,overflow:"hidden",boxShadow:"0 20px 48px rgba(16,24,40,0.16)"}} onClick={e=>e.stopPropagation()}>
           <div style={{padding:"14px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <div style={{fontSize:16,fontWeight:700}}>Bildirimler</div>
             <button aria-label="Kapat" onClick={()=>setShowNotifs(false)} style={{width:44,height:44,margin:"-10px -10px -10px 0",background:"none",border:"none",color:C.dim,fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
           </div>
-          <div style={{overflowY:"auto",maxHeight:"calc(70vh - 50px)",padding:8}}>
+          <div style={{overflowY:"auto",maxHeight:`calc(70${VH} - 50px)`,padding:8}}>
             {notifications.length===0?<div style={{padding:30,textAlign:"center",color:C.dim,fontSize:13}}>Bildirim yok ✓</div>:
             notifications.map(n=>(
               <div key={n.id} style={{display:"flex",gap:10,padding:"10px 8px",borderBottom:`1px solid ${C.border}`,cursor:["review","stock","pend","mtlate","mtnow","pjnight","fmwait","shnight","shsub","absflag","absmgr","jobacil","joblate"].includes(n.id)?"pointer":"default"}} onClick={()=>{
