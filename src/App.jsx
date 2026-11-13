@@ -5,7 +5,7 @@ import { supabase, signIn, signOut, getProfiles, createOvertime, updateOvertime,
 const toArr=(v)=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'&&Array.isArray(v.data))return v.data;return[];};
 // === Önbellek (stale-while-revalidate): açılışta anında veri, arkada tazeleme ===
 const CACHE_KEY='ibb_cache_v1';
-const APP_VERSION='5.43';
+const APP_VERSION='5.44';
 // v5.43: iPhone Safari / Android Chrome adres çubuğu: 100vh ekranı taşırır → destekleniyorsa dvh
 const VH=(()=>{try{return typeof CSS!=="undefined"&&CSS.supports&&CSS.supports("height","100dvh")?"dvh":"vh";}catch(e){return "vh";}})();
 const VAPID_PUB='BN2YP7MOPhouxNjYjzbuOJznU5xocT3gQW3JeHUnHn3hvRCDdlIvRUDifICb_S0rc_-DqUtWRim0ehxn7UdaV3M';
@@ -2303,7 +2303,7 @@ function AppInner(){
           </div>
           <div style={{textAlign:"right",flexShrink:0}}>
             <div style={S.tag(pr[2]+"22",pr[2])}>{pr[0]} {pr[1]}</div>
-            {j.zorluk&&<div style={{marginTop:5}}>{zChip(j)}</div>}
+            {j.zorluk&&canJobAct&&<div style={{marginTop:5}}>{zChip(j)}</div>}
             {due!==null&&<div style={{fontSize:11,fontWeight:700,color:over?C.red:(due-now<3600000?C.orange:C.dim),marginTop:4}}>{over?"⏰ ":"⏳ "}{kalanTxt(j.due_at,now)}</div>}
             {due!==null&&<div style={{fontSize:9,color:C.muted}}>son: {fDue(j.due_at)}</div>}
           </div>
@@ -2557,7 +2557,7 @@ function AppInner(){
             <div style={{fontSize:13,fontWeight:600,textDecoration:"line-through",color:C.dim}}>{j.is_no?<span style={{color:C.muted,fontWeight:600,marginRight:6}}>#{j.is_no}</span>:null}{j.title}</div>
             <div style={{fontSize:10,color:C.green,marginTop:4}}>✅ {cp?.full_name||"—"} • {j.completed_at?new Date(j.completed_at).toLocaleString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):""}{j.completed_note?` — ${j.completed_note}`:""}{j.done_photo?<> · <a href={j.done_photo} target="_blank" rel="noreferrer" style={{color:C.accent}}>📷 Fotoğraf</a></>:null}{j.request_photo?<> · <a href={j.request_photo} target="_blank" rel="noreferrer" style={{color:C.accent}}>🙋 Talep fotoğrafı</a></>:null}{(Array.isArray(j.extra_photos)?j.extra_photos:[]).map((u,i)=><span key={i}> · <a href={u} target="_blank" rel="noreferrer" style={{color:C.accent}}>📷 Ek {i+1}</a></span>)}</div>
             {j.requester&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>🙋 {j.requester}{j.requester_unit?` · ${j.requester_unit}`:""}</div>}
-            {j.zorluk&&<div style={{marginTop:5}}>{zChip(j)}</div>}
+            {j.zorluk&&canJobAct&&<div style={{marginTop:5}}>{zChip(j)}</div>}
           </div>);})}
         </div>}
       </div>)}
@@ -3479,9 +3479,29 @@ function AppInner(){
     </div></div>);
   };
   // ═══ v5.43: Personelin kendi haftası (yalnız kendi satırı; işaretler şef ekranında) ═══
+  // v5.44: puan yalnız şef / iş yöneticisi / yöneticide. Personel davranış karnesini görür (iş seçmeyi etkilemesin diye).
   const renderMyVerim=()=>{
     const V=benVerim?.v;if(!V)return null;
     const k=(Array.isArray(V.kisiler)?V.kisiler:[]).find(x=>x.id===profile?.id);if(!k)return null;
+    if(!V.yon){
+      const e=(V.ekip||{})[profile?.department||"mekanik"]||{};
+      const ust=k.ust_dk,fo=k.foto_yuzde,pas=Number(k.pas)||0,tek=Number(k.tekrar_ariza)||0,bek=Number(k.bekleyen)||0;
+      const az=(v,iyi,orta)=>v==null?[C.bg,C.text]:v<=iyi?[C.greenD,C.green]:v<=orta?[C.orangeD,C.orange]:[C.redD,C.red];
+      const cok=(v,iyi,orta)=>v==null?[C.bg,C.text]:v>=iyi?[C.greenD,C.green]:v>=orta?[C.orangeD,C.orange]:[C.redD,C.red];
+      const t1=az(ust,15,30),t2=cok(fo,90,50),t3=az(pas,0,2);
+      return(<div style={{...S.crd,cursor:"default",marginBottom:12}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}><div style={{fontSize:10,color:C.muted,fontWeight:700,letterSpacing:0.3}}>📋 BU HAFTAKİ KARNEM</div><div style={{fontSize:10,color:C.muted}}>{gunAy(V.bas)} – {gunAy(V.bit)}</div></div>
+        <div style={S.stB}>
+          <div style={S.st(C.accentD)}><div style={{fontSize:16,fontWeight:800,color:C.accent}}>{k.is||0}</div><div style={{fontSize:9,color:C.dim}}>Kapattığın iş</div></div>
+          <div style={S.st(t1[0])}><div style={{fontSize:16,fontWeight:800,color:t1[1]}}>{ust!=null?`${ust} dk`:"—"}</div><div style={{fontSize:9,color:C.dim}}>Üstlenme</div></div>
+          <div style={S.st(t2[0])}><div style={{fontSize:16,fontWeight:800,color:t2[1]}}>{fo!=null?`%${fo}`:"—"}</div><div style={{fontSize:9,color:C.dim}}>Fotoğraflı</div></div>
+          <div style={S.st(t3[0])}><div style={{fontSize:16,fontWeight:800,color:t3[1]}}>{pas}</div><div style={{fontSize:9,color:C.dim}}>Devredilen</div></div>
+        </div>
+        <div style={{fontSize:11,color:C.dim,marginTop:8}}>Hedef: üstlenme ≤15 dk · fotoğraflı ≥%90 · devredilen 0{e.ust_dk!=null?` · ekip ortası ${e.ust_dk} dk`:""}</div>
+        <div style={{fontSize:11,color:tek||bek?C.orange:C.dim,marginTop:4}}>{tek?`🔁 ${tek} işin 7 gün içinde yeniden arızalandı. `:"🔁 Tekrar arıza yok. "}{bek?`⏳ ${bek} iş 1 günden uzun üzerinde bekliyor.`:""}</div>
+        <div style={{fontSize:10,color:C.muted,marginTop:4}}>İşler sırayla ve adil dağıtılır. Hızlı üstlen, bitince fotoğrafını at — karnen bununla yükselir.</div>
+      </div>);
+    }
     const e=(V.ekip||{})[profile?.department||"mekanik"]||{};const o=k.oran;
     const renk=o==null?C.text:o>=80?C.green:o>=50?C.orange:C.red;
     return(<div style={{...S.crd,cursor:"default",marginBottom:12}}>
@@ -3508,7 +3528,7 @@ function AppInner(){
         return(<div key={j.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,padding:"7px 0",borderTop:`1px solid ${C.border}`}}>
           <div style={{flex:1,minWidth:0,cursor:"pointer"}} onClick={()=>{setPage("faults");setFaultTab("jobs");setPjTab((j.shift||"day")==="night"?"night":"day");}}>
             <div style={{fontSize:13,fontWeight:600}}>{pr[0]} {j.is_no?`#${j.is_no} `:""}{j.title}</div>
-            <div style={{fontSize:10,color:over?C.red:C.muted}}>{j.location?`📍 ${j.location} · `:""}{kalanTxt(j.due_at)}{!j.assigned_to?" · ekip işi":""}{ZR[j.zorluk]?` · ⚙️ ${ZR[j.zorluk].ad} ${jPuan(j)}p`:""}</div>
+            <div style={{fontSize:10,color:over?C.red:C.muted}}>{j.location?`📍 ${j.location} · `:""}{kalanTxt(j.due_at)}{!j.assigned_to?" · ekip işi":""}{canJobAct&&ZR[j.zorluk]?` · ⚙️ ${ZR[j.zorluk].ad} ${jPuan(j)}p`:""}</div>
           </div>
           {!j.claimed_by
             ?<button style={S.btnS(j.priority==="acil"?C.red:C.accent,"#fff")} disabled={submitting} onClick={()=>claimJob(j)}>👷 Üstlen</button>
