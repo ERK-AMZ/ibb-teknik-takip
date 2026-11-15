@@ -5,7 +5,7 @@ import { supabase, signIn, signOut, getProfiles, createOvertime, updateOvertime,
 const toArr=(v)=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'&&Array.isArray(v.data))return v.data;return[];};
 // === Önbellek (stale-while-revalidate): açılışta anında veri, arkada tazeleme ===
 const CACHE_KEY='ibb_cache_v1';
-const APP_VERSION='5.44';
+const APP_VERSION='5.45';
 // v5.43: iPhone Safari / Android Chrome adres çubuğu: 100vh ekranı taşırır → destekleniyorsa dvh
 const VH=(()=>{try{return typeof CSS!=="undefined"&&CSS.supports&&CSS.supports("height","100dvh")?"dvh":"vh";}catch(e){return "vh";}})();
 const VAPID_PUB='BN2YP7MOPhouxNjYjzbuOJznU5xocT3gQW3JeHUnHn3hvRCDdlIvRUDifICb_S0rc_-DqUtWRim0ehxn7UdaV3M';
@@ -79,6 +79,13 @@ const ZR={
   5:{ad:"Proje",p:24,sure:"1 gün+",c:C.red,bg:C.redD,ornek:"yeni sıhhi tesisat/elektrik hattı, WC komple yenileme"}};
 const jPuan=j=>{const r=j&&ZR[j.zorluk];if(!r)return 0;return j.zorluk===5&&j.puan_ozel?Number(j.puan_ozel):r.p;};
 const gunAy=x=>{try{return new Date(String(x).slice(0,10)+"T12:00:00").toLocaleDateString("tr-TR",{day:"numeric",month:"short"});}catch(e){return String(x||"");}};
+// v5.45 yardımcıları
+const sayi=x=>{const n=Number(x);return Number.isFinite(n)?(Math.round(n*100)/100).toLocaleString("tr-TR"):"—";};
+const trAra=x=>String(x||"").toLocaleLowerCase("tr-TR").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/ı/g,"i");
+const BEKLE_AD={parca:"Parça bekleniyor",servis:"Servis firması bekleniyor",erisim:"Erişim bekleniyor",onay:"Onay bekleniyor",diger:"Bekliyor"};
+const sureKisa=bas=>{const dk=Math.max(0,Math.round((Date.now()-new Date(bas).getTime())/60000));return dk<60?`${dk} dk`:dk<1440?`${Math.round(dk/60)} sa`:`${Math.floor(dk/1440)} gün`;};
+const tlFmt=x=>x==null||x===""||isNaN(Number(x))?"—":Number(x).toLocaleString("tr-TR",{maximumFractionDigits:0})+" ₺";
+const fiyatOku=v=>{let t=String(v??"").trim().replace(/\s|₺|TL/gi,"");if(t==="")return null;if(t.includes(","))t=t.replace(/\./g,"").replace(",",".");else if(/^\d{1,3}(\.\d{3})+$/.test(t))t=t.replace(/\./g,"");const n=Number(t);return Number.isFinite(n)&&n>=0&&n<1e7?n:NaN;};
 const nf1=x=>x==null||x===""||isNaN(Number(x))?"—":Number(x).toLocaleString("tr-TR",{maximumFractionDigits:1});
 // Birim yazımı: büyük rakamın yanında küçük "sa" / "gün"
 const UN={fontSize:"0.75em",fontWeight:600,marginLeft:2};
@@ -408,9 +415,14 @@ function TalepForm({bina,s}){
   </div>);
 }
 function TakipView({token,s}){
-  const[d,setD]=useState(null);const[hata,setHata]=useState("");
+  const[d,setD]=useState(null);const[hata,setHata]=useState("");const[mn,setMn]=useState({acik:false,yuk:false,hata:null,son:null});
   const yukle=useCallback(async()=>{try{const{data,error}=await supabase.rpc("talep_durum",{p_token:token});if(error)throw error;
     if(data?.ok){setD(data);setHata("");}else setHata(data?.hata||"Talep bulunamadı");}catch(e){setHata("Bağlantı hatası — tekrar deneniyor…");}},[token]);
+  const cevap=async(deger,neden)=>{setMn(m=>({...m,yuk:true,hata:null}));
+    try{const{data,error}=await supabase.rpc("talep_memnun",{p_token:token,p_deger:deger,p_neden:neden||null});if(error)throw error;
+      if(data?.ok){setMn({acik:false,yuk:false,hata:null,son:deger===1?"evet":"hayir"});await yukle();}
+      else setMn(m=>({...m,yuk:false,hata:data?.hata||"Kaydedilemedi"}));}
+    catch(e){setMn(m=>({...m,yuk:false,hata:"Bağlantı hatası — tekrar dene"}));}};
   useEffect(()=>{document.title="Talep Takibi · Teknik Takip";yukle();const iv=setInterval(()=>{if(!document.hidden)yukle();},30000);return()=>clearInterval(iv);},[yukle]);
   const kayit=(()=>{const l=lsGet(TALEP_LS,[]);return Array.isArray(l)?l.find(x=>x&&x.t===token):null;})();
   const binaId=kayit&&RX_UUID.test(String(kayit.bina||""))?kayit.bina:null;
@@ -435,6 +447,22 @@ function TakipView({token,s}){
         <div style={{paddingTop:2}}><div style={{fontSize:14,fontWeight:on?700:500}}>{t}</div>{z&&<div style={{fontSize:11,color:C.muted}}>{pubHm(z)}</div>}</div></div>))}</div>
       {st==="open"&&<div style={{fontSize:11,color:C.muted,marginTop:6}}>{d.son?`Hedef bitiş: ${pubHm(d.son)} · `:""}Sayfa kendini yeniler</div>}
     </div>}
+    {d&&st==="open"&&d.bekliyor&&<div style={{...s.box,background:C.orangeD,color:C.orange,fontSize:13,fontWeight:600}}>⏸️ İş beklemede ({d.bekliyor}). Gelince ekip devam edecek.</div>}
+    {d&&st==="open"&&!d.bekliyor&&(d.geri>0||mn.son==="hayir")&&<div style={{...s.box,fontSize:13,color:C.orange,fontWeight:600}}>🔁 Talebiniz yeniden açıldı — aynı ekip tekrar ilgileniyor.</div>}
+    {d&&d.soru&&<div style={s.box}>
+      <div style={{fontSize:16,fontWeight:800,marginBottom:4}}>Sorun çözüldü mü?</div>
+      <div style={{fontSize:12,color:C.dim,marginBottom:6}}>Cevabınız ekibin işini iyileştirir. 48 saat içinde yanıtlayabilirsiniz.</div>
+      {!mn.acik?<div style={{display:"flex",gap:8}}>
+        <button disabled={mn.yuk} onClick={()=>cevap(1)} style={{...s.btn(C.green,"#fff"),flex:1,marginTop:0,padding:"13px 8px"}}>👍 Evet, çözüldü</button>
+        <button disabled={mn.yuk} onClick={()=>setMn(m=>({...m,acik:true}))} style={{...s.btn(C.redD,C.red),flex:1,marginTop:0,padding:"13px 8px"}}>👎 Hâlâ sorun var</button>
+      </div>:<div>
+        <div style={{fontSize:13,fontWeight:700,marginBottom:2}}>Ne oldu?</div>
+        {[["hic","Hiç yapılmamış"],["kismen","Kısmen yapılmış"],["yine","Yine bozuldu"]].map(([k,t])=>(<button key={k} disabled={mn.yuk} onClick={()=>cevap(-1,k)} style={{...s.btn(C.card,C.text),border:`1px solid ${C.border}`}}>{t}</button>))}
+        <button disabled={mn.yuk} onClick={()=>setMn(m=>({...m,acik:false}))} style={s.btn("transparent",C.muted)}>↩️ Vazgeç</button>
+      </div>}
+      {mn.hata&&<div style={{fontSize:12,color:C.red,marginTop:6}}>{mn.hata}</div>}
+    </div>}
+    {d&&st==="done"&&!d.soru&&(d.memnun===1||mn.son==="evet")&&<div style={{...s.box,textAlign:"center",fontSize:13,color:C.green,fontWeight:700}}>👍 Geri bildiriminiz alındı — teşekkürler!</div>}
     {binaId&&<a href={`${window.location.origin}/?talep=${binaId}`} style={{...s.btn(C.card,C.text),border:`1px solid ${C.border}`}}>➕ Yeni talep</a>}
   </div>);
 }
@@ -580,7 +608,11 @@ function AppInner(){
   const[gnSheet,setGnSheet]=useState(null);
   const PJ_BOS={title:"",desc:"",loc:"",pri:"normal",asgs:[],dept:"",mode:"auto",src:"app",req:""};
   const[pjForm,setPjForm]=useState(PJ_BOS);
-  const[modDone,setModDone]=useState(null);   // v5.39: işi kapatma (not + fotoğraf)
+  const[modDone,setModDone]=useState(null);
+  const[modBekle,setModBekle]=useState(null);   // v5.45: ⏸️ beklemeye alma {j,asama,oneri,firmalar,ara,not,uyari}
+  const[sayim,setSayim]=useState({yuk:false,veri:null,giris:{},ekstra:[],ekle:"",sonuc:null,fiyat:null,fiyatGiris:{}}); // v5.45: depo sayımı + fiyat
+  const[memnunAcik,setMemnunAcik]=useState(null); // v5.45: 👎 nedeni açık olan iş
+  const[memnunGizli,setMemnunGizli]=useState(()=>{const l=lsGet("ibb_memnun_gizli",[]);return Array.isArray(l)?l:[];});   // v5.39: işi kapatma (not + fotoğraf)
   const[modPaste,setModPaste]=useState(null); // v5.39: WhatsApp'tan yapıştır {txt, items}
   const[rapor,setRapor]=useState({acik:false,donem:"bu",veri:null,verim:null,yuk:false,bas:null,bit:null}); // v5.43: performans + verim
   const[vSec,setVSec]=useState(null);           // v5.43: verim listesinde açılan kişi
@@ -1258,7 +1290,24 @@ function AppInner(){
     }catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
   }
-  function completePendingJob(j){setModDone({j,note:"",file:null});}
+  function completePendingJob(j){
+    if(j.is_tipi==="stok_sayim"){setPage("depo");setDepoTab("sayim");setToast("📦 Sayımı buradan gir — kaydedince iş kendiliğinden kapanır");return;}
+    setModDone({j,note:"",fotolar:[],secim:{},oneri:null,ara:""});
+    (async()=>{try{const{data}=await supabase.rpc("app_kapanis_onerileri",{p_job:j.id});
+      const sec={};(data?.secili||[]).forEach(x=>{sec[x.id]=x.sarf?{sarf:true}:{adet:Math.max(1,Number(x.adet)||1)};});
+      setModDone(m=>m&&m.j.id===j.id?{...m,oneri:data?.ok?(data.oneriler||[]):[],secim:Object.keys(m.secim||{}).length?m.secim:sec}:m);
+    }catch(e){setModDone(m=>m&&m.j.id===j.id?{...m,oneri:[]}:m);}})();
+  }
+  // v5.45: fotoğraflar seçilir seçilmez arka planda yüklenir; kapat'a basınca beklenmez
+  function kapanisFotoEkle(fl){
+    const j=modDone?.j;if(!j||!fl||!fl.length)return;
+    const dosyalar=[...fl].slice(0,8);
+    const yeni=dosyalar.map(f=>({id:Math.random().toString(36).slice(2),durum:"yukleniyor",url:null,onizleme:(()=>{try{return URL.createObjectURL(f);}catch(e){return null;}})()}));
+    setModDone(m=>m?{...m,fotolar:[...m.fotolar,...yeni].slice(0,8)}:m);
+    yeni.forEach((y,i)=>{uploadJobPhoto(dosyalar[i],j.id).then(
+      url=>setModDone(m=>m?{...m,fotolar:m.fotolar.map(x=>x.id===y.id?{...x,durum:"tamam",url}:x)}:m),
+      e=>setModDone(m=>m?{...m,fotolar:m.fotolar.map(x=>x.id===y.id?{...x,durum:"hata",hata:e?.message||"Yüklenemedi"}:x)}:m));});
+  }
   // v5.39: bitiş fotoğrafı (küçültülür; çözülemeyen biçimde dosya olduğu gibi yüklenir)
   async function uploadJobPhoto(file,jobId){
     let body=file,url;
@@ -1278,19 +1327,110 @@ function AppInner(){
   }
   async function submitDone(){
     const md=modDone;if(!md?.j)return;const j=md.j;
+    if(md.fotolar.some(f=>f.durum==="yukleniyor")){setToast("📷 Fotoğraf yükleniyor, birkaç saniye…");return;}
+    const urls=md.fotolar.filter(f=>f.durum==="tamam"&&f.url).map(f=>f.url);
+    if(urls.length===0){setToast("📷 En az 1 fotoğraf çek");return;}
+    const malz=Object.entries(md.secim||{}).filter(([,v])=>v&&(v.sarf||Number(v.adet)>0)).map(([id,v])=>v.sarf?{id}:{id,adet:Number(v.adet)||1});
     setSubmitting(true);
     try{
-      let foto=null;
-      if(md.file){setToast("📷 Fotoğraf yükleniyor…");foto=await uploadJobPhoto(md.file,j.id);}
-      const up={status:"done",completed_by:profile.id,completed_at:new Date().toISOString(),completed_note:(md.note||"").trim()};
-      if(foto)up.done_photo=foto;
-      const{error}=await supabase.from("pending_jobs").update(up).eq("id",j.id);
+      const{data,error}=await supabase.rpc("app_kapat",{p_job:j.id,p_fotolar:urls,p_malzeme:malz,p_not:(md.note||"").trim()});
       if(error)throw error;
-      setModDone(null);await fetchPendingJobs();
-      const gec=j.due_at&&Date.now()>new Date(j.due_at).getTime();
-      setToast(gec?"✅ İş tamamlandı (süre aşımıyla)":"✅ İş zamanında tamamlandı");
+      if(!data?.ok){setToast("⚠ "+(data?.hata||"Kapatılamadı"));}
+      else{
+        md.fotolar.forEach(f=>{if(f.onizleme){try{URL.revokeObjectURL(f.onizleme);}catch(e){}}});
+        setModDone(null);
+        await Promise.all([fetchPendingJobs(),malz.length?fetchMaterials():null,malz.length?fetchStockMovements():null]);
+        const dusen=(Array.isArray(data.stok)?data.stok:[]).filter(x=>!x.sarf).map(x=>`${x.ad} ×${sayi(x.adet)} (kalan ${sayi(x.kalan)})`).join(", ");
+        const gec=j.due_at&&Date.now()>new Date(j.due_at).getTime();
+        setToast(`✅ ${data.is_no?"#"+data.is_no+" ":""}kapandı${gec?" (süre aşımıyla)":""}${dusen?" · stoktan düştü: "+dusen:""}`);
+      }
     }catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
+  }
+  // v5.45: ⏸️ Bekliyor / ▶️ Devam (Telegram'daki akışın aynısı)
+  function openBekle(j){
+    setModBekle({j,asama:"neden",oneri:null,firmalar:null,ara:"",not:"",uyari:null});
+    (async()=>{try{const{data}=await supabase.rpc("app_bekle_onerileri",{p_job:j.id});
+      setModBekle(m=>m&&m.j.id===j.id?{...m,oneri:data?.ok?(data.parcalar||[]):[],firmalar:data?.ok?(data.firmalar||[]):[]}:m);
+    }catch(e){setModBekle(m=>m&&m.j.id===j.id?{...m,oneri:[],firmalar:[]}:m);}})();
+  }
+  async function bekleGonder(neden,ek={}){
+    const mb=modBekle;if(!mb)return;
+    setSubmitting(true);
+    try{
+      const{data,error}=await supabase.rpc("app_bekle",{p_job:mb.j.id,p_neden:neden,p_mat:ek.mat||null,p_firma:ek.firma||null,
+        p_erisim:ek.erisim||null,p_aciklama:(ek.aciklama||"").trim()||null,p_zorla:!!ek.zorla});
+      if(error)throw error;
+      if(!data?.ok){
+        if(data?.stokta!=null)setModBekle(m=>m?{...m,uyari:{mat:ek.mat,metin:data.hata}}:m);
+        else setToast("⚠ "+(data?.hata||data?.toast||"Kaydedilemedi"));
+      }else{setModBekle(null);setToast(data.toast||"⏸️ Beklemeye alındı");await fetchPendingJobs();}
+    }catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+  async function devamEt(j){
+    setSubmitting(true);
+    try{const{data,error}=await supabase.rpc("app_devam",{p_job:j.id});if(error)throw error;
+      setToast(data?.ok?(data.toast||"▶️ Devam"):"⚠ "+(data?.hata||data?.toast||"Kaydedilemedi"));await fetchPendingJobs();}
+    catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+  // v5.45: işi açan (şef/yönetici) için 👍/👎 — 48 saat
+  async function memnunCevap(j,deger,neden){
+    setSubmitting(true);
+    try{const{data,error}=await supabase.rpc("app_memnun",{p_job:j.id,p_deger:deger,p_neden:neden||null});if(error)throw error;
+      setToast(data?.ok?(data.toast||"Kaydedildi"):"⚠ "+(data?.hata||"Kaydedilemedi"));setMemnunAcik(null);
+      if(!data?.ok)memnunGizle(j.id);await fetchPendingJobs();}
+    catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+  function memnunGizle(id){setMemnunGizli(l=>{const n=[...l.filter(x=>x!==id),id].slice(-60);lsSet("ibb_memnun_gizli",n);return n;});}
+  // v5.45: depo sayımı ve fiyat listesi
+  async function fetchSayim(){
+    const bid=selBuilding||profile?.building_id;if(!bid)return;
+    setSayim(x=>({...x,yuk:true}));
+    try{const{data,error}=await supabase.rpc("sayim_listesi",{p_bina:bid});if(error)throw error;
+      if(!data?.ok)setToast("⚠ "+(data?.hata||"Sayım listesi alınamadı"));
+      setSayim(x=>({...x,yuk:false,veri:data?.ok?data:null}));}
+    catch(e){setSayim(x=>({...x,yuk:false}));setToast("Hata: "+(e?.message||""));}
+  }
+  async function sayimKaydet(){
+    const v=sayim.veri;const g=sayim.giris||{};
+    const items=Object.keys(g).filter(id=>String(g[id]).trim()!=="").map(id=>({material_id:id,sayilan:Number(String(g[id]).replace(",","."))}))
+      .filter(x=>Number.isFinite(x.sayilan)&&x.sayilan>=0);
+    if(items.length===0){setToast("Rafta saydığın miktarı yaz");return;}
+    setSubmitting(true);
+    try{const{data,error}=await supabase.rpc("stok_sayim_kaydet",{p_items:items,p_job:v?.is?.id||null});if(error)throw error;
+      if(!data?.ok)setToast("⚠ "+(data?.hata||"Kaydedilemedi"));
+      else{
+        setSayim(x=>({...x,giris:{},ekstra:[],ekle:"",sonuc:data}));
+        setToast(data.kapandi?`✅ Sayım tamam — #${data.is_no} kapandı`:`💾 ${data.kalem} kalem kaydedildi${data.fark_kalem?` · ${data.fark_kalem} kalemde fark`:" · fark yok"}`);
+        await Promise.all([fetchSayim(),fetchMaterials(),fetchStockMovements(),data.kapandi?fetchPendingJobs():null]);
+      }}
+    catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
+  async function fetchFiyat(){
+    const bid=selBuilding||profile?.building_id;if(!bid)return;
+    try{const{data,error}=await supabase.rpc("malzeme_fiyat_listesi",{p_bina:bid,p_adet:50});if(error)throw error;
+      setSayim(x=>({...x,fiyat:data?.ok?data:{kalemler:[],hata:data?.hata}}));}
+    catch(e){setToast("Hata: "+(e?.message||""));}
+  }
+  async function malzemeAyar(m,patch,sessiz){
+    try{const{error}=await supabase.from("materials").update(patch).eq("id",m.id);if(error)throw error;
+      setMaterials(L=>L.map(x=>x.id===m.id?{...x,...patch}:x));
+      setSelMaterial(x=>x&&x.id===m.id?{...x,...patch}:x);
+      setSayim(x=>x.fiyat?{...x,fiyat:{...x.fiyat,kalemler:(x.fiyat.kalemler||[]).map(k=>k.id===m.id?{...k,fiyat:"birim_fiyat" in patch?patch.birim_fiyat:k.fiyat,tur:patch.tur||k.tur}:k)}}:x);
+      if(!sessiz)setToast("✓ Kaydedildi");return true;}
+    catch(e){setToast("Hata: "+(e?.message||""));return false;}
+  }
+  async function fiyatKaydet(m,deger){
+    const n=fiyatOku(deger);
+    if(Number.isNaN(n)){setToast("Geçerli fiyat yaz (örn. 125,50)");return;}
+    const eski=m.fiyat!=null?Number(m.fiyat):(m.birim_fiyat!=null?Number(m.birim_fiyat):null);
+    if(n===eski)return;
+    const ok=await malzemeAyar(m,{birim_fiyat:n,fiyat_tarih:n==null?null:new Date().toISOString()},true);
+    if(ok){setSayim(x=>{const fg={...(x.fiyatGiris||{})};delete fg[m.id];return{...x,fiyatGiris:fg};});setToast(n==null?"Fiyat silindi":`💰 ${tlFmt(n)} kaydedildi`);}
   }
   // ═══ Mesai ücreti ödendi (admin): izin hakkı bakiyeden düşülür ═══
   async function otRefresh(ids){
@@ -1399,9 +1539,10 @@ function AppInner(){
     try{
       const[a,b]=await Promise.all([supabase.rpc("job_rapor",{p_bina:bid,p_bas:bas,p_bit:bit}),
         canJobAct?supabase.rpc("personel_verim",{p_bina:bid,p_bas:bas,p_bit:bit}):Promise.resolve({data:null})]);
+      const fb=canJobAct?await Promise.resolve(supabase.rpc("faz_b_rapor",{p_bina:bid,p_bas:bas,p_bit:bit})).catch(()=>({data:null})):{data:null};
       if(a.error)throw a.error;
       if(!a.data?.ok)setToast("⚠ "+(a.data?.hata||"Rapor alınamadı"));
-      setRapor(r=>({...r,veri:a.data?.ok?a.data:null,verim:b&&b.data&&b.data.ok?b.data:null,yuk:false,bas,bit}));
+      setRapor(r=>({...r,veri:a.data?.ok?a.data:null,verim:b&&b.data&&b.data.ok?b.data:null,fazB:fb&&fb.data&&fb.data.ok?fb.data:null,yuk:false,bas,bit}));
     }catch(e){setToast("Hata: "+(e?.message||""));setRapor(r=>({...r,yuk:false}));}
   }
   // v5.43: iş zorluğu — şef/yönetici değiştirir (job_zorluk_ata), herkes görür
@@ -2087,12 +2228,15 @@ function AppInner(){
     };
     window.addEventListener("popstate",h);return()=>window.removeEventListener("popstate",h);
   },[page,anaSayfa]);
+  // v5.45: depo sayımı / fiyat sekmesi açılınca listeyi getir
+  useEffect(()=>{if(!session||page!=="depo")return;if(depoTab==="sayim")fetchSayim();else if(depoTab==="fiyat"&&!sayim.fiyat)fetchFiyat();},[session,page,depoTab,selBuilding]);
   // v5.43: personelin kendi haftası (ana sayfa kartı) — 5 dk önbellek
   useEffect(()=>{
     if(!session||!(isPerso||isViewer)||page!=="dashboard")return;
     if(benVerim&&Date.now()-benVerim.ts<5*60000)return;
     let canli=true;const[bas,bit]=donemAralik("bu");
-    (async()=>{try{const{data}=await supabase.rpc("personel_verim",{p_bas:bas,p_bit:bit});if(canli&&data?.ok)setBenVerim({v:data,ts:Date.now()});}catch(e){}})();
+    (async()=>{try{const[r1,r2]=await Promise.all([supabase.rpc("personel_verim",{p_bas:bas,p_bit:bit}),Promise.resolve(supabase.rpc("karnem_ek",{p_bas:bas,p_bit:bit})).catch(()=>({data:null}))]);
+      if(canli&&r1.data?.ok)setBenVerim({v:r1.data,ts:Date.now(),ek:r2&&r2.data&&r2.data.ok?r2.data:null});}catch(e){}})();
     return()=>{canli=false;};
   },[session,isPerso,isViewer,page]);
 
@@ -2246,6 +2390,14 @@ function AppInner(){
     setSubmitting(false);
   }
 
+  // v5.45: arıza silme (yalnız yönetici düğmesi; önceden tanımsızdı, basınca uygulama hata veriyordu)
+  async function deleteFault(id){
+    setSubmitting(true);
+    try{const{error}=await supabase.from('faults').delete().eq('id',id);if(error)throw error;
+      setDeleteConfirm(null);setSelFault(null);await fetchFaults();setToast("🗑 Arıza silindi");}
+    catch(e){setToast("Hata: "+(e?.message||""));}
+    setSubmitting(false);
+  }
   async function submitService(faultId){
     if(!serviceForm.service_name){setToast("⚠ Servis adı zorunlu");return;}
     if(!serviceForm.visit_date){setToast("⚠ Ziyaret tarihi seçin");return;}
@@ -2314,6 +2466,9 @@ function AppInner(){
           {j.assign_mode==="auto"&&<div style={S.tag(C.purpleD,C.purple)}>🤖 Otomatik</div>}
           {pas.length>0&&<div style={S.tag(C.orangeD,C.orange)}>↪ {pas.length} kez devredildi{canJobAct?`: ${pas.map(id=>(getU(id)?.full_name||"?").split(" ")[0]).join(", ")}`:""}</div>}
           {j.arrived_at&&<div style={S.tag(C.tealD,C.teal)}>📍 Sahada {hmTxt(j.arrived_at)}</div>}
+          {j.bekle_bas&&<div style={S.tag(C.orangeD,C.orange)}>⏸️ {BEKLE_AD[j.bekle_neden]||"Bekliyor"} · {sureKisa(j.bekle_bas)}</div>}
+          {(j.geri_sayisi||0)>0&&<div style={S.tag(C.redD,C.red)}>🔁 Talep sahibi geri açtı{j.geri_sayisi>1?` ×${j.geri_sayisi}`:""}</div>}
+          {j.is_tipi==="stok_sayim"&&<div style={S.tag(C.purpleD,C.purple)}>📦 Depo → Sayım ekranından girilir</div>}
           {clm?<div style={S.tag(C.greenD,C.green)}>👷 {clm.full_name} üstlendi {j.claimed_at?hmTxt(j.claimed_at):""}</div>
             :otoKalan!==null&&bekleDk>=0?<div style={S.tag(otoKalan<=3||mine?C.redD:C.orangeD,otoKalan<=3||mine?C.red:C.orange)}>⏱ {otoKalan>0?`${otoKalan} dk içinde üstlenilmezse sıradakine geçer`:"sıradakine geçiyor"}</div>
             :j.priority==="acil"&&(bekleDk<0
@@ -2331,7 +2486,9 @@ function AppInner(){
           {mine&&!isAmir&&j.claimed_by&&!j.arrived_at&&<button style={{...S.btnS(C.teal,"#fff"),flex:"1 1 150px",padding:"10px 12px"}} disabled={submitting} onClick={()=>arriveJob(j)}>📍 Vardım, başladım</button>}
           {canJobAct&&<button style={{...S.btnS(C.bg,C.text),flex:"1 1 70px"}} disabled={submitting} onClick={()=>{setAsgSel([j.assigned_to,...(Array.isArray(j.team)?j.team:[])].filter(Boolean));setModAssign(j);}}>👤 Ata</button>}
           {!isNight&&canJobAct&&<button style={{...S.btnS(C.blueD,C.blue),flex:"1 1 120px"}} disabled={submitting} onClick={()=>pjOpenNightPick(j)}>🌙 Geceye Devret</button>}
-          {canClose&&<button style={{...S.btnS(C.greenD,C.green),flex:"1 1 100px"}} disabled={submitting} onClick={()=>completePendingJob(j)}>✅ Yapıldı</button>}
+          {j.bekle_bas&&(mine||canJobAct)&&!isAmir&&<button style={{...S.btnS(C.orange,"#fff"),flex:"1 1 150px",padding:"10px 12px"}} disabled={submitting} onClick={()=>devamEt(j)}>▶️ Devam ediyorum</button>}
+          {canClose&&<button style={{...S.btnS(C.greenD,C.green),flex:"1 1 100px"}} disabled={submitting} onClick={()=>completePendingJob(j)}>{j.is_tipi==="stok_sayim"?"📦 Sayımı yap":"✅ Yapıldı"}</button>}
+          {!j.bekle_bas&&j.claimed_by&&(mine||canJobAct)&&!isAmir&&j.is_tipi!=="stok_sayim"&&<button style={{...S.btnS(C.orangeD,C.orange),flex:"1 1 100px"}} disabled={submitting} onClick={()=>openBekle(j)}>⏸️ Bekliyor</button>}
           {isNight&&canClose&&<button style={{...S.btnS(C.redD,C.red),flex:"1 1 110px"}} disabled={submitting} onClick={()=>pjNotDone(j)}>✗ Yapılamadı</button>}
           {!isNight&&<button style={{...S.btnS(C.orangeD,C.orange),flex:"1 1 90px"}} onClick={()=>addPjReason(j)}>📝 Sebep</button>}
           {canDel&&<button style={{...S.btnS(C.bg,C.muted),flex:"0 0 auto",padding:"10px 12px"}} disabled={submitting} onClick={()=>deleteJob(j)} title="İş emrini sil">🗑 Sil</button>}
@@ -2447,6 +2604,7 @@ function AppInner(){
               {rapor.bas&&<div style={{fontSize:10,color:C.muted,textAlign:"center",marginBottom:8}}>{gunAy(rapor.bas)} – {gunAy(rapor.bit)}</div>}
               {rapor.yuk&&<div style={{fontSize:12,color:C.muted,marginBottom:6}}>Yükleniyor…</div>}
               {rapor.verim&&renderVerim(rapor.verim)}
+              {rapor.fazB&&renderFazB(rapor.fazB)}
               {T&&<>
                 <div style={{fontSize:13,fontWeight:800,margin:"4px 0 6px"}}>⏱ İş akışı <span style={{fontSize:11,fontWeight:500,color:C.muted}}>· bu dönemde açılan işler</span></div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6,marginBottom:8}}>
@@ -2906,11 +3064,11 @@ function AppInner(){
     setSubmitting(true);
     try{
       const mat=modStockOut;
-      await supabase.from('stock_movements').insert({material_id:mat.id,personnel_id:profile.id,quantity:qty,movement_type:'out',purpose:stockOutForm.purpose,location:stockOutForm.location||"",movement_date:new Date().toISOString()});
+      await supabase.from('stock_movements').insert({material_id:mat.id,personnel_id:profile.id,quantity:qty,movement_type:'out',purpose:stockOutForm.purpose,location:stockOutForm.location||"",movement_date:new Date().toISOString(),job_id:stockOutForm.job_id||null});
       const newStock=Math.max(0,(mat.current_stock||0)-qty);
       await supabase.from('materials').update({current_stock:newStock}).eq('id',mat.id);
       await fetchMaterials();await fetchStockMovements();
-      setModStockOut(null);setStockOutForm({quantity:"",purpose:"",location:""});
+      setModStockOut(null);setStockOutForm({quantity:"",purpose:"",location:"",job_id:""});
       if(newStock<=mat.min_stock)setToast("⚠ "+mat.name+" kritik seviyenin altında! ("+newStock+" "+mat.unit+")");
       else setToast("✓ "+qty+" "+mat.unit+" "+mat.name+" çıkışı yapıldı");
     }catch(e){setToast("Hata: "+(e?.message||""));}
@@ -2988,7 +3146,7 @@ function AppInner(){
       <div style={S.sec}><span>📦</span> Depo & Stok</div>
       {/* Tabs */}
       <div style={{display:"flex",gap:6,marginBottom:12,overflowX:"auto"}}>
-        {[{k:"stock",l:"📦 Stok",c:bMaterials.length},{k:"purchase",l:"🛒 Satın Alma",c:purchaseList.length},{k:"history",l:"📋 Hareketler",c:null}].map(t=>(
+        {[{k:"stock",l:"📦 Stok",c:bMaterials.length},{k:"sayim",l:"🧮 Sayım",c:null},{k:"purchase",l:"🛒 Satın Alma",c:purchaseList.length},{k:"history",l:"📋 Hareketler",c:null},...(canEditFault?[{k:"fiyat",l:"💰 Fiyat",c:null}]:[])].map(t=>(
           <button key={t.k} style={{padding:"8px 14px",borderRadius:10,border:"2px solid "+(depoTab===t.k?C.accent:C.border),background:depoTab===t.k?C.accentD:"transparent",color:depoTab===t.k?C.accent:C.muted,fontWeight:700,fontSize:12,cursor:"pointer",whiteSpace:"nowrap"}} onClick={()=>setDepoTab(t.k)}>{t.l}{t.c!==null&&t.c>0?" ("+t.c+")":""}</button>
         ))}
       </div>
@@ -3164,6 +3322,9 @@ function AppInner(){
         </>);
       })()}
 
+      {depoTab==="sayim"&&renderSayim()}
+      {depoTab==="fiyat"&&canEditFault&&renderFiyat()}
+
       {/* HISTORY TAB */}
       {depoTab==="history"&&<>
         {bStockMovements.slice(0,50).map(mv=>{const mat=materials.find(m=>m.id===mv.material_id);const pers=profiles.find(p=>p.id===mv.personnel_id);const isOut=mv.movement_type==="out";return(
@@ -3205,7 +3366,18 @@ function AppInner(){
           <div style={{fontSize:13,fontWeight:700,color:isOut?C.orange:C.green}}>{isOut?"-":"+"}{mv.quantity}</div>
         </div>
       );})}</div>}
-      {canEditFault&&<><div style={S.dv}/><button style={S.btn(C.border,C.text)} onClick={()=>{const newMin=prompt("Yeni minimum stok değeri:",m.min_stock);if(newMin!==null){const v=Number(newMin);if(!isNaN(v)){supabase.from('materials').update({min_stock:v}).eq('id',m.id).then(()=>{fetchMaterials();setSelMaterial({...m,min_stock:v});setToast("✓ Min stok güncellendi");});}}}}> Minimum Stok Düzenle</button></>}
+      {canEditFault&&<><div style={S.dv}/>
+        <div style={S.lbl}>Tür</div>
+        <div style={{display:"flex",gap:6,marginBottom:6}}>{[["parca","🔩 Parça"],["sarf","🧴 Sarf"],["alet","🧰 Alet"]].map(([k,l])=>(
+          <button key={k} style={{...S.btnS((m.tur||"parca")===k?C.accentD:C.bg,(m.tur||"parca")===k?C.accent:C.muted),flex:1,border:`1px solid ${(m.tur||"parca")===k?C.accent:C.border}`}} disabled={submitting} onClick={()=>{if((m.tur||"parca")!==k)malzemeAyar(m,{tur:k});}}>{l}</button>))}</div>
+        <div style={{fontSize:10,color:C.dim,marginBottom:10}}>Parça: kapanışta adetle stoktan düşer. Sarf (silikon, 502…): "kullanıldı" işaretlenir, stok sayımla düzelir. Alet: kapanışta listelenmez.</div>
+        <div style={S.lbl}>Birim fiyat (₺){m.fiyat_tarih?<span style={{fontWeight:400,color:C.muted}}> · {new Date(m.fiyat_tarih).toLocaleDateString("tr-TR")}</span>:null}</div>
+        <div style={{display:"flex",gap:6,alignItems:"stretch"}}>
+          <input key={"bf"+m.id+String(m.birim_fiyat)} aria-label="Birim fiyat" style={{...S.inp,flex:1,marginBottom:0}} inputMode="decimal" placeholder="Örn. 125,50" defaultValue={m.birim_fiyat!=null?String(m.birim_fiyat).replace(".",","):""}
+            onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}} onBlur={e=>fiyatKaydet(m,e.target.value)}/>
+        </div>
+        <div style={{fontSize:10,color:C.dim,margin:"4px 0 6px"}}>Yazıp dışarı dokununca kaydolur. Maliyet raporu bu fiyatla hesaplanır.</div>
+        <button style={S.btn(C.border,C.text)} onClick={()=>{const newMin=prompt("Yeni minimum stok değeri:",m.min_stock);if(newMin!==null){const v=Number(newMin);if(!isNaN(v)){supabase.from('materials').update({min_stock:v}).eq('id',m.id).then(()=>{fetchMaterials();setSelMaterial({...m,min_stock:v});setToast("✓ Min stok güncellendi");});}}}}> Minimum Stok Düzenle</button></>}
       {isAdmin&&<button style={S.btn(C.redD,C.red)} onClick={async()=>{await supabase.from('materials').delete().eq('id',m.id);await fetchMaterials();setSelMaterial(null);setToast("🗑 Malzeme silindi");}}>🗑 Malzemeyi Sil</button>}
       <button style={S.btn(C.border,C.text)} onClick={()=>setSelMaterial(null)}>Kapat</button>
     </div></div>);
@@ -3309,6 +3481,20 @@ function AppInner(){
       <input style={S.inp} placeholder="Örn: 5. kat klima bakımı" value={stockOutForm.purpose} onChange={e=>setStockOutForm(p=>({...p,purpose:e.target.value}))}/>
       <div style={S.lbl}>Lokasyon</div>
       <input style={S.inp} placeholder="Örn: 7. Kat B Blok" value={stockOutForm.location} onChange={e=>setStockOutForm(p=>({...p,location:e.target.value}))}/>
+      {(()=>{const sinir=Date.now()-36*3600000;
+        const isler=bPJobs.filter(x=>x.status==="open"||(x.status==="done"&&x.completed_at&&new Date(x.completed_at).getTime()>sinir))
+          .sort((a,b)=>(a.status==="open"?0:1)-(b.status==="open"?0:1)||String(b.created_at).localeCompare(String(a.created_at))).slice(0,40);
+        const sec=stockOutForm.job_id||"";
+        const zaten=sec&&stockMovements.some(mv=>mv.job_id===sec&&mv.material_id===m.id&&mv.kaynak==="kapanis");
+        return(<>
+          <div style={S.lbl}>İş emri (isteğe bağlı)</div>
+          <select aria-label="İş emri" style={S.sel} value={sec} onChange={e=>{const id=e.target.value;const jj=bPJobs.find(x=>x.id===id);
+            setStockOutForm(p=>({...p,job_id:id,purpose:p.purpose||(jj?`#${jj.is_no||""} ${jj.title}`.trim().slice(0,90):""),location:p.location||(jj?.location||"")}));}}>
+            <option value="">— İşe bağlı değil (proje, teslim…) —</option>
+            {isler.map(x=><option key={x.id} value={x.id}>{x.status==="done"?"✅ ":""}#{x.is_no||"?"} {String(x.title||"").slice(0,48)}</option>)}
+          </select>
+          {zaten&&<div style={{fontSize:12,color:C.orange,marginBottom:8}}>⚠ Bu malzeme bu işin kapanışında zaten stoktan düştü. Tekrar çıkış girersen çift düşer.</div>}
+        </>);})()}
       <button style={S.btn(C.accent)} onClick={doStockOut} disabled={submitting}>{submitting?"...":"Çıkış Yap"}</button>
       <button style={S.btn(C.border,C.text)} onClick={()=>setModStockOut(null)}>İptal</button>
     </div></div>);
@@ -3499,6 +3685,7 @@ function AppInner(){
         </div>
         <div style={{fontSize:11,color:C.dim,marginTop:8}}>Hedef: üstlenme ≤15 dk · fotoğraflı ≥%90 · devredilen 0{e.ust_dk!=null?` · ekip ortası ${e.ust_dk} dk`:""}</div>
         <div style={{fontSize:11,color:tek||bek?C.orange:C.dim,marginTop:4}}>{tek?`🔁 ${tek} işin 7 gün içinde yeniden arızalandı. `:"🔁 Tekrar arıza yok. "}{bek?`⏳ ${bek} iş 1 günden uzun üzerinde bekliyor.`:""}</div>
+        {benVerim?.ek&&<div style={{fontSize:11,color:C.dim,marginTop:4}}>👍 {benVerim.ek.tesekkur||0} teşekkür{benVerim.ek.geri?<span style={{color:C.red}}> · 🔁 {benVerim.ek.geri} iş talep sahibince geri açıldı</span>:null}{benVerim.ek.bekleyen?` · ⏸️ ${benVerim.ek.bekleyen} işin beklemede`:""}{benVerim.ek.malzemeli?` · 🔩 ${benVerim.ek.malzemeli} işte malzeme işaretledin`:""}</div>}
         <div style={{fontSize:10,color:C.muted,marginTop:4}}>İşler sırayla ve adil dağıtılır. Hızlı üstlen, bitince fotoğrafını at — karnen bununla yükselir.</div>
       </div>);
     }
@@ -3513,6 +3700,7 @@ function AppInner(){
         <div style={S.st(o==null?C.bg:o>=80?C.greenD:o>=50?C.orangeD:C.redD)}><div style={{fontSize:16,fontWeight:800,color:renk}}>{o!=null?`%${o}`:"—"}</div><div style={{fontSize:9,color:C.dim}}>Ekibe göre</div></div>
       </div>
       <div style={{fontSize:11,color:C.dim,marginTop:8}}>{e.yeterli&&e.puan_gun!=null?`Ekip ortası ${nf1(e.puan_gun)} puan/gün. `:"Ekip karşılaştırması veri biriktikçe açılır. "}{k.ust_dk!=null?`Ort. üstlenme ${k.ust_dk} dk. `:""}{k.foto_yuzde!=null?`Fotoğraflı kapanış %${k.foto_yuzde}.`:""}</div>
+      {benVerim?.ek&&<div style={{fontSize:11,color:C.dim,marginTop:4}}>👍 {benVerim.ek.tesekkur||0} teşekkür{benVerim.ek.geri?<span style={{color:C.red}}> · 🔁 {benVerim.ek.geri} geri açılan iş</span>:null}{benVerim.ek.bekleyen?` · ⏸️ ${benVerim.ek.bekleyen} beklemede`:""}</div>}
       <div style={{fontSize:10,color:C.muted,marginTop:4}}>Zor iş daha çok puan: koltuk vidası 1 · musluk contası 3 · drenaj hattı 6 · VRF drenaj pompası 12 · yeni tesisat 24+</div>
     </div>);
   };
@@ -3526,9 +3714,9 @@ function AppInner(){
       <div style={{fontSize:13,fontWeight:800,marginBottom:4}}>📋 İş emirlerim ({jobMine.length}){ekip.length>0?` · 🔴 ${ekip.length} ekip acili`:""}</div>
       {liste.map(j=>{const pr=PRI[j.priority||"normal"]||PRI.normal;const over=j.due_at&&new Date(j.due_at).getTime()<Date.now();
         return(<div key={j.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,padding:"7px 0",borderTop:`1px solid ${C.border}`}}>
-          <div style={{flex:1,minWidth:0,cursor:"pointer"}} onClick={()=>{setPage("faults");setFaultTab("jobs");setPjTab((j.shift||"day")==="night"?"night":"day");}}>
+          <div style={{flex:1,minWidth:0,cursor:"pointer"}} onClick={()=>{if(j.is_tipi==="stok_sayim"){setPage("depo");setDepoTab("sayim");return;}setPage("faults");setFaultTab("jobs");setPjTab((j.shift||"day")==="night"?"night":"day");}}>
             <div style={{fontSize:13,fontWeight:600}}>{pr[0]} {j.is_no?`#${j.is_no} `:""}{j.title}</div>
-            <div style={{fontSize:10,color:over?C.red:C.muted}}>{j.location?`📍 ${j.location} · `:""}{kalanTxt(j.due_at)}{!j.assigned_to?" · ekip işi":""}{canJobAct&&ZR[j.zorluk]?` · ⚙️ ${ZR[j.zorluk].ad} ${jPuan(j)}p`:""}</div>
+            <div style={{fontSize:10,color:over?C.red:C.muted}}>{j.bekle_bas?<span style={{color:C.orange,fontWeight:700}}>⏸️ {BEKLE_AD[j.bekle_neden]||"Bekliyor"} · </span>:null}{j.location?`📍 ${j.location} · `:""}{kalanTxt(j.due_at)}{!j.assigned_to?" · ekip işi":""}{canJobAct&&ZR[j.zorluk]?` · ⚙️ ${ZR[j.zorluk].ad} ${jPuan(j)}p`:""}</div>
           </div>
           {!j.claimed_by
             ?<button style={S.btnS(j.priority==="acil"?C.red:C.accent,"#fff")} disabled={submitting} onClick={()=>claimJob(j)}>👷 Üstlen</button>
@@ -3615,6 +3803,7 @@ function AppInner(){
           {myPaidLH(profile.id)>0&&<div style={{marginTop:8,fontSize:11,color:C.dim,textAlign:"center"}}>💵 Ücreti ödenen mesai: {myPaidOTH(profile.id)} sa → izin hakkından {myPaidLH(profile.id)} sa düşüldü</div>}
         </div>
         {renderMyJobs()}
+        {renderMemnun()}
         {renderMyVerim()}
         {renderMyAbs()}
         <button style={S.btn(C.accent)} onClick={()=>{setOtForm({date:todayStr(),startTime:"17:00",endTime:"",otType:"evening",desc:""});setOtErrors([]);setModNewOT(true);}}>+ Fazla Mesai Bildir</button>
@@ -3689,6 +3878,7 @@ function AppInner(){
         {isViewer&&vPC>0&&<div style={{fontSize:10,color:C.muted,marginTop:4}}>Sadece görüntüleme</div>}
       </div>
       {renderMyJobs()}
+        {renderMemnun()}
       {renderMyVerim()}
       {renderMyAbs()}
       {(()=>{
@@ -4752,20 +4942,262 @@ function AppInner(){
   };
 
   const renderDone=()=>{
-    if(!modDone)return null;const j=modDone.j;
-    return(<div data-geri="1" style={S.mod} onClick={()=>{if(!submitting)setModDone(null);}}><div style={S.modC} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
-      <div style={{fontSize:17,fontWeight:700,marginBottom:4}}>✅ İşi kapat</div>
-      <div style={{fontSize:12,color:C.dim,marginBottom:12}}>{j.title}{j.location?` · 📍 ${j.location}`:""}</div>
-      <div style={S.lbl}>Yapılan işlem / not</div>
-      <textarea style={{...S.inp,minHeight:70}} placeholder="Örn: Sifon değiştirildi" value={modDone.note} onChange={e=>setModDone({...modDone,note:e.target.value})}/>
-      <div style={S.lbl}>Fotoğraf (isteğe bağlı)</div>
-      <label style={{...S.btn(C.bg,C.text),display:"block",textAlign:"center",border:`1px dashed ${C.muted}`,marginTop:0}}>
-        {modDone.file?`📷 ${modDone.file.name||"fotoğraf"} — değiştir`:"📷 Fotoğraf çek / seç"}
-        <input type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const f=e.target.files&&e.target.files[0];if(f)setModDone(m=>m?{...m,file:f}:m);}}/>
-      </label>
-      <button style={S.btn(C.green)} disabled={submitting} onClick={submitDone}>{submitting?"Kaydediliyor…":"✅ Tamamlandı olarak kapat"}</button>
+    if(!modDone)return null;const md=modDone,j=md.j;
+    const yuk=md.fotolar.some(f=>f.durum==="yukleniyor"),tamam=md.fotolar.filter(f=>f.durum==="tamam").length;
+    const sec=md.secim||{};
+    const oneri=Array.isArray(md.oneri)?md.oneri:[];const oneriIds=new Set(oneri.map(o=>o.id));
+    const ekstra=Object.keys(sec).filter(id=>!oneriIds.has(id));
+    const mBul=id=>materials.find(m=>m.id===id);
+    const ara=(md.ara||"").trim();
+    const sonuc=ara.length>=2?materials.filter(m=>m.building_id===j.building_id&&(m.tur||"parca")!=="alet"&&trAra(m.name).includes(trAra(ara))).slice(0,8):[];
+    const dokun=(id,sarf)=>setModDone(m=>{if(!m)return m;const s2={...(m.secim||{})};
+      if(sarf){if(s2[id])delete s2[id];else s2[id]={sarf:true};}else s2[id]={adet:Math.min(50,(Number(s2[id]?.adet)||0)+1)};return{...m,secim:s2};});
+    const azalt=id=>setModDone(m=>{if(!m)return m;const s2={...(m.secim||{})};const a=(Number(s2[id]?.adet)||0)-1;if(a<=0)delete s2[id];else s2[id]={adet:a};return{...m,secim:s2};});
+    const cip=(id,ad,sarf,stok)=>{const v=sec[id];const on=!!v;
+      return(<div key={id} style={{display:"inline-flex",alignItems:"stretch",borderRadius:18,border:`1px solid ${on?C.green:C.border}`,background:on?C.greenD:C.card,overflow:"hidden",maxWidth:"100%"}}>
+        <button aria-pressed={on} onClick={()=>dokun(id,sarf)} style={{border:"none",background:"transparent",color:on?C.green:C.text,padding:"8px 11px",fontSize:13,fontWeight:on?700:500,cursor:"pointer",textAlign:"left",WebkitAppearance:"none",minHeight:38,fontFamily:"inherit"}}>
+          {sarf?(on?"✓ ":"")+ad:ad+(on?` ×${v.adet}`:"")}{!on&&!sarf&&stok!=null?<span style={{color:Number(stok)>0?C.muted:C.red,fontWeight:400}}> · {Number(stok)>0?sayi(stok):"yok"}</span>:null}{!on&&sarf?<span style={{color:C.muted,fontWeight:400}}> · sarf</span>:null}
+        </button>
+        {on&&!sarf&&<button aria-label={`${ad} bir azalt`} onClick={()=>azalt(id)} style={{border:"none",borderLeft:`1px solid ${C.green}55`,background:"transparent",color:C.green,padding:"0 12px",fontSize:18,fontWeight:800,cursor:"pointer",WebkitAppearance:"none",fontFamily:"inherit"}}>−</button>}
+      </div>);};
+    const fotoSec=(cek)=>(<label style={{...S.btn(cek?(tamam?C.bg:C.accent):C.bg,cek?(tamam?C.text:"#fff"):C.text),flex:cek?2:1,marginTop:0,display:"flex",alignItems:"center",justifyContent:"center",gap:6,border:cek&&!tamam?"none":`1px solid ${C.border}`,padding:"12px 10px"}}>
+      {cek?(tamam?"📷 Bir tane daha":"📷 Fotoğraf çek"):"🖼 Galeri"}
+      <input type="file" accept="image/*" {...(cek?{capture:"environment"}:{multiple:true})} style={{display:"none"}} onChange={e=>{kapanisFotoEkle(e.target.files);try{e.target.value="";}catch(_){}}}/>
+    </label>);
+    return(<div data-geri="1" style={S.mod} onClick={()=>{if(!submitting)setModDone(null);}}><div style={{...S.modC,maxHeight:"92"+VH}} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
+      <div style={{fontSize:17,fontWeight:700,marginBottom:2}}>✅ İşi kapat</div>
+      <div style={{fontSize:12,color:C.dim,marginBottom:12}}>{j.is_no?`#${j.is_no} `:""}{j.title}{j.location?` · 📍 ${j.location}`:""}</div>
+      <div style={S.lbl}>📷 Fotoğraf <span style={{fontWeight:400,color:C.muted}}>(zorunlu{tamam?` · ${tamam} hazır`:""})</span></div>
+      <div style={{display:"flex",gap:8,marginBottom:8}}>{fotoSec(true)}{fotoSec(false)}</div>
+      {md.fotolar.length>0&&<div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>
+        {md.fotolar.map(f=>(<div key={f.id} style={{position:"relative",width:64,height:64,borderRadius:10,overflow:"hidden",background:C.bg,border:`1px solid ${f.durum==="hata"?C.red:C.border}`}}>
+          {f.onizleme&&<img src={f.onizleme} alt="" style={{width:"100%",height:"100%",objectFit:"cover",opacity:f.durum==="tamam"?1:0.45}}/>}
+          {f.durum!=="tamam"&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:f.durum==="hata"?20:11,fontWeight:700,color:f.durum==="hata"?C.red:C.text}}>{f.durum==="hata"?"⚠":"yükleniyor"}</div>}
+          <button aria-label="Fotoğrafı kaldır" onClick={()=>setModDone(m=>m?{...m,fotolar:m.fotolar.filter(x=>x.id!==f.id)}:m)} style={{position:"absolute",top:2,right:2,width:24,height:24,borderRadius:12,border:"none",background:"rgba(16,24,40,0.6)",color:"#fff",fontSize:12,lineHeight:"24px",padding:0,cursor:"pointer"}}>✕</button>
+        </div>))}
+      </div>}
+      {md.fotolar.some(f=>f.durum==="hata")&&<div style={{fontSize:11,color:C.red,marginBottom:8}}>⚠ Yüklenemeyen fotoğrafı ✕ ile kaldırıp tekrar çek.</div>}
+      <div style={{...S.lbl,marginTop:6}}>🔩 Malzeme kullandın mı? <span style={{fontWeight:400,color:C.muted}}>Dokunmazsan "malzeme yok" sayılır.</span></div>
+      {md.oneri===null&&<div style={{fontSize:11,color:C.muted,marginBottom:8}}>Öneriler yükleniyor…</div>}
+      {(oneri.length>0||ekstra.length>0)&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
+        {oneri.map(o=>cip(o.id,o.kisa||o.ad,!!o.sarf,o.stok))}
+        {ekstra.map(id=>{const m=mBul(id);return m?cip(id,m.name,m.tur==="sarf",m.current_stock):null;})}
+      </div>}
+      <input aria-label="Malzeme ara" style={{...S.inp,marginBottom:sonuc.length?4:10}} placeholder="🔍 Listede yoksa ara (sifon, vana…)" value={md.ara||""} onChange={e=>{const v=e.target.value;setModDone(m=>m?{...m,ara:v}:m);}}/>
+      {sonuc.length>0&&<div style={{background:C.bg,borderRadius:10,padding:4,marginBottom:10}}>{sonuc.map(m=>(
+        <button key={m.id} onClick={()=>{dokun(m.id,m.tur==="sarf");setModDone(x=>x?{...x,ara:""}:x);}} style={{display:"flex",justifyContent:"space-between",gap:8,width:"100%",padding:"10px 8px",border:"none",background:"transparent",color:C.text,fontSize:13,cursor:"pointer",textAlign:"left",WebkitAppearance:"none",fontFamily:"inherit"}}>
+          <span style={{minWidth:0}}>{m.name}{m.tur==="sarf"?<span style={{color:C.muted}}> · sarf</span>:null}</span><span style={{color:C.muted,flexShrink:0}}>{sayi(m.current_stock)} {m.unit||""}</span></button>))}</div>}
+      {Object.keys(sec).length>0&&<div style={{fontSize:11,color:C.dim,marginBottom:8}}>Parçalar kapanınca stoktan düşer (15 dk içinde Telegram'dan geri alınabilir). Sarf yalnız "kullanıldı" işaretlenir; stok haftalık sayımla düzelir.</div>}
+      <div style={S.lbl}>Not <span style={{fontWeight:400,color:C.muted}}>(isteğe bağlı)</span></div>
+      <textarea style={{...S.inp,minHeight:56}} placeholder="Örn: Sifon değiştirildi" value={md.note} onChange={e=>{const v=e.target.value;setModDone(m=>m?{...m,note:v}:m);}}/>
+      <button style={{...S.btn(tamam&&!yuk?C.green:C.border,tamam&&!yuk?"#fff":C.muted)}} disabled={submitting||yuk||tamam===0} onClick={submitDone}>{submitting?"Kaydediliyor…":yuk?"📷 Fotoğraf yükleniyor…":tamam===0?"📷 Önce fotoğraf çek":"✅ İşi kapat"}</button>
+      {!j.bekle_bas&&j.claimed_by&&!isAmir&&<button style={S.btn(C.bg,C.orange)} disabled={submitting} onClick={()=>{const jj=j;setModDone(null);openBekle(jj);}}>⏸️ Bitmedi — beklemeye al</button>}
       <button style={S.btn(C.bg,C.muted)} disabled={submitting} onClick={()=>setModDone(null)}>Vazgeç</button>
     </div></div>);
+  };
+
+  const renderBekle=()=>{
+    if(!modBekle)return null;const mb=modBekle,j=mb.j;
+    const kapat=()=>{if(!submitting)setModBekle(null);};
+    const git=a=>setModBekle(m=>m?{...m,asama:a,uyari:null,ara:"",not:""}:m);
+    const satir=(ic,t,d,on)=>(<button key={t} disabled={submitting} onClick={on} style={{display:"flex",alignItems:"center",gap:10,width:"100%",textAlign:"left",padding:"11px 12px",marginBottom:7,borderRadius:12,border:`1px solid ${C.border}`,background:C.card,color:C.text,cursor:"pointer",WebkitAppearance:"none",opacity:submitting?0.5:1,fontFamily:"inherit"}}>
+      <span style={{fontSize:20}}>{ic}</span><span style={{flex:1}}><span style={{display:"block",fontSize:14,fontWeight:700}}>{t}</span>{d&&<span style={{display:"block",fontSize:11,color:C.dim,marginTop:1}}>{d}</span>}</span></button>);
+    const cipS={padding:"9px 12px",borderRadius:18,border:`1px solid ${C.border}`,background:C.card,color:C.text,fontSize:13,cursor:"pointer",WebkitAppearance:"none",fontFamily:"inherit",minHeight:38};
+    const ara=(mb.ara||"").trim();
+    const sonuc=ara.length>=2?materials.filter(m=>m.building_id===j.building_id&&(m.tur||"parca")!=="alet"&&trAra(m.name).includes(trAra(ara))).slice(0,8):[];
+    const geriD=<button style={S.btn(C.bg,C.muted)} disabled={submitting} onClick={()=>git("neden")}>↩️ Geri</button>;
+    return(<div data-geri="1" style={S.mod} onClick={kapat}><div style={{...S.modC,maxHeight:"92"+VH}} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
+      <div style={{fontSize:17,fontWeight:700,marginBottom:2}}>⏸️ Beklemeye al</div>
+      <div style={{fontSize:12,color:C.dim,marginBottom:6}}>{j.is_no?`#${j.is_no} `:""}{j.title}</div>
+      <div style={{fontSize:11,color:C.dim,marginBottom:12}}>Bekleme süresi işçilikten düşülür, son tarih o kadar uzar; sen bu sırada başka işe atanabilirsin.</div>
+      {mb.asama==="neden"&&<>
+        {satir("🔩","Parça / malzeme","Depoda yok, sipariş gerekiyor",()=>git("parca"))}
+        {satir("🏢","Servis firması","Asansör, klima servisi, jeneratör…",()=>git("servis"))}
+        {satir("🔑","Erişim yok","Oda kilitli, toplantı var",()=>git("erisim"))}
+        {satir("✍️","Onay bekleniyor","Şefe onay mesajı gider",()=>bekleGonder("onay"))}
+        <button style={S.btn(C.bg,C.muted)} disabled={submitting} onClick={kapat}>Vazgeç</button>
+      </>}
+      {mb.asama==="parca"&&<>
+        {mb.uyari&&<div style={{background:C.orangeD,border:`1px solid ${C.orange}55`,borderRadius:12,padding:"10px 12px",marginBottom:10,fontSize:13,color:C.orange}}>
+          {mb.uyari.metin}
+          <button style={{...S.btnS(C.orange,"#fff"),width:"100%",marginTop:8}} disabled={submitting} onClick={()=>bekleGonder("parca",{mat:mb.uyari.mat,zorla:true,aciklama:"Farklı model gerekiyor"})}>Farklı model gerekiyor — yine de beklet</button>
+        </div>}
+        <div style={S.lbl}>Hangi parça?</div>
+        {mb.oneri===null&&<div style={{fontSize:11,color:C.muted,marginBottom:8}}>Yükleniyor…</div>}
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
+          {(mb.oneri||[]).map(o=>(<button key={o.id} disabled={submitting} onClick={()=>bekleGonder("parca",{mat:o.id})} style={cipS}>{o.kisa||o.ad}<span style={{color:Number(o.stok)>0?C.green:C.red}}> · {Number(o.stok)>0?sayi(o.stok):"yok"}</span></button>))}
+        </div>
+        <input aria-label="Parça ara" style={{...S.inp,marginBottom:sonuc.length?4:10}} placeholder="🔍 Parça ara" value={mb.ara||""} onChange={e=>{const v=e.target.value;setModBekle(m=>m?{...m,ara:v}:m);}}/>
+        {sonuc.length>0&&<div style={{background:C.bg,borderRadius:10,padding:4,marginBottom:10}}>{sonuc.map(m=>(
+          <button key={m.id} disabled={submitting} onClick={()=>bekleGonder("parca",{mat:m.id})} style={{display:"flex",justifyContent:"space-between",gap:8,width:"100%",padding:"10px 8px",border:"none",background:"transparent",color:C.text,fontSize:13,cursor:"pointer",textAlign:"left",WebkitAppearance:"none",fontFamily:"inherit"}}>
+            <span>{m.name}</span><span style={{color:Number(m.current_stock)>0?C.green:C.red,flexShrink:0}}>{Number(m.current_stock)>0?sayi(m.current_stock):"yok"}</span></button>))}</div>}
+        <input aria-label="Listede olmayan parça" style={S.inp} placeholder="Listede yoksa yaz (örn. 40'lık küresel vana)" value={mb.not||""} onChange={e=>{const v=e.target.value;setModBekle(m=>m?{...m,not:v}:m);}}/>
+        <button style={S.btn((mb.not||"").trim()?C.orange:C.border,(mb.not||"").trim()?"#fff":C.muted)} disabled={submitting||!(mb.not||"").trim()} onClick={()=>bekleGonder("parca",{aciklama:mb.not})}>⏸️ Bu parçayı bekliyorum</button>
+        {geriD}
+      </>}
+      {mb.asama==="servis"&&<>
+        <div style={S.lbl}>Hangi firma?</div>
+        {mb.firmalar===null&&<div style={{fontSize:11,color:C.muted,marginBottom:8}}>Yükleniyor…</div>}
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+          {(mb.firmalar||[]).map(f=>(<button key={f} disabled={submitting} onClick={()=>bekleGonder("servis",{firma:f})} style={cipS}>{f}</button>))}
+        </div>
+        <input aria-label="Firma adı" style={S.inp} placeholder="Başka firma (adını yaz)" value={mb.not||""} onChange={e=>{const v=e.target.value;setModBekle(m=>m?{...m,not:v}:m);}}/>
+        <button style={S.btn((mb.not||"").trim()?C.orange:C.border,(mb.not||"").trim()?"#fff":C.muted)} disabled={submitting||!(mb.not||"").trim()} onClick={()=>bekleGonder("servis",{firma:mb.not})}>⏸️ Firmayı bekliyorum</button>
+        {geriD}
+      </>}
+      {mb.asama==="erisim"&&<>
+        {satir("🌆","Bugün mesai sonu","16:30'da sana hatırlatılır",()=>bekleGonder("erisim",{erisim:"aksam"}))}
+        {satir("🌅","Yarın 09:00","Sabah hatırlatılır",()=>bekleGonder("erisim",{erisim:"sabah"}))}
+        {satir("❔","Belirsiz","3 günde bir 'hâlâ bekliyor mu' diye sorulur",()=>bekleGonder("erisim",{erisim:"belirsiz"}))}
+        {geriD}
+      </>}
+    </div></div>);
+  };
+
+  // v5.45: işi açan şef/yönetici için "Sorun çözüldü mü?" (48 saat; Telegram'a bağlıysa aynı soru özelden de gider)
+  const renderMemnun=()=>{
+    if(!canJobAct||!profile)return null;
+    const sinir=Date.now()-48*3600000;
+    const L=bPJobs.filter(j=>j.status==="done"&&j.created_by===profile.id&&j.completed_at&&new Date(j.completed_at).getTime()>sinir
+      &&!(j.memnun!=null&&j.memnun_at&&new Date(j.memnun_at)>=new Date(j.completed_at))
+      &&j.completed_by!==profile.id&&j.claimed_by!==profile.id&&!(Array.isArray(j.team)&&j.team.includes(profile.id))
+      &&j.is_tipi!=="stok_sayim"&&!memnunGizli.includes(j.id)).slice(0,3);
+    if(L.length===0)return null;
+    return(<div style={{...S.crd,cursor:"default",marginBottom:12,borderColor:C.green+"55"}}>
+      <div style={{fontSize:13,fontWeight:800,marginBottom:2}}>✅ Açtığın işler bitti — sorun çözüldü mü?</div>
+      <div style={{fontSize:11,color:C.dim,marginBottom:6}}>👎 dersen iş aynı kişiye yeniden açılır ve karnesine yazılır. Bilmiyorsan ✕.</div>
+      {L.map(j=>{const cp=getU(j.completed_by);const acik=memnunAcik===j.id;
+        return(<div key={j.id} style={{borderTop:`1px solid ${C.border}`,padding:"8px 0"}}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"start"}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:600}}>{j.is_no?`#${j.is_no} `:""}{j.title}</div>
+              <div style={{fontSize:10,color:C.muted}}>👷 {cp?.full_name||"—"} · {new Date(j.completed_at).toLocaleString("tr-TR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}{j.done_photo?<> · <a href={j.done_photo} target="_blank" rel="noreferrer" style={{color:C.accent}}>📷 fotoğraf</a></>:null}</div>
+            </div>
+            <button aria-label="Bu işi listeden gizle" style={{...S.btnS(C.bg,C.muted),padding:"6px 10px",minHeight:32}} onClick={()=>memnunGizle(j.id)}>✕</button>
+          </div>
+          {!acik?<div style={{display:"flex",gap:6,marginTop:6}}>
+            <button style={{...S.btnS(C.greenD,C.green),flex:1}} disabled={submitting} onClick={()=>memnunCevap(j,1)}>👍 Çözüldü</button>
+            <button style={{...S.btnS(C.redD,C.red),flex:1}} disabled={submitting} onClick={()=>setMemnunAcik(j.id)}>👎 Hâlâ sorun var</button>
+          </div>:<div style={{display:"flex",gap:6,marginTop:6,flexWrap:"wrap"}}>
+            {[["hic","Hiç yapılmamış"],["kismen","Kısmen yapılmış"],["yine","Yine bozuldu"]].map(([k,t])=>(<button key={k} style={{...S.btnS(C.redD,C.red),flex:"1 1 30%"}} disabled={submitting} onClick={()=>memnunCevap(j,-1,k)}>{t}</button>))}
+            <button style={{...S.btnS(C.bg,C.muted),flex:"1 1 100%"}} disabled={submitting} onClick={()=>setMemnunAcik(null)}>↩️ Vazgeç</button>
+          </div>}
+        </div>);})}
+    </div>);
+  };
+
+  // v5.45: depo sayımı (kör sayım: sistemdeki sayı kayıttan sonra görünür)
+  const renderSayim=()=>{
+    const v=sayim.veri,is=v?.is;const g=sayim.giris||{};
+    const kalem=Array.isArray(v?.kalemler)?v.kalemler:[];
+    const bekleyen=kalem.filter(k=>!k.sayildi),sayilmis=kalem.filter(k=>k.sayildi);
+    const ekstra=(sayim.ekstra||[]).map(id=>materials.find(m=>m.id===id)).filter(Boolean);
+    const dolu=Object.keys(g).filter(id=>String(g[id]).trim()!==""&&Number.isFinite(Number(String(g[id]).replace(",","."))));
+    const ara=(sayim.ekle||"").trim();const bid=selBuilding||profile?.building_id;
+    const listede=new Set([...kalem.map(k=>k.material_id),...(sayim.ekstra||[])]);
+    const sonuc=ara.length>=2?materials.filter(m=>m.building_id===bid&&(m.tur||"parca")!=="alet"&&!listede.has(m.id)&&trAra(m.name).includes(trAra(ara))).slice(0,8):[];
+    const girdi=(id,ad,unit)=>(<input aria-label={`${ad} sayılan`} inputMode="decimal" style={{...S.inp,width:92,marginBottom:0,textAlign:"center",fontSize:17,fontWeight:700,padding:"10px 6px"}} placeholder={unit||"adet"}
+      value={g[id]??""} onChange={e=>{const val=e.target.value.replace(/[^0-9.,]/g,"");setSayim(x=>({...x,giris:{...x.giris,[id]:val}}));}}/>);
+    const satir=(id,ad,alt,unit)=>(<div key={id} style={{...S.crd,cursor:"default",display:"flex",alignItems:"center",gap:10,padding:"10px 12px"}}>
+      <div style={{flex:1,minWidth:0}}><div style={{fontSize:14,fontWeight:700}}>{ad}</div><div style={{fontSize:10,color:C.muted}}>{alt}</div></div>{girdi(id,ad,unit)}</div>);
+    const R=sayim.sonuc;
+    return(<div>
+      <div style={{...S.crd,cursor:"default",borderColor:is?C.purple+"55":C.border}}>
+        {is?<><div style={{fontSize:14,fontWeight:800,color:C.purple}}>🧮 Haftalık sayım · #{is.is_no}</div>
+          <div style={{fontSize:11,color:C.dim,marginTop:2}}>👤 {is.atanan||"ekip"} · {bekleyen.length} kalem kaldı{is.son?` · son: ${fDue(is.son)}`:""}</div></>
+          :<><div style={{fontSize:14,fontWeight:800}}>🧮 Stok sayımı</div>
+          <div style={{fontSize:11,color:C.dim,marginTop:2}}>Planlı sayım yok. Pazar akşamı nöbetçiye 10 kalemlik sayım düşer. İstersen aşağıdakileri şimdi say.</div></>}
+        <div style={{fontSize:11,color:C.dim,marginTop:6}}>Rafta gördüğün miktarı yaz. Sistemdeki sayı kayıttan sonra görünür. Fark stok defterine "sayım" olarak işlenir, kimsenin karnesine yazılmaz.</div>
+      </div>
+      {sayim.yuk&&!v&&<div style={S.emp}>Yükleniyor…</div>}
+      {R&&<div style={{...S.crd,cursor:"default",background:R.kapandi?C.greenD:C.card}}>
+        <div style={{fontSize:13,fontWeight:800,color:R.kapandi?C.green:C.text,marginBottom:4}}>{R.kapandi?`✅ Sayım tamam — #${R.is_no} kapandı`:`💾 ${R.kalem} kalem kaydedildi`}</div>
+        {(R.satirlar||[]).map((x,i)=>{const f=Number(x.fark)||0;return(<div key={i} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:12,padding:"3px 0"}}>
+          <span style={{minWidth:0}}>{x.ad}</span><span style={{flexShrink:0,fontWeight:700,color:f===0?C.green:f<0?C.red:C.blue}}>{sayi(x.sistem)} → {sayi(x.sayilan)}{f===0?" ✓":` (${f>0?"+":""}${sayi(f)})`}{x.tutar!=null&&f!==0?` · ${tlFmt(x.tutar)}`:""}</span></div>);})}
+        <button style={{...S.btnS(C.bg,C.muted),marginTop:6}} onClick={()=>setSayim(x=>({...x,sonuc:null}))}>Tamam</button>
+      </div>}
+      {bekleyen.map(k=>satir(k.material_id,k.ad,`${k.kategori||""}${k.kategori?" · ":""}${k.tur==="sarf"?"sarf":"parça"}`,k.unit))}
+      {ekstra.map(m=>satir(m.id,m.name,`${m.category||""} · eklendi`,m.unit))}
+      {v&&bekleyen.length===0&&ekstra.length===0&&<div style={{...S.emp,marginBottom:10}}>{is?"Bu sayımın tüm kalemleri sayıldı ✓":"Önerilecek kalem yok"}</div>}
+      <input aria-label="Başka kalem ekle" style={{...S.inp,marginBottom:sonuc.length?4:10}} placeholder="➕ Başka kalem say (ara)" value={sayim.ekle||""} onChange={e=>{const val=e.target.value;setSayim(x=>({...x,ekle:val}));}}/>
+      {sonuc.length>0&&<div style={{background:C.bg,borderRadius:10,padding:4,marginBottom:10}}>{sonuc.map(m=>(
+        <button key={m.id} onClick={()=>setSayim(x=>({...x,ekstra:[...(x.ekstra||[]),m.id].slice(-30),ekle:""}))} style={{display:"flex",justifyContent:"space-between",gap:8,width:"100%",padding:"10px 8px",border:"none",background:"transparent",color:C.text,fontSize:13,cursor:"pointer",textAlign:"left",WebkitAppearance:"none",fontFamily:"inherit"}}>
+          <span>{m.name}</span><span style={{color:C.muted,flexShrink:0}}>{m.category||""}</span></button>))}</div>}
+      <button style={S.btn(dolu.length?C.accent:C.border,dolu.length?"#fff":C.muted)} disabled={submitting||dolu.length===0} onClick={sayimKaydet}>{submitting?"Kaydediliyor…":dolu.length?`💾 ${dolu.length} kalemi kaydet`:"Saydığın miktarları yaz"}</button>
+      {sayilmis.length>0&&<div style={{...S.crd,cursor:"default",marginTop:12}}>
+        <div style={{fontSize:12,fontWeight:700,marginBottom:4}}>Bu sayımda sayılanlar ({sayilmis.length})</div>
+        {sayilmis.map(k=>{const f=Number(k.fark)||0;return(<div key={k.material_id} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:12,padding:"3px 0"}}>
+          <span style={{minWidth:0}}>{k.ad}</span><span style={{flexShrink:0,color:f===0?C.green:f<0?C.red:C.blue,fontWeight:700}}>{sayi(k.sayilan)}{f===0?" ✓":` (${f>0?"+":""}${sayi(f)})`}</span></div>);})}
+      </div>}
+      {Array.isArray(v?.son)&&v.son.length>0&&<div style={{...S.crd,cursor:"default",marginTop:12}}>
+        <div style={{fontSize:12,fontWeight:700,marginBottom:4}}>Son sayımlar</div>
+        {v.son.slice(0,12).map((x,i)=>{const f=Number(x.fark)||0;return(<div key={i} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:11,padding:"3px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+          <span style={{minWidth:0}}>{x.ad}<span style={{color:C.muted}}> · {x.kim||"?"} · {x.at?new Date(x.at).toLocaleDateString("tr-TR",{day:"numeric",month:"short"}):""}</span></span>
+          <span style={{flexShrink:0,color:f===0?C.green:f<0?C.red:C.blue,fontWeight:700}}>{f===0?"✓":`${f>0?"+":""}${sayi(f)}`}{x.tutar!=null&&f!==0?` · ${tlFmt(x.tutar)}`:""}</span></div>);})}
+      </div>}
+    </div>);
+  };
+
+  // v5.45: birim fiyat girişi — en çok çıkan 50 kalem (çıkışların büyük kısmı)
+  const renderFiyat=()=>{
+    const F=sayim.fiyat;const fg=sayim.fiyatGiris||{};
+    if(!F)return <div style={S.emp}>Yükleniyor…</div>;
+    const L=Array.isArray(F.kalemler)?F.kalemler:[];const girilen=L.filter(k=>k.fiyat!=null).length;
+    return(<div>
+      <div style={{...S.crd,cursor:"default"}}>
+        <div style={{fontSize:14,fontWeight:800}}>💰 Birim fiyat</div>
+        <div style={{fontSize:11,color:C.dim,marginTop:2}}>Son 6 ayda en çok çıkan {L.length} kalem{F.kapsam!=null?` — depo çıkışlarının %${F.kapsam}'i`:""}. Fiyatı girilen: <b style={{color:girilen===L.length&&L.length?C.green:C.orange}}>{girilen}/{L.length}</b></div>
+        <div style={{fontSize:11,color:C.dim,marginTop:4}}>Son alış fiyatını yaz, dışarı dokununca kaydolur. Performans raporundaki maliyet ve sayım farkı tutarı bununla hesaplanır.</div>
+        {F.hata&&<div style={{fontSize:12,color:C.red,marginTop:6}}>{F.hata}</div>}
+      </div>
+      {L.map(k=>(<div key={k.id} style={{...S.crd,cursor:"default",display:"flex",alignItems:"center",gap:10,padding:"10px 12px"}}>
+        <div style={{flex:1,minWidth:0}}><div style={{fontSize:13,fontWeight:700}}>{k.ad}</div>
+          <div style={{fontSize:10,color:C.muted}}>{k.cikis} çıkış · {sayi(k.miktar)} {k.unit||""}{k.tur==="sarf"?" · sarf":""}</div></div>
+        <input aria-label={`${k.ad} birim fiyat`} inputMode="decimal" style={{...S.inp,width:104,marginBottom:0,textAlign:"right",padding:"10px 8px",fontSize:15,borderColor:k.fiyat!=null?C.green+"88":"#D0D5DD"}} placeholder="₺"
+          value={fg[k.id]??(k.fiyat!=null?String(k.fiyat).replace(".",","):"")}
+          onChange={e=>{const val=e.target.value;setSayim(x=>({...x,fiyatGiris:{...(x.fiyatGiris||{}),[k.id]:val}}));}}
+          onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
+          onBlur={e=>{if(fg[k.id]!==undefined)fiyatKaydet(k,e.target.value);}}/>
+      </div>))}
+      {L.length===0&&<div style={S.emp}>Son 6 ayda depo çıkışı yok</div>}
+    </div>);
+  };
+
+  // v5.45: performans eki — bekleme, memnuniyet, tekrar, depo/maliyet
+  const renderFazB=(F)=>{
+    const K=F.kapanis||{},D=F.depo||{},Tk=F.tekrar||{},Sy=F.sayim||{};
+    const yz=(a,b)=>b>0?Math.round(100*a/b):null;
+    const kutu=(v,ad,renk)=>(<div style={{background:C.bg,borderRadius:10,padding:"8px 4px",textAlign:"center"}}><div style={{fontSize:16,fontWeight:800,color:renk||C.text}}>{v??"—"}</div><div style={{fontSize:10,color:C.muted}}>{ad}</div></div>);
+    const fo=yz(K.fotolu||0,K.kapanan||0),ml=yz(K.malzemeli||0,K.kapanan||0),cev=(K.evet||0)+(K.hayir||0),mem=yz(K.evet||0,cev),ib=yz(D.ise_bagli||0,D.cikis||0);
+    const td={padding:"5px 3px",whiteSpace:"nowrap"};
+    const B=Array.isArray(F.bekleme)?F.bekleme:[];
+    return(<div style={{marginBottom:12}}>
+      <div style={{fontSize:13,fontWeight:800,margin:"8px 0 6px"}}>✅ Kapanış ve memnuniyet</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6,marginBottom:6}}>
+        {kutu(K.kapanan||0,"Kapanan iş")}{kutu(fo!=null?`%${fo}`:"—","Fotoğraflı",fo==null?null:fo>=90?C.green:fo>=50?C.orange:C.red)}{kutu(ml!=null?`%${ml}`:"—","Malzemeli")}
+        {kutu(K.evet||0,"👍 Çözüldü",K.evet?C.green:null)}{kutu(K.hayir||0,"👎 Geri döndü",K.hayir?C.red:null)}{kutu(mem!=null?`%${mem}`:"—","Memnuniyet",mem==null?null:mem>=90?C.green:mem>=70?C.orange:C.red)}
+      </div>
+      {(Array.isArray(F.geri_kisi)&&F.geri_kisi.length>0||K.haksiz>0)&&<div style={{fontSize:11,color:C.dim,marginBottom:6}}>🔁 Geri dönen: {(F.geri_kisi||[]).map(x=>`${x.ad} ${x.n}`).join(" · ")||"—"}{K.haksiz?` · ⚖️ haksız şikâyet ${K.haksiz}`:""}</div>}
+      <div style={{fontSize:13,fontWeight:800,margin:"10px 0 6px"}}>⏸️ Bekleme</div>
+      {B.length===0?<div style={{fontSize:11,color:C.muted,marginBottom:6}}>Bu dönemde beklemeye alınan iş yok</div>:
+        <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+          <thead><tr style={{color:C.muted,textAlign:"left"}}>{["Neden","İş","Toplam","Ort.","Açık"].map(h=><th key={h} style={{...td,fontWeight:600}}>{h}</th>)}</tr></thead>
+          <tbody>{B.map(b=>(<tr key={b.neden} style={{borderTop:`1px solid ${C.border}`}}><td style={{...td,fontWeight:600}}>{BEKLE_AD[b.neden]||b.ad}</td><td style={td}>{b.n}</td><td style={td}>{nf1(b.saat)} sa</td><td style={td}>{nf1(b.ort)} sa</td><td style={{...td,color:b.acik?C.orange:C.text}}>{b.acik}</td></tr>))}</tbody>
+        </table></div>}
+      {Array.isArray(F.firmalar)&&F.firmalar.length>0&&<div style={{fontSize:11,color:C.dim,marginTop:4}}>🏢 {F.firmalar.map(f=>`${f.firma}: ${f.n} iş, ort. ${nf1(f.ort)} sa${f.acik?` (${f.acik} açık)`:""}`).join(" · ")}</div>}
+      {Array.isArray(F.parcalar)&&F.parcalar.length>0&&<div style={{fontSize:11,color:C.dim,marginTop:4}}>🔩 En çok beklenen: {F.parcalar.map(x=>`${x.ad} (${x.n})`).join(", ")}</div>}
+      <div style={{fontSize:13,fontWeight:800,margin:"10px 0 6px"}}>🔁 Tekrar arıza</div>
+      <div style={{fontSize:12}}>Aday {Tk.aday||0} · onaylı {Tk.onay||0}{Tk.onay?` (işçilik ${Tk.iscilik||0} · malzeme ${Tk.malzeme||0} · kullanım ${Tk.kullanim||0} · eskime ${Tk.eskime||0})`:""} · farklı iş {Tk.red||0}{Tk.bekleyen?<span style={{color:C.orange}}> · karar bekleyen {Tk.bekleyen}</span>:null}</div>
+      {Array.isArray(F.tekrar_kisi)&&F.tekrar_kisi.length>0&&<div style={{fontSize:11,color:C.orange,marginTop:2}}>İşçilik tekrarı: {F.tekrar_kisi.map(x=>`${x.ad} ${x.n}`).join(" · ")}</div>}
+      <div style={{fontSize:13,fontWeight:800,margin:"10px 0 6px"}}>📦 Depo ve maliyet</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6,marginBottom:6}}>
+        {kutu(D.cikis||0,"Depo çıkışı")}{kutu(ib!=null?`%${ib}`:"—","İşe bağlı",ib==null?null:ib>=70?C.green:ib>=40?C.orange:C.red)}{kutu(tlFmt(D.is_tutar),"İşlere giden")}
+      </div>
+      <div style={{fontSize:11,color:C.dim}}>Toplam çıkış {tlFmt(D.tutar)} · fiyatı girilen çıkış %{D.fiyatli??0}{Sy.kalem?` · sayım: ${Sy.kalem} kalem, ${Sy.farkli} farklı (${tlFmt(Sy.tutar)})`:""}</div>
+      {Array.isArray(F.pahali_isler)&&F.pahali_isler.length>0&&<div style={{marginTop:6}}>{F.pahali_isler.map(x=>(<div key={x.is_no} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:11,padding:"3px 0",borderTop:`1px solid ${C.border}`}}>
+        <span style={{minWidth:0}}>#{x.is_no} {x.baslik}<span style={{color:C.muted}}> · {x.malzeme}</span></span><b style={{flexShrink:0}}>{tlFmt(x.tutar)}</b></div>))}</div>}
+      {(D.fiyatli??0)<70&&canEditFault&&<div style={{fontSize:10,color:C.orange,marginTop:4}}>Maliyet için Depo → 💰 Fiyat'tan en çok çıkan 50 kalemin fiyatını gir.</div>}
+    </div>);
   };
 
   const renderPaste=()=>{
@@ -4921,6 +5353,7 @@ function AppInner(){
       {renderNightPick()}
       {renderAssignPick()}
       {renderDone()}
+      {renderBekle()}
       {renderPaste()}
       {renderZorOnay()}
       {renderZorluk()}
