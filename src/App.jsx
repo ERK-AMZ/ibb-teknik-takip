@@ -5,7 +5,10 @@ import { supabase, signIn, signOut, getProfiles, createOvertime, updateOvertime,
 const toArr=(v)=>{if(Array.isArray(v))return v;if(v&&typeof v==='object'&&Array.isArray(v.data))return v.data;return[];};
 // === Önbellek (stale-while-revalidate): açılışta anında veri, arkada tazeleme ===
 const CACHE_KEY='ibb_cache_v1';
-const APP_VERSION='5.45';
+const APP_VERSION='5.46';
+// v5.46: kapanış açıklaması anlamlı mı — sunucudaki tg_not_gecerli ile aynı kural ("yapıldı", "tamam" gibi boş sözler sayılmaz)
+const kapNotGecerli=s=>{const t=String(s||"").trim();if([...t].length<6)return false;
+  return !/^(iş |işlem |arıza |sorun |problem )?(yapıldı|yapılmıştır|bitti|bitmiştir|bitirildi|tamam|tamamdır|tamamlandı|tamamlanmıştır|halledildi|halloldu|hallettim|hallettik|oldu|olmuştur|ok|okey|çözüldü|giderildi|giderilmiştir|kapatıldı|kapandı|telegram'dan kapatıldı)[ .!]*$/.test(t.toLocaleLowerCase("tr-TR"));};
 // v5.43: iPhone Safari / Android Chrome adres çubuğu: 100vh ekranı taşırır → destekleniyorsa dvh
 const VH=(()=>{try{return typeof CSS!=="undefined"&&CSS.supports&&CSS.supports("height","100dvh")?"dvh":"vh";}catch(e){return "vh";}})();
 const VAPID_PUB='BN2YP7MOPhouxNjYjzbuOJznU5xocT3gQW3JeHUnHn3hvRCDdlIvRUDifICb_S0rc_-DqUtWRim0ehxn7UdaV3M';
@@ -622,6 +625,7 @@ function AppInner(){
   const[jobTypes,setJobTypes]=useState([]);     // v5.43: iş tipi kataloğu (job_types)
   const[benVerim,setBenVerim]=useState(null);   // v5.43: personelin kendi haftası {v,ts}
   const[otoDk,setOtoDk]=useState({acil:10,normal:60}); // v5.39: otomatik devir süreleri (app_meta)
+  const[kapKural,setKapKural]=useState({foto:2,not:true}); // v5.46: kapanış kuralı (app_meta: kapanis_foto_min, kapanis_not_zorunlu)
   const[talepLink,setTalepLink]=useState(false);
   const[asgSel,setAsgSel]=useState([]);      // v5.38: Ata ekranında seçilenler (ilk = sorumlu)
   const[nightSel,setNightSel]=useState([]);  // v5.38: Geceye devirde seçilenler
@@ -1290,9 +1294,17 @@ function AppInner(){
     }catch(e){setToast("Hata: "+(e?.message||""));}
     setSubmitting(false);
   }
+  // v5.46: kapanış kuralı sunucudaki ayardan okunur (meta_int ile aynı okuma); ayar değişirse ekran da değişir
+  function kapKuralYukle(){
+    supabase.from('app_meta').select('key,value').in('key',['kapanis_foto_min','kapanis_not_zorunlu']).then(({data})=>{
+      if(!Array.isArray(data))return;
+      const say=(k,d)=>{const s=(data.find(x=>x.key===k)||{}).value;return typeof s==="string"&&/^\d{1,4}$/.test(s)?parseInt(s,10):d;};
+      setKapKural({foto:Math.max(1,say('kapanis_foto_min',2)),not:say('kapanis_not_zorunlu',1)===1});},()=>{});
+  }
   function completePendingJob(j){
     if(j.is_tipi==="stok_sayim"){setPage("depo");setDepoTab("sayim");setToast("📦 Sayımı buradan gir — kaydedince iş kendiliğinden kapanır");return;}
     setModDone({j,note:"",fotolar:[],secim:{},oneri:null,ara:""});
+    kapKuralYukle();
     (async()=>{try{const{data}=await supabase.rpc("app_kapanis_onerileri",{p_job:j.id});
       const sec={};(data?.secili||[]).forEach(x=>{sec[x.id]=x.sarf?{sarf:true}:{adet:Math.max(1,Number(x.adet)||1)};});
       setModDone(m=>m&&m.j.id===j.id?{...m,oneri:data?.ok?(data.oneriler||[]):[],secim:Object.keys(m.secim||{}).length?m.secim:sec}:m);
@@ -1330,6 +1342,11 @@ function AppInner(){
     if(md.fotolar.some(f=>f.durum==="yukleniyor")){setToast("📷 Fotoğraf yükleniyor, birkaç saniye…");return;}
     const urls=md.fotolar.filter(f=>f.durum==="tamam"&&f.url).map(f=>f.url);
     if(urls.length===0){setToast("📷 En az 1 fotoğraf çek");return;}
+    if(!(isAdmin||isChef)){ // v5.46: rapor şartı (2 fotoğraf + açıklama) — sunucu da aynısını denetler; arıza fotoğrafı sayılır
+      const gerek=Math.max(1,Math.max(1,kapKural.foto)-(/^https:\/\//.test(j.request_photo||"")?1:0));
+      if(urls.length<gerek){setToast(`📷 ${gerek-urls.length} fotoğraf daha çek — rapora işin önceki ve bitmiş hali giriyor`);return;}
+      if(kapKural.not&&!kapNotGecerli(md.note)){setToast("✍️ Ne yapıldığını yaz — örn. \"Sifon contası değiştirildi\". Rapora girecek.");return;}
+    }
     const malz=Object.entries(md.secim||{}).filter(([,v])=>v&&(v.sarf||Number(v.adet)>0)).map(([id,v])=>v.sarf?{id}:{id,adet:Number(v.adet)||1});
     setSubmitting(true);
     try{
@@ -4944,6 +4961,12 @@ function AppInner(){
   const renderDone=()=>{
     if(!modDone)return null;const md=modDone,j=md.j;
     const yuk=md.fotolar.some(f=>f.durum==="yukleniyor"),tamam=md.fotolar.filter(f=>f.durum==="tamam").length;
+    // v5.46: kapanış kuralı — şef / yönetici muaf, arıza fotoğrafı sayılır (sunucudaki app_kapat ile aynı hesap)
+    const kapMuaf=isAdmin||isChef;
+    const fotoGerek=kapMuaf?1:Math.max(1,Math.max(1,kapKural.foto)-(/^https:\/\//.test(j.request_photo||"")?1:0));
+    const fotoEksik=Math.max(0,fotoGerek-tamam);
+    const notSart=!kapMuaf&&kapKural.not,notOk=!notSart||kapNotGecerli(md.note);
+    const hazir=tamam>0&&!yuk&&fotoEksik===0&&notOk;
     const sec=md.secim||{};
     const oneri=Array.isArray(md.oneri)?md.oneri:[];const oneriIds=new Set(oneri.map(o=>o.id));
     const ekstra=Object.keys(sec).filter(id=>!oneriIds.has(id));
@@ -4967,7 +4990,7 @@ function AppInner(){
     return(<div data-geri="1" style={S.mod} onClick={()=>{if(!submitting)setModDone(null);}}><div style={{...S.modC,maxHeight:"92"+VH}} onClick={e=>e.stopPropagation()}><div style={S.modH}/>
       <div style={{fontSize:17,fontWeight:700,marginBottom:2}}>✅ İşi kapat</div>
       <div style={{fontSize:12,color:C.dim,marginBottom:12}}>{j.is_no?`#${j.is_no} `:""}{j.title}{j.location?` · 📍 ${j.location}`:""}</div>
-      <div style={S.lbl}>📷 Fotoğraf <span style={{fontWeight:400,color:C.muted}}>(zorunlu{tamam?` · ${tamam} hazır`:""})</span></div>
+      <div style={S.lbl}>📷 Fotoğraf <span style={{fontWeight:400,color:C.muted}}>({fotoGerek>1?`en az ${fotoGerek} · önceki ve bitmiş hali`:"zorunlu"}{tamam?` · ${tamam} hazır`:""})</span></div>
       <div style={{display:"flex",gap:8,marginBottom:8}}>{fotoSec(true)}{fotoSec(false)}</div>
       {md.fotolar.length>0&&<div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>
         {md.fotolar.map(f=>(<div key={f.id} style={{position:"relative",width:64,height:64,borderRadius:10,overflow:"hidden",background:C.bg,border:`1px solid ${f.durum==="hata"?C.red:C.border}`}}>
@@ -4977,6 +5000,7 @@ function AppInner(){
         </div>))}
       </div>}
       {md.fotolar.some(f=>f.durum==="hata")&&<div style={{fontSize:11,color:C.red,marginBottom:8}}>⚠ Yüklenemeyen fotoğrafı ✕ ile kaldırıp tekrar çek.</div>}
+      {tamam>0&&fotoEksik>0&&<div style={{fontSize:11,color:C.orange,marginBottom:8}}>📷 {fotoEksik} fotoğraf daha — aylık rapora işin iki fotoğrafı giriyor.</div>}
       <div style={{...S.lbl,marginTop:6}}>🔩 Malzeme kullandın mı? <span style={{fontWeight:400,color:C.muted}}>Dokunmazsan "malzeme yok" sayılır.</span></div>
       {md.oneri===null&&<div style={{fontSize:11,color:C.muted,marginBottom:8}}>Öneriler yükleniyor…</div>}
       {(oneri.length>0||ekstra.length>0)&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
@@ -4988,9 +5012,9 @@ function AppInner(){
         <button key={m.id} onClick={()=>{dokun(m.id,m.tur==="sarf");setModDone(x=>x?{...x,ara:""}:x);}} style={{display:"flex",justifyContent:"space-between",gap:8,width:"100%",padding:"10px 8px",border:"none",background:"transparent",color:C.text,fontSize:13,cursor:"pointer",textAlign:"left",WebkitAppearance:"none",fontFamily:"inherit"}}>
           <span style={{minWidth:0}}>{m.name}{m.tur==="sarf"?<span style={{color:C.muted}}> · sarf</span>:null}</span><span style={{color:C.muted,flexShrink:0}}>{sayi(m.current_stock)} {m.unit||""}</span></button>))}</div>}
       {Object.keys(sec).length>0&&<div style={{fontSize:11,color:C.dim,marginBottom:8}}>Parçalar kapanınca stoktan düşer (15 dk içinde Telegram'dan geri alınabilir). Sarf yalnız "kullanıldı" işaretlenir; stok haftalık sayımla düzelir.</div>}
-      <div style={S.lbl}>Not <span style={{fontWeight:400,color:C.muted}}>(isteğe bağlı)</span></div>
-      <textarea style={{...S.inp,minHeight:56}} placeholder="Örn: Sifon değiştirildi" value={md.note} onChange={e=>{const v=e.target.value;setModDone(m=>m?{...m,note:v}:m);}}/>
-      <button style={{...S.btn(tamam&&!yuk?C.green:C.border,tamam&&!yuk?"#fff":C.muted)}} disabled={submitting||yuk||tamam===0} onClick={submitDone}>{submitting?"Kaydediliyor…":yuk?"📷 Fotoğraf yükleniyor…":tamam===0?"📷 Önce fotoğraf çek":"✅ İşi kapat"}</button>
+      <div style={S.lbl}>{notSart?"✍️ Ne yapıldı?":"Not"} <span style={{fontWeight:400,color:C.muted}}>({notSart?"zorunlu · rapora girer":"isteğe bağlı"})</span></div>
+      <textarea style={{...S.inp,minHeight:56}} placeholder="Örn: Sifon contası değiştirildi, kaçak kesildi" value={md.note} onChange={e=>{const v=e.target.value;setModDone(m=>m?{...m,note:v}:m);}}/>
+      <button style={{...S.btn(hazir?C.green:C.border,hazir?"#fff":C.muted)}} disabled={submitting||yuk||tamam===0} onClick={submitDone}>{submitting?"Kaydediliyor…":yuk?"📷 Fotoğraf yükleniyor…":tamam===0?"📷 Önce fotoğraf çek":fotoEksik>0?`📷 ${fotoEksik} fotoğraf daha çek`:!notOk?"✍️ Ne yapıldığını yaz":"✅ İşi kapat"}</button>
       {!j.bekle_bas&&j.claimed_by&&!isAmir&&<button style={S.btn(C.bg,C.orange)} disabled={submitting} onClick={()=>{const jj=j;setModDone(null);openBekle(jj);}}>⏸️ Bitmedi — beklemeye al</button>}
       <button style={S.btn(C.bg,C.muted)} disabled={submitting} onClick={()=>setModDone(null)}>Vazgeç</button>
     </div></div>);
